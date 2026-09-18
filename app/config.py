@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    DATABASE_URL: str = ""
     POSTGRES_SERVER: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "postgres"
@@ -30,11 +31,29 @@ class Settings(BaseSettings):
         "http://127.0.0.1:4200",
         "http://localhost:8000",
         "http://localhost:8080",
-        "http://127.0.0.1:8080"
+        "http://127.0.0.1:8080",
+        "https://*.vercel.app"
     ]
+
+    # PayPal Configuration
+    PAYPAL_CLIENT_ID: str = "BAAIlKDZJDPAM82OYRg0wA792WPdU2nHF_j5IEcNBLfwVoWVN1phsaHHDPwFY-BsX2IitDOaADBEKsWM3M"
+    PAYPAL_CLIENT_SECRET: str = "EBm9qsZjiTndBEIxD8uNwMn3zQHaqudRd19GYswegmwGfuUsshYhApfUu6IQ2jnX51oqKaUoaq3fvyim"
+    PAYPAL_MODE: str = "sandbox"
+    PAYPAL_EXCHANGE_RATE: float = 6.96
+
+    @property
+    def PAYPAL_API_BASE_URL(self) -> str:
+        if self.PAYPAL_MODE.lower() == "live":
+            return "https://api-m.paypal.com"
+        return "https://api-m.sandbox.paypal.com"
 
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:
+        if self.DATABASE_URL:
+            # Fix Railway postgres:// schema for SQLAlchemy 2.0
+            if self.DATABASE_URL.startswith("postgres://"):
+                return self.DATABASE_URL.replace("postgres://", "postgresql://", 1)
+            return self.DATABASE_URL
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
 

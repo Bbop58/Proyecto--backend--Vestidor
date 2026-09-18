@@ -421,7 +421,9 @@ def seed(db=None):
         if cajero_role:
             cajero_codes = [
                 "sucursales.list", "categorias.list", "productos.list", "variantes.list",
-                "inventario.list", "reservas.list", "ventas.list", "ventas.create"
+                "temporadas.list",
+                "inventario.list", "reservas.list", "reservas.update",
+                "ventas.list", "ventas.create", "ventas.reports"
             ]
             cajero_role.permissions = db.query(Permission).filter(Permission.code.in_(cajero_codes)).all()
 
@@ -430,8 +432,7 @@ def seed(db=None):
         if cliente_role:
             cliente_codes = [
                 "sucursales.list", "categorias.list", "productos.list", "variantes.list",
-                "reservas.list", "reservas.create", "reservas.update",
-                "ventas.list", "ventas.create"
+                "temporadas.list", "reservas.create"
             ]
             cliente_role.permissions = db.query(Permission).filter(Permission.code.in_(cliente_codes)).all()
 

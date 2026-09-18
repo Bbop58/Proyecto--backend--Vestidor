@@ -7,7 +7,7 @@ from decimal import Decimal
 # Add backend directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.database import SessionLocal
+from app.database import SessionLocal, engine, Base
 from app.core.security import get_password_hash
 from app.models.role import Role
 from app.models.permission import Permission
@@ -36,6 +36,10 @@ def seed_all():
     print("Iniciando Sembrado Completo de la Base de Datos...")
     print("==================================================")
     
+    # 0. Crear tablas si no existen
+    print("\n[0/6] Creando esquema de tablas en la base de datos...")
+    Base.metadata.create_all(bind=engine)
+
     # 1. Sembrar roles, permisos y temporadas
     print("\n[1/6] Sembrando Roles, Permisos y Temporadas base...")
     seed_permissions()
@@ -377,10 +381,16 @@ def seed_all():
         cajero_user = users_map.get("cajero@ficttstore.com")
         cliente_user = users_map.get("cliente@ficttstore.com")
 
-        # Asignar stock en Central y Equipetrol
+        # Asignar stock en todas las sucursales
         inventory_items = []
+        stock_by_branch = {
+            "Sucursal Central": 25,
+            "Sucursal Equipetrol": 18,
+            "Sucursal Montero": 12,
+            "Sucursal Cochabamba": 15,
+        }
         for v in all_variants:
-            for branch in [central_branch, equipetrol_branch]:
+            for branch in branches_map.values():
                 if not branch:
                     continue
                 inv = db.query(Inventory).filter(
@@ -389,7 +399,7 @@ def seed_all():
                 ).first()
 
                 if not inv:
-                    stock_qty = 25 if branch.nombre == "Sucursal Central" else 15
+                    stock_qty = stock_by_branch.get(branch.nombre, 15)
                     inv = Inventory(
                         sucursal_id=branch.id,
                         variante_id=v.id,
@@ -411,7 +421,7 @@ def seed_all():
                         stock_antes=0,
                         stock_despues=stock_qty,
                         referencia="RECEPCION-INICIAL-2025",
-                        nota="Carga de inventario inicial por apertura de catálogo",
+                        nota=f"Carga de inventario inicial para {branch.nombre}",
                         usuario_id=admin_user.id
                     )
                     db.add(mov)
@@ -580,6 +590,23 @@ def seed_all():
                 subtotal=Decimal("280.00")
             )
             db.add(det_sale2)
+
+            # Descontar stock para sale2
+            inv_sale2 = db.query(Inventory).filter(Inventory.sucursal_id == equipetrol_branch.id, Inventory.variante_id == v_sale2.id).first()
+            if inv_sale2:
+                antes = inv_sale2.stock_actual
+                inv_sale2.stock_actual = max(0, inv_sale2.stock_actual - 1)
+                mov_vta2 = InventoryMovement(
+                    inventario_id=inv_sale2.id,
+                    tipo=MovementType.SALIDA_VENTA,
+                    cantidad=1,
+                    stock_antes=antes,
+                    stock_despues=inv_sale2.stock_actual,
+                    referencia="VTA-2025-0002",
+                    nota="Salida por venta digital QR",
+                    usuario_id=cajero_user.id
+                )
+                db.add(mov_vta2)
             db.commit()
             print("  [OK] Creada Venta de prueba: VTA-2025-0002 (Digital / QR / $280.00)")
 

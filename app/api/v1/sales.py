@@ -80,6 +80,24 @@ def create_digital_sale(
     return SaleService.create_digital_sale(db, data, cliente_id=current_user.id)
 
 
+@router.get(
+    "/mis-compras",
+    response_model=List[SaleResponse],
+    summary="Historial de compras del cliente autenticado"
+)
+def get_my_purchases(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    """Retorna las compras digitales del cliente que realiza la petición."""
+    return SaleService.get_sales(
+        db,
+        cliente_id=current_user.id,
+        limit=100,
+        offset=0
+    )
+
+
 # ─────────────────────────── CONSULTA Y ANULACIÓN ──────────────────────────
 
 @router.get(

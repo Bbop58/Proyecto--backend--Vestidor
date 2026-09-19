@@ -13,6 +13,7 @@ from app.api.v1.inventory import router as inventory_router
 from app.api.v1.reservations import router as reservations_router
 from app.api.v1.sales import router as sales_router
 from app.api.v1.payments import router as payments_router
+from app.api.v1.ai import router as ai_router
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(auth_router)
@@ -29,6 +30,8 @@ api_v1_router.include_router(inventory_router)
 api_v1_router.include_router(reservations_router)
 api_v1_router.include_router(sales_router)
 api_v1_router.include_router(payments_router)
+api_v1_router.include_router(ai_router)
+
 
 
 

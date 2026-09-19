@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     PAYPAL_MODE: str = "sandbox"
     PAYPAL_EXCHANGE_RATE: float = 6.96
 
+    # Google Gemini AI Configuration
+    GEMINI_API_KEY: str = ""
+
+
     @property
     def PAYPAL_API_BASE_URL(self) -> str:
         if self.PAYPAL_MODE.lower() == "live":

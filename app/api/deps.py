@@ -1,5 +1,5 @@
 import uuid
-from typing import Generator, Tuple
+from typing import Generator, Tuple, Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -87,3 +87,26 @@ def get_current_user(
     if not user.is_active:
         raise InactiveUserException()
     return user
+
+
+def get_current_user_optional(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+) -> Optional[User]:
+    if not token:
+        return None
+    try:
+        payload = decode_token(token)
+        if payload.get("type") != "access":
+            return None
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            return None
+        user_id = uuid.UUID(user_id_str)
+        user = UserService.get_by_id(db, user_id)
+        if user and user.is_active:
+            return user
+    except Exception:
+        return None
+    return None
+

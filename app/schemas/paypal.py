@@ -17,6 +17,8 @@ class PayPalCreateOrderRequest(BaseModel):
     reserva_id: Optional[uuid.UUID] = None
     items: Optional[List[PayPalOrderItem]] = []
     descripcion: Optional[str] = "Compra en FICCT STORE"
+    return_url: Optional[str] = None
+    cancel_url: Optional[str] = None
 
 
 class PayPalCreateOrderResponse(BaseModel):

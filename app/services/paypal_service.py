@@ -57,7 +57,9 @@ class PayPalService:
         items: Optional[list] = None,
         sucursal_id: Optional[str] = None,
         reserva_id: Optional[str] = None,
-        descripcion: str = "Compra en FICCT STORE"
+        descripcion: str = "Compra en FICCT STORE",
+        return_url: Optional[str] = None,
+        cancel_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """Crea una orden de pago en PayPal REST API v2."""
         token = cls.get_access_token()
@@ -90,6 +92,10 @@ class PayPalService:
         if reserva_id:
             purchase_unit["custom_id"] = str(reserva_id)
 
+        # URLs de retorno y cancelación
+        final_return_url = return_url or "https://backend-production-d7d5d.up.railway.app/api/v1/payments/paypal/return"
+        final_cancel_url = cancel_url or "https://backend-production-d7d5d.up.railway.app/api/v1/payments/paypal/cancel"
+
         payload = {
             "intent": "CAPTURE",
             "purchase_units": [purchase_unit],
@@ -97,8 +103,8 @@ class PayPalService:
                 "brand_name": "FICCT STORE",
                 "landing_page": "NO_PREFERENCE",
                 "user_action": "PAY_NOW",
-                "return_url": "http://localhost:4200/ventas/pos?paypal=success",
-                "cancel_url": "http://localhost:4200/ventas/pos?paypal=cancel"
+                "return_url": final_return_url,
+                "cancel_url": final_cancel_url
             }
         }
 

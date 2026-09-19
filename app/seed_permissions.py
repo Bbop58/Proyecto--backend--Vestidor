@@ -353,6 +353,13 @@ SEASONS_SEED = [
         "fecha_inicio": date(2025, 11, 1),
         "fecha_fin": date(2025, 12, 31),
         "activa": False
+    },
+    {
+        "nombre": "Colección Streetwear FICTT 2025",
+        "año": 2025,
+        "fecha_inicio": date(2025, 8, 1),
+        "fecha_fin": date(2026, 12, 31),
+        "activa": True
     }
 ]
 

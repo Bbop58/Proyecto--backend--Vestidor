@@ -164,7 +164,7 @@ def seed_all():
                 print(f"  [OK] Creada sucursal: {branch.nombre} en {branch.ciudad}")
             branches_map[b_data["nombre"]] = branch
 
-        # 4. Sembrar Proveedores y Categorías
+        # 4. Sembrar Proveedores y Categorías de Moda Masculina
         print("\n[4/6] Sembrando Proveedores y Categorías...")
         suppliers_data = [
             {
@@ -192,10 +192,10 @@ def seed_all():
                 "activo": True
             },
             {
-                "nombre": "Importadora Calzados & Streetwear",
+                "nombre": "Streetwear Denim Lab",
                 "contacto": "Valeria Rios",
                 "telefono": "+591 4 4220011",
-                "email": "info@calzadosstreet.com",
+                "email": "info@streetweardenim.com",
                 "direccion": "Av. Heroínas #560, Cochabamba",
                 "activo": True
             }
@@ -210,12 +210,12 @@ def seed_all():
                 print(f"  [OK] Creado proveedor: {supplier.nombre}")
 
         categories_data = [
-            {"nombre": "Poleras & Remeras", "descripcion": "Poleras oversized, slim fit y urbanas"},
-            {"nombre": "Pantalones & Jeans", "descripcion": "Cargos, joggers, jeans rectos y relaxed"},
-            {"nombre": "Sudaderas & Hoodies", "descripcion": "Polerones con capucha y crewnecks premium"},
-            {"nombre": "Camisas", "descripcion": "Camisas manga corta, manga larga y estilo casual"},
-            {"nombre": "Calzados Urbanos", "descripcion": "Zapatillas deportivas y de vestir urbano"},
-            {"nombre": "Accesorios & Gorras", "descripcion": "Gorras snapback, bucket hats, cinturones y medias"}
+            {"nombre": "Poleras & Remeras", "descripcion": "Poleras oversized, boxy fit, remeras básicas y urbanas para hombre"},
+            {"nombre": "Hoodies & Polerones", "descripcion": "Hoodies frizados pesados, polerones crewneck y hoodies con cierre"},
+            {"nombre": "Camisas & Sobrecamisas", "descripcion": "Camisas de lino, franela leñadora, sobrecamisas y estilo resort"},
+            {"nombre": "Pantalones & Jeans", "descripcion": "Pantalones cargo tácticos, jeans baggy 90s y pantalones chino stretch"},
+            {"nombre": "Chaquetas & Abrigos", "descripcion": "Bombers urbanas, cazadoras trucker en denim y cortavientos"},
+            {"nombre": "Shorts & Bermudas", "descripcion": "Shorts cargo de verano, bermudas denim y shorts deportivos"}
         ]
 
         categories_map = {}
@@ -227,102 +227,280 @@ def seed_all():
                 db.commit()
                 db.refresh(cat)
                 print(f"  [OK] Creada categoría: {cat.nombre}")
+            else:
+                cat.descripcion = c_data["descripcion"]
+                db.commit()
             categories_map[c_data["nombre"]] = cat
 
-        # 5. Sembrar Productos y Variantes
-        print("\n[5/6] Sembrando Productos y Variantes...")
+        # 5. Sembrar Productos y Variantes de Moda Masculina
+        print("\n[5/6] Sembrando Productos y Variantes (Catálogo Masculino)...")
         products_data = [
+            # 1. Poleras
             {
                 "nombre": "Polera Oversize FICTT Core",
-                "descripcion": "Polera 100% algodón peinado 240g con estampado serigráfico de alta densidad.",
+                "descripcion": "Polera 100% algodón peinado 240g de corte oversize con estampado serigráfico de alta densidad.",
                 "precio_base": Decimal("120.00"),
                 "categoria_nombre": "Poleras & Remeras",
                 "temporada": "Primavera-Verano 2025",
                 "proveedor": "Textilera Andina S.A.",
-                "imagen_url": "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=500&auto=format&fit=crop&q=80",
+                "imagen_url": "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=700&auto=format&fit=crop&q=80",
                 "variantes": [
                     {"talla": "S", "color": "Negro", "sku": "POL-CORE-BLK-S", "precio_extra": Decimal("0.00")},
                     {"talla": "M", "color": "Negro", "sku": "POL-CORE-BLK-M", "precio_extra": Decimal("0.00")},
                     {"talla": "L", "color": "Negro", "sku": "POL-CORE-BLK-L", "precio_extra": Decimal("0.00")},
                     {"talla": "XL", "color": "Negro", "sku": "POL-CORE-BLK-XL", "precio_extra": Decimal("10.00")},
-                    {"talla": "M", "color": "Blanco", "sku": "POL-CORE-WHT-M", "precio_extra": Decimal("0.00")},
-                    {"talla": "L", "color": "Blanco", "sku": "POL-CORE-WHT-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Blanco Crudo", "sku": "POL-CORE-WHT-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Blanco Crudo", "sku": "POL-CORE-WHT-L", "precio_extra": Decimal("0.00")},
                 ]
             },
             {
+                "nombre": "Polera Heavyweight Boxy Fit",
+                "descripcion": "Polera de estructura pesada 280g, cuello cerrado y hombros caídos de máxima durabilidad.",
+                "precio_base": Decimal("130.00"),
+                "categoria_nombre": "Poleras & Remeras",
+                "temporada": "Primavera-Verano 2025",
+                "proveedor": "Textilera Andina S.A.",
+                "imagen_url": "https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "S", "color": "Gris Melange", "sku": "POL-BOXY-GRY-S", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Gris Melange", "sku": "POL-BOXY-GRY-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Gris Melange", "sku": "POL-BOXY-GRY-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Café Mocha", "sku": "POL-BOXY-MCH-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Café Mocha", "sku": "POL-BOXY-MCH-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Verde Oliva", "sku": "POL-BOXY-GRN-L", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            {
+                "nombre": "Polera Gráfica Cyber Street",
+                "descripcion": "Remera de estética streetwear futurista con serigrafía en la espalda e ilustración frontal.",
+                "precio_base": Decimal("135.00"),
+                "categoria_nombre": "Poleras & Remeras",
+                "temporada": "Colección Streetwear FICTT 2025",
+                "proveedor": "Moda Urbana Bolivia",
+                "imagen_url": "https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "M", "color": "Negro Ácido", "sku": "POL-CYB-BLK-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Negro Ácido", "sku": "POL-CYB-BLK-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "XL", "color": "Negro Ácido", "sku": "POL-CYB-BLK-XL", "precio_extra": Decimal("10.00")},
+                    {"talla": "M", "color": "Beige Arena", "sku": "POL-CYB-BGE-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Beige Arena", "sku": "POL-CYB-BGE-L", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            # 2. Hoodies
+            {
+                "nombre": "Hoodie Heavyweight Canguro FICTT",
+                "descripcion": "Buzo con capucha frizado 400g con bolsillo canguro reforzado y cordones con puntas metálicas.",
+                "precio_base": Decimal("280.00"),
+                "categoria_nombre": "Hoodies & Polerones",
+                "temporada": "Colección Streetwear FICTT 2025",
+                "proveedor": "Confecciones del Oriente",
+                "imagen_url": "https://images.unsplash.com/photo-1556905055-8f358a7a47b2?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "S", "color": "Negro", "sku": "HOD-HVY-BLK-S", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Negro", "sku": "HOD-HVY-BLK-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Negro", "sku": "HOD-HVY-BLK-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "XL", "color": "Negro", "sku": "HOD-HVY-BLK-XL", "precio_extra": Decimal("15.00")},
+                    {"talla": "M", "color": "Gris Jaspe", "sku": "HOD-HVY-GRY-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Gris Jaspe", "sku": "HOD-HVY-GRY-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Azul Marino", "sku": "HOD-HVY-NVY-L", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            {
+                "nombre": "Polerón Crewneck Minimalist",
+                "descripcion": "Sweatshirt cuello redondo en felpa francesa de algodón premium sin capucha para estilo smart casual.",
+                "precio_base": Decimal("240.00"),
+                "categoria_nombre": "Hoodies & Polerones",
+                "temporada": "Otoño-Invierno 2025",
+                "proveedor": "Confecciones del Oriente",
+                "imagen_url": "https://images.unsplash.com/photo-1620799140408-edc6dcb6d633?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "M", "color": "Verde Bosque", "sku": "CRW-MIN-GRN-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Verde Bosque", "sku": "CRW-MIN-GRN-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Negro", "sku": "CRW-MIN-BLK-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Negro", "sku": "CRW-MIN-BLK-L", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            {
+                "nombre": "Hoodie Zip-Up Tech Fleece",
+                "descripcion": "Chaqueta buzo con cierre frontal completo YKK, tejido térmico Tech Fleece y bolsillos con cremallera.",
+                "precio_base": Decimal("310.00"),
+                "categoria_nombre": "Hoodies & Polerones",
+                "temporada": "Otoño-Invierno 2025",
+                "proveedor": "Moda Urbana Bolivia",
+                "imagen_url": "https://images.unsplash.com/photo-1578587018452-892bacefd3f2?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "M", "color": "Carbón", "sku": "HOD-ZIP-DRK-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Carbón", "sku": "HOD-ZIP-DRK-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Gris Claro", "sku": "HOD-ZIP-LGT-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Gris Claro", "sku": "HOD-ZIP-LGT-L", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            # 3. Camisas
+            {
+                "nombre": "Camisa Casual Lino Cuello Mao",
+                "descripcion": "Camisa manga corta en tejido de lino natural liviano, cuello mao y calce relajado para climas cálidos.",
+                "precio_base": Decimal("180.00"),
+                "categoria_nombre": "Camisas & Sobrecamisas",
+                "temporada": "Primavera-Verano 2025",
+                "proveedor": "Textilera Andina S.A.",
+                "imagen_url": "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "S", "color": "Blanco", "sku": "CAM-LIN-WHT-S", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Blanco", "sku": "CAM-LIN-WHT-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Blanco", "sku": "CAM-LIN-WHT-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Celeste", "sku": "CAM-LIN-BLU-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Celeste", "sku": "CAM-LIN-BLU-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Arena", "sku": "CAM-LIN-SND-L", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            {
+                "nombre": "Sobrecamisa Franela Leñadora",
+                "descripcion": "Sobrecamisa gruesa de franela escocesa a cuadros, botones a presión y doble bolsillo en el pecho.",
+                "precio_base": Decimal("210.00"),
+                "categoria_nombre": "Camisas & Sobrecamisas",
+                "temporada": "Otoño-Invierno 2025",
+                "proveedor": "Moda Urbana Bolivia",
+                "imagen_url": "https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "M", "color": "Rojo/Negro", "sku": "CAM-FLN-RED-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Rojo/Negro", "sku": "CAM-FLN-RED-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "XL", "color": "Rojo/Negro", "sku": "CAM-FLN-RED-XL", "precio_extra": Decimal("10.00")},
+                    {"talla": "M", "color": "Verde/Negro", "sku": "CAM-FLN-GRN-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Verde/Negro", "sku": "CAM-FLN-GRN-L", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            {
+                "nombre": "Camisa Resort Cuello Cubano",
+                "descripcion": "Camisa veraniega con cuello abierto estilo camp collar en viscosa suave con caída fluida.",
+                "precio_base": Decimal("165.00"),
+                "categoria_nombre": "Camisas & Sobrecamisas",
+                "temporada": "Primavera-Verano 2025",
+                "proveedor": "Textilera Andina S.A.",
+                "imagen_url": "https://images.unsplash.com/photo-1607345366928-199ea26cfe3e?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "S", "color": "Negro Abstracto", "sku": "CAM-RST-BLK-S", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Negro Abstracto", "sku": "CAM-RST-BLK-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Negro Abstracto", "sku": "CAM-RST-BLK-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Blanco Botánico", "sku": "CAM-RST-WHT-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Blanco Botánico", "sku": "CAM-RST-WHT-L", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            # 4. Pantalones
+            {
                 "nombre": "Pantalón Cargo Táctico Streetwear",
-                "descripcion": "Pantalón cargo con 6 bolsillos multifuncionales, tela ripstop resistente y puño ajustable.",
+                "descripcion": "Pantalón cargo con 6 bolsillos multifuncionales, confeccionado en tela ripstop resistente y puño ajustable.",
                 "precio_base": Decimal("220.00"),
                 "categoria_nombre": "Pantalones & Jeans",
                 "temporada": "Primavera-Verano 2025",
                 "proveedor": "Moda Urbana Bolivia",
-                "imagen_url": "https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?w=500&auto=format&fit=crop&q=80",
+                "imagen_url": "https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?w=700&auto=format&fit=crop&q=80",
                 "variantes": [
                     {"talla": "30", "color": "Negro", "sku": "CARGO-TAC-BLK-30", "precio_extra": Decimal("0.00")},
                     {"talla": "32", "color": "Negro", "sku": "CARGO-TAC-BLK-32", "precio_extra": Decimal("0.00")},
                     {"talla": "34", "color": "Negro", "sku": "CARGO-TAC-BLK-34", "precio_extra": Decimal("0.00")},
+                    {"talla": "36", "color": "Negro", "sku": "CARGO-TAC-BLK-36", "precio_extra": Decimal("10.00")},
                     {"talla": "32", "color": "Verde Militar", "sku": "CARGO-TAC-MIL-32", "precio_extra": Decimal("0.00")},
-                    {"talla": "34", "color": "Beige", "sku": "CARGO-TAC-BGE-34", "precio_extra": Decimal("0.00")},
+                    {"talla": "34", "color": "Verde Militar", "sku": "CARGO-TAC-MIL-34", "precio_extra": Decimal("0.00")},
+                    {"talla": "32", "color": "Beige", "sku": "CARGO-TAC-BGE-32", "precio_extra": Decimal("0.00")},
                 ]
             },
             {
-                "nombre": "Hoodie Premium Heavyweight FICTT",
-                "descripcion": "Buzo con capucha frizado 400g con bolsillo canguro y cordones metálicos.",
-                "precio_base": Decimal("280.00"),
-                "categoria_nombre": "Sudaderas & Hoodies",
-                "temporada": "Colección Especial 2025",
-                "proveedor": "Confecciones del Oriente",
-                "imagen_url": "https://images.unsplash.com/photo-1556905055-8f358a7a47b2?w=500&auto=format&fit=crop&q=80",
+                "nombre": "Jeans Baggy Skate 90s",
+                "descripcion": "Pantalón vaquero denim rígido 14oz con corte ancho noventero y tiro medio.",
+                "precio_base": Decimal("235.00"),
+                "categoria_nombre": "Pantalones & Jeans",
+                "temporada": "Colección Streetwear FICTT 2025",
+                "proveedor": "Streetwear Denim Lab",
+                "imagen_url": "https://images.unsplash.com/photo-1541099649105-f69ad21f3246?w=700&auto=format&fit=crop&q=80",
                 "variantes": [
-                    {"talla": "M", "color": "Gris Jaspe", "sku": "HD-PREM-GRY-M", "precio_extra": Decimal("0.00")},
-                    {"talla": "L", "color": "Gris Jaspe", "sku": "HD-PREM-GRY-L", "precio_extra": Decimal("0.00")},
-                    {"talla": "M", "color": "Negro", "sku": "HD-PREM-BLK-M", "precio_extra": Decimal("0.00")},
-                    {"talla": "L", "color": "Negro", "sku": "HD-PREM-BLK-L", "precio_extra": Decimal("0.00")},
-                    {"talla": "XL", "color": "Negro", "sku": "HD-PREM-BLK-XL", "precio_extra": Decimal("15.00")},
+                    {"talla": "30", "color": "Azul Claro Lavado", "sku": "JNS-BGY-LGT-30", "precio_extra": Decimal("0.00")},
+                    {"talla": "32", "color": "Azul Claro Lavado", "sku": "JNS-BGY-LGT-32", "precio_extra": Decimal("0.00")},
+                    {"talla": "34", "color": "Azul Claro Lavado", "sku": "JNS-BGY-LGT-34", "precio_extra": Decimal("0.00")},
+                    {"talla": "32", "color": "Negro Desgastado", "sku": "JNS-BGY-BLK-32", "precio_extra": Decimal("0.00")},
+                    {"talla": "34", "color": "Negro Desgastado", "sku": "JNS-BGY-BLK-34", "precio_extra": Decimal("0.00")},
                 ]
             },
             {
-                "nombre": "Camisa Casual Lino Rayada",
-                "descripcion": "Camisa manga corta en tejido de lino liviano, cuello mao y corte relajado.",
-                "precio_base": Decimal("180.00"),
-                "categoria_nombre": "Camisas",
-                "temporada": "Primavera-Verano 2025",
-                "proveedor": "Moda Urbana Bolivia",
-                "imagen_url": "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=500&auto=format&fit=crop&q=80",
-                "variantes": [
-                    {"talla": "S", "color": "Celeste", "sku": "CAM-LIN-BLU-S", "precio_extra": Decimal("0.00")},
-                    {"talla": "M", "color": "Celeste", "sku": "CAM-LIN-BLU-M", "precio_extra": Decimal("0.00")},
-                    {"talla": "L", "color": "Celeste", "sku": "CAM-LIN-BLU-L", "precio_extra": Decimal("0.00")},
-                    {"talla": "M", "color": "Blanco", "sku": "CAM-LIN-WHT-M", "precio_extra": Decimal("0.00")},
-                ]
-            },
-            {
-                "nombre": "Zapatillas Urban Pro Runner",
-                "descripcion": "Calzado deportivo urbano con suela EVA ultra liviana y capellada transpirable.",
-                "precio_base": Decimal("350.00"),
-                "categoria_nombre": "Calzados Urbanos",
-                "temporada": "Primavera-Verano 2025",
-                "proveedor": "Importadora Calzados & Streetwear",
-                "imagen_url": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500&auto=format&fit=crop&q=80",
-                "variantes": [
-                    {"talla": "40", "color": "Blanco/Negro", "sku": "ZAP-URB-BW-40", "precio_extra": Decimal("0.00")},
-                    {"talla": "41", "color": "Blanco/Negro", "sku": "ZAP-URB-BW-41", "precio_extra": Decimal("0.00")},
-                    {"talla": "42", "color": "Blanco/Negro", "sku": "ZAP-URB-BW-42", "precio_extra": Decimal("0.00")},
-                    {"talla": "41", "color": "Total Black", "sku": "ZAP-URB-TB-41", "precio_extra": Decimal("0.00")},
-                    {"talla": "42", "color": "Total Black", "sku": "ZAP-URB-TB-42", "precio_extra": Decimal("0.00")},
-                ]
-            },
-            {
-                "nombre": "Gorra Snapback FICTT 3D",
-                "descripcion": "Gorra estructurada de 6 paneles con bordado 3D frontal y visera plana.",
-                "precio_base": Decimal("90.00"),
-                "categoria_nombre": "Accesorios & Gorras",
+                "nombre": "Pantalón Chino Slim Fit Stretch",
+                "descripcion": "Pantalón chino formal-casual en gabardina de algodón con elastano para máxima comodidad.",
+                "precio_base": Decimal("195.00"),
+                "categoria_nombre": "Pantalones & Jeans",
                 "temporada": "Primavera-Verano 2025",
                 "proveedor": "Textilera Andina S.A.",
-                "imagen_url": "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=500&auto=format&fit=crop&q=80",
+                "imagen_url": "https://images.unsplash.com/photo-1473966968600-fa801b869a1a?w=700&auto=format&fit=crop&q=80",
                 "variantes": [
-                    {"talla": "UNICA", "color": "Negro", "sku": "GOR-3D-BLK-U", "precio_extra": Decimal("0.00")},
-                    {"talla": "UNICA", "color": "Azul Marino", "sku": "GOR-3D-NVY-U", "precio_extra": Decimal("0.00")},
+                    {"talla": "30", "color": "Beige Khaki", "sku": "CHN-SLM-KHK-30", "precio_extra": Decimal("0.00")},
+                    {"talla": "32", "color": "Beige Khaki", "sku": "CHN-SLM-KHK-32", "precio_extra": Decimal("0.00")},
+                    {"talla": "34", "color": "Beige Khaki", "sku": "CHN-SLM-KHK-34", "precio_extra": Decimal("0.00")},
+                    {"talla": "32", "color": "Azul Marino", "sku": "CHN-SLM-NVY-32", "precio_extra": Decimal("0.00")},
+                    {"talla": "34", "color": "Negro", "sku": "CHN-SLM-BLK-34", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            # 5. Chaquetas
+            {
+                "nombre": "Chaqueta Bomber MA-1 Streetwear",
+                "descripcion": "Chaqueta aviadora bomber con forro acolchado naranja, cremalleras metálicas y bolsillo en manga.",
+                "precio_base": Decimal("350.00"),
+                "categoria_nombre": "Chaquetas & Abrigos",
+                "temporada": "Otoño-Invierno 2025",
+                "proveedor": "Moda Urbana Bolivia",
+                "imagen_url": "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "M", "color": "Negro", "sku": "BOM-MA1-BLK-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Negro", "sku": "BOM-MA1-BLK-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "XL", "color": "Negro", "sku": "BOM-MA1-BLK-XL", "precio_extra": Decimal("20.00")},
+                    {"talla": "M", "color": "Verde Militar", "sku": "BOM-MA1-GRN-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Verde Militar", "sku": "BOM-MA1-GRN-L", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            {
+                "nombre": "Cazadora Denim Trucker Vintage",
+                "descripcion": "Chaqueta vaquera trucker clásica en denim grueso 100% algodón con botones metálicos grabados.",
+                "precio_base": Decimal("310.00"),
+                "categoria_nombre": "Chaquetas & Abrigos",
+                "temporada": "Primavera-Verano 2025",
+                "proveedor": "Streetwear Denim Lab",
+                "imagen_url": "https://images.unsplash.com/photo-1576995853123-5a10305d93c0?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "S", "color": "Azul Clásico", "sku": "JKT-DNM-BLU-S", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Azul Clásico", "sku": "JKT-DNM-BLU-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Azul Clásico", "sku": "JKT-DNM-BLU-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Denim Negro", "sku": "JKT-DNM-BLK-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Denim Negro", "sku": "JKT-DNM-BLK-L", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            # 6. Shorts
+            {
+                "nombre": "Short Cargo Urbano Ripstop",
+                "descripcion": "Bermuda cargo casual por encima de la rodilla, con bolsillos laterales y cintura elastizada con cordón.",
+                "precio_base": Decimal("140.00"),
+                "categoria_nombre": "Shorts & Bermudas",
+                "temporada": "Primavera-Verano 2025",
+                "proveedor": "Moda Urbana Bolivia",
+                "imagen_url": "https://images.unsplash.com/photo-1591195853828-11db59a44f6b?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "30", "color": "Negro", "sku": "SHT-CRG-BLK-30", "precio_extra": Decimal("0.00")},
+                    {"talla": "32", "color": "Negro", "sku": "SHT-CRG-BLK-32", "precio_extra": Decimal("0.00")},
+                    {"talla": "34", "color": "Negro", "sku": "SHT-CRG-BLK-34", "precio_extra": Decimal("0.00")},
+                    {"talla": "32", "color": "Verde Oliva", "sku": "SHT-CRG-OLV-32", "precio_extra": Decimal("0.00")},
+                    {"talla": "34", "color": "Verde Oliva", "sku": "SHT-CRG-OLV-34", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            {
+                "nombre": "Short Deportivo FICTT Athletics",
+                "descripcion": "Short deportivo de secado rápido con forro interior transpirable y bolsillo oculto para teléfono.",
+                "precio_base": Decimal("115.00"),
+                "categoria_nombre": "Shorts & Bermudas",
+                "temporada": "Primavera-Verano 2025",
+                "proveedor": "Textilera Andina S.A.",
+                "imagen_url": "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=700&auto=format&fit=crop&q=80",
+                "variantes": [
+                    {"talla": "S", "color": "Negro", "sku": "SHT-ATH-BLK-S", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Negro", "sku": "SHT-ATH-BLK-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Negro", "sku": "SHT-ATH-BLK-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "XL", "color": "Negro", "sku": "SHT-ATH-BLK-XL", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Gris Plomo", "sku": "SHT-ATH-GRY-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Gris Plomo", "sku": "SHT-ATH-GRY-L", "precio_extra": Decimal("0.00")},
                 ]
             }
         ]
@@ -353,6 +531,9 @@ def seed_all():
                 product.imagen_url = p_info.get("imagen_url")
                 product.descripcion = p_info["descripcion"]
                 product.precio_base = p_info["precio_base"]
+                product.categoria_id = cat_obj.id
+                product.temporada = p_info["temporada"]
+                product.proveedor = p_info["proveedor"]
                 db.commit()
                 print(f"  [+] Producto actualizado: {product.nombre}")
 
@@ -479,8 +660,8 @@ def seed_all():
 
         # Reserva 2 (Pendiente)
         res2 = db.query(Reservation).filter(Reservation.codigo == "RES-2025-0002").first()
-        if not res2 and equipetrol_branch and cliente_user and len(all_variants) >= 3:
-            v3 = all_variants[2]
+        if not res2 and equipetrol_branch and cliente_user and len(all_variants) >= 4:
+            v3 = all_variants[3]
             res2 = Reservation(
                 codigo="RES-2025-0002",
                 cliente_id=cliente_user.id,
@@ -510,7 +691,7 @@ def seed_all():
             db.commit()
             print("  [OK] Creada Reserva de prueba: RES-2025-0002 (Estado: PENDIENTE)")
 
-        # Sembrar Ventas de prueba
+        # Sembrar Ventas de prueba con métodos activos (EFECTIVO y PAYPAL)
         sale1 = db.query(Sale).filter(Sale.numero_recibo == "VTA-2025-0001").first()
         if not sale1 and central_branch and cajero_user and cliente_user and len(all_variants) >= 2:
             v_sale = all_variants[0]
@@ -525,8 +706,8 @@ def seed_all():
                 monto_total=Decimal("120.00"),
                 monto_recibido=Decimal("150.00"),
                 cambio=Decimal("30.00"),
-                nota="Venta POS mostrador con factura",
-                created_at=utc_now() - timedelta(hours=3)
+                nota="Venta POS mostrador en efectivo",
+                created_at=utc_now() - timedelta(days=2)
             )
             db.add(sale1)
             db.commit()
@@ -558,25 +739,25 @@ def seed_all():
                 )
                 db.add(mov_vta)
             db.commit()
-            print("  [OK] Creada Venta de prueba: VTA-2025-0001 (Presencial / Efectivo / $120.00)")
+            print("  [OK] Creada Venta de prueba: VTA-2025-0001 (Presencial / Efectivo / 120.00 Bs.)")
 
         sale2 = db.query(Sale).filter(Sale.numero_recibo == "VTA-2025-0002").first()
-        if not sale2 and equipetrol_branch and cajero_user and cliente_user and len(all_variants) >= 3:
-            v_sale2 = all_variants[2]
+        if not sale2 and equipetrol_branch and cajero_user and cliente_user and len(all_variants) >= 4:
+            v_sale2 = all_variants[3]
             sale2 = Sale(
                 numero_recibo="VTA-2025-0002",
                 tipo=SaleType.DIGITAL,
                 estado=SaleStatus.COMPLETADA,
                 sucursal_id=equipetrol_branch.id,
                 cliente_id=cliente_user.id,
-                cajero_id=cajero_user.id,
-                metodo_pago=PaymentMethod.QR,
-                referencia_pago="QR-BNB-99882312",
+                cajero_id=None,
+                metodo_pago=PaymentMethod.PAYPAL,
+                referencia_pago="PAYPAL_SANDBOX_8AM31925X3104210E",
                 monto_total=Decimal("280.00"),
                 monto_recibido=Decimal("280.00"),
                 cambio=Decimal("0.00"),
-                nota="Venta con pago QR generado",
-                created_at=utc_now() - timedelta(hours=1)
+                nota="Compra digital en App Móvil cobrada con PayPal",
+                created_at=utc_now() - timedelta(hours=6)
             )
             db.add(sale2)
             db.commit()
@@ -603,12 +784,12 @@ def seed_all():
                     stock_antes=antes,
                     stock_despues=inv_sale2.stock_actual,
                     referencia="VTA-2025-0002",
-                    nota="Salida por venta digital QR",
-                    usuario_id=cajero_user.id
+                    nota="Salida por venta digital PayPal",
+                    usuario_id=admin_user.id
                 )
                 db.add(mov_vta2)
             db.commit()
-            print("  [OK] Creada Venta de prueba: VTA-2025-0002 (Digital / QR / $280.00)")
+            print("  [OK] Creada Venta de prueba: VTA-2025-0002 (Digital / PayPal / 280.00 Bs.)")
 
         print("\n==================================================")
         print(" [SUCCESS] BASE DE DATOS POBLADA EXITOSAMENTE! ")

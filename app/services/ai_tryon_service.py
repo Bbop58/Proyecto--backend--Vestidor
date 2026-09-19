@@ -48,21 +48,11 @@ class AITryOnService:
 
         category = db.query(Category).filter(Category.id == product.categoria_id).first()
         cat_nombre = category.nombre if category else "Ropa Masculina"
-
-        # 2. Generar imagen compuesta del usuario vistiendo la prenda
-        composite_image_data_url = await AITryOnService._generate_tryon_composite_image(
-            user_image_base64=request.imagen_cliente_base64,
-            product_image_url=product.imagen_url,
-            product_name=product.nombre,
-            category_name=cat_nombre,
-            color=variant.color,
-            talla=variant.talla,
-            preferencia=request.preferencia_calce or "REGULAR"
-        )
-
-        # 3. Intentar llamar a Google Gemini si hay API Key configurada
         api_key = settings.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+
+        # 2. Intentar llamar a Google Gemini Multimodal para análisis anatómico y de estilo
         gemini_result = None
+        user_features_description = None
 
         if api_key:
             try:
@@ -78,13 +68,44 @@ class AITryOnService:
                     peso_kg=request.peso_kg,
                     preferencia=request.preferencia_calce or "REGULAR"
                 )
+                if gemini_result and "descripcion_visual_usuario" in gemini_result:
+                    user_features_description = gemini_result["descripcion_visual_usuario"]
             except Exception as e:
                 print(f"[AITryOnService] Error llamando a Gemini API: {e}. Usando sintetizador de respaldo.")
 
-        # 4. Si Gemini devolvió datos válidos, los usamos
+        # 3. Intentar Generar Fotografía Realista con Google Imagen 3 (Generative Virtual Try-On)
+        generative_image_url = None
+        if api_key:
+            try:
+                generative_image_url = await AITryOnService._generate_imagen_tryon(
+                    api_key=api_key,
+                    user_features=user_features_description,
+                    product_name=product.nombre,
+                    category_name=cat_nombre,
+                    color=variant.color,
+                    talla=variant.talla,
+                    preferencia=request.preferencia_calce or "REGULAR"
+                )
+            except Exception as e:
+                print(f"[AITryOnService] Imagen 3 no disponible: {e}. Usando composición visual.")
+
+        # 4. Si Imagen 3 no generó imagen, usar el motor de composición visual
+        final_image_url = generative_image_url
+        if not final_image_url:
+            final_image_url = await AITryOnService._generate_tryon_composite_image(
+                user_image_base64=request.imagen_cliente_base64,
+                product_image_url=product.imagen_url,
+                product_name=product.nombre,
+                category_name=cat_nombre,
+                color=variant.color,
+                talla=variant.talla,
+                preferencia=request.preferencia_calce or "REGULAR"
+            )
+
+        # 5. Construir Respuesta
         if gemini_result:
             return VirtualTryOnResponse(
-                imagen_resultado_url=composite_image_data_url or product.imagen_url or "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=700",
+                imagen_resultado_url=final_image_url or product.imagen_url or "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=700",
                 talla_sugerida=gemini_result.get("talla_sugerida", variant.talla),
                 calce_detectado=gemini_result.get("calce_detectado", "Regular Fit"),
                 nivel_coincidencia_porcentaje=gemini_result.get("nivel_coincidencia_porcentaje", 96),
@@ -93,7 +114,7 @@ class AITryOnService:
                 combinaciones_sugeridas=AITryOnService._get_matching_recommendations(cat_nombre, variant.color)
             )
 
-        # 5. Motor Sintetizador Inteligente de Calce y Estilo (Fallback Resiliente)
+        # 6. Motor Sintetizador Inteligente de Calce y Estilo (Fallback Resiliente)
         fallback_res = AITryOnService._synthesize_fallback_tryon(
             product=product,
             variant=variant,
@@ -102,8 +123,8 @@ class AITryOnService:
             peso_kg=request.peso_kg,
             preferencia=request.preferencia_calce or "REGULAR"
         )
-        if composite_image_data_url:
-            fallback_res.imagen_resultado_url = composite_image_data_url
+        if final_image_url:
+            fallback_res.imagen_resultado_url = final_image_url
         return fallback_res
 
     @staticmethod
@@ -145,7 +166,8 @@ class AITryOnService:
             "calce_detectado": "Oversize Suelto|Regular Fit|Slim Fit",
             "nivel_coincidencia_porcentaje": 95,
             "analisis_silueta": "Breve explicación de 2 líneas sobre cómo se ajusta la prenda a su contextura.",
-            "consejo_estilo": "Consejo personalizado de 2 líneas sobre cómo lucir y combinar esta prenda."
+            "consejo_estilo": "Consejo personalizado de 2 líneas sobre cómo lucir y combinar esta prenda.",
+            "descripcion_visual_usuario": "Brief description in English of the subject's gender, ethnicity/skin tone, hair style, facial hair, and physical build for photorealistic generation."
         }}
         """
 
@@ -285,6 +307,57 @@ class AITryOnService:
                     motivo="Crea una silueta moderna y abrigada."
                 )
             ]
+
+    @staticmethod
+    async def _generate_imagen_tryon(
+        api_key: str,
+        user_features: Optional[str],
+        product_name: str,
+        category_name: str,
+        color: str,
+        talla: str,
+        preferencia: str
+    ) -> Optional[str]:
+        """
+        Llama a Google Imagen 3 (imagen-3.0-generate-002) para generar una fotografía fotorrealista
+        del usuario vistiendo la prenda seleccionada con caída, pliegues e iluminación de catálogo real.
+        """
+        try:
+            subject_desc = user_features or "a stylish young man with natural haircut and athletic casual build"
+            fit_desc = "loose oversize streetwear fit" if preferencia.upper() == "OVERSIZE" else "fitted modern clean fit"
+
+            prompt = (
+                f"High-end fashion editorial lookbook photography of {subject_desc}, "
+                f"standing and confidently wearing a {color} {product_name} ({category_name}) with {fit_desc}. "
+                f"Realistic fabric folds, visible cotton texture, natural studio lighting, soft shadows, sharp focus, 8k resolution, authentic clothing catalogue photograph."
+            )
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key={api_key}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "instances": [
+                    {"prompt": prompt}
+                ],
+                "parameters": {
+                    "sampleCount": 1,
+                    "aspectRatio": "3:4",
+                    "personGeneration": "allow_adult"
+                }
+            }
+
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    predictions = data.get("predictions", [])
+                    if predictions and "bytesBase64Encoded" in predictions[0]:
+                        img_b64 = predictions[0]["bytesBase64Encoded"]
+                        return f"data:image/jpeg;base64,{img_b64}"
+                else:
+                    print(f"[_generate_imagen_tryon] Status {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            print(f"[_generate_imagen_tryon] Error llamando a Imagen 3: {e}")
+        return None
 
     @staticmethod
     async def _generate_tryon_composite_image(

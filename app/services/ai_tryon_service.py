@@ -1,8 +1,10 @@
 import os
+import io
 import json
 import base64
 import httpx
 from typing import Optional, Dict, Any, List
+from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageOps
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 
@@ -47,7 +49,18 @@ class AITryOnService:
         category = db.query(Category).filter(Category.id == product.categoria_id).first()
         cat_nombre = category.nombre if category else "Ropa Masculina"
 
-        # 2. Intentar llamar a Google Gemini si hay API Key configurada
+        # 2. Generar imagen compuesta del usuario vistiendo la prenda
+        composite_image_data_url = await AITryOnService._generate_tryon_composite_image(
+            user_image_base64=request.imagen_cliente_base64,
+            product_image_url=product.imagen_url,
+            product_name=product.nombre,
+            category_name=cat_nombre,
+            color=variant.color,
+            talla=variant.talla,
+            preferencia=request.preferencia_calce or "REGULAR"
+        )
+
+        # 3. Intentar llamar a Google Gemini si hay API Key configurada
         api_key = settings.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
         gemini_result = None
 
@@ -68,10 +81,10 @@ class AITryOnService:
             except Exception as e:
                 print(f"[AITryOnService] Error llamando a Gemini API: {e}. Usando sintetizador de respaldo.")
 
-        # 3. Si Gemini devolvió datos válidos, los usamos
+        # 4. Si Gemini devolvió datos válidos, los usamos
         if gemini_result:
             return VirtualTryOnResponse(
-                imagen_resultado_url=product.imagen_url or "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=700",
+                imagen_resultado_url=composite_image_data_url or product.imagen_url or "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=700",
                 talla_sugerida=gemini_result.get("talla_sugerida", variant.talla),
                 calce_detectado=gemini_result.get("calce_detectado", "Regular Fit"),
                 nivel_coincidencia_porcentaje=gemini_result.get("nivel_coincidencia_porcentaje", 96),
@@ -80,8 +93,8 @@ class AITryOnService:
                 combinaciones_sugeridas=AITryOnService._get_matching_recommendations(cat_nombre, variant.color)
             )
 
-        # 4. Motor Sintetizador Inteligente de Calce y Estilo (Fallback Resiliente)
-        return AITryOnService._synthesize_fallback_tryon(
+        # 5. Motor Sintetizador Inteligente de Calce y Estilo (Fallback Resiliente)
+        fallback_res = AITryOnService._synthesize_fallback_tryon(
             product=product,
             variant=variant,
             cat_nombre=cat_nombre,
@@ -89,6 +102,9 @@ class AITryOnService:
             peso_kg=request.peso_kg,
             preferencia=request.preferencia_calce or "REGULAR"
         )
+        if composite_image_data_url:
+            fallback_res.imagen_resultado_url = composite_image_data_url
+        return fallback_res
 
     @staticmethod
     async def _call_gemini_multimodal(
@@ -269,3 +285,113 @@ class AITryOnService:
                     motivo="Crea una silueta moderna y abrigada."
                 )
             ]
+
+    @staticmethod
+    async def _generate_tryon_composite_image(
+        user_image_base64: str,
+        product_image_url: Optional[str],
+        product_name: str,
+        category_name: str,
+        color: str,
+        talla: str,
+        preferencia: str
+    ) -> Optional[str]:
+        """
+        Genera una composición fotográfica visual realista donde la prenda de la tienda
+        se adapta y superpone sobre la silueta/torso del cliente.
+        """
+        try:
+            # 1. Decodificar la imagen del usuario
+            clean_b64 = user_image_base64
+            if "base64," in user_image_base64:
+                clean_b64 = user_image_base64.split("base64,", 1)[1]
+
+            user_bytes = base64.b64decode(clean_b64)
+            user_img = Image.open(io.BytesIO(user_bytes)).convert("RGBA")
+
+            # Si es imagen minúscula o placeholder (como avatares 1x1), crear lienzo de estudio
+            if user_img.width < 50 or user_img.height < 50:
+                user_img = Image.new("RGBA", (700, 900), color=(26, 29, 45, 255))
+                # Dibujar silueta anatómica de estudio
+                draw = ImageDraw.Draw(user_img)
+                draw.ellipse([270, 80, 430, 240], fill=(45, 52, 80, 255)) # Cabeza
+                draw.rounded_rectangle([180, 260, 520, 700], radius=40, fill=(35, 41, 65, 255)) # Torso
+
+            # Normalizar tamaño del lienzo base a proporción de moda vertical (700x900)
+            target_w = 700
+            target_h = int(user_img.height * (target_w / user_img.width)) if user_img.width > 0 else 900
+            if target_h < 700:
+                target_h = 900
+            elif target_h > 1100:
+                target_h = 1100
+
+            base_canvas = user_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+            # 2. Descargar o preparar la imagen de la prenda
+            prod_img = None
+            if product_image_url and product_image_url.startswith("http"):
+                try:
+                    async with httpx.AsyncClient(timeout=6.0) as client:
+                        resp = await client.get(product_image_url)
+                        if resp.status_code == 200:
+                            prod_img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+                except Exception as e:
+                    print(f"[_generate_tryon_composite_image] No se pudo descargar imagen producto: {e}")
+
+            # 3. Componer la prenda sobre la silueta/torso
+            if prod_img:
+                # Ajustar tamaño de prenda según la categoría
+                is_bottom = "Pantalones" in category_name or "Shorts" in category_name
+                
+                if is_bottom:
+                    garment_w = int(target_w * 0.70)
+                    garment_h = int(target_h * 0.55)
+                    pos_x = int((target_w - garment_w) / 2)
+                    pos_y = int(target_h * 0.45)
+                else:
+                    # Poleras, Hoodies, Camisas, Chaquetas
+                    scale_mult = 0.78 if preferencia.upper() == "OVERSIZE" else 0.72
+                    garment_w = int(target_w * scale_mult)
+                    garment_h = int(target_h * 0.58)
+                    pos_x = int((target_w - garment_w) / 2)
+                    pos_y = int(target_h * 0.22)
+
+                resized_garment = prod_img.resize((garment_w, garment_h), Image.Resampling.LANCZOS)
+
+                # Crear máscara suave con esquinas redondeadas y difuminado para fusión natural
+                mask = Image.new("L", (garment_w, garment_h), 0)
+                mask_draw = ImageDraw.Draw(mask)
+                mask_draw.rounded_rectangle([0, 0, garment_w, garment_h], radius=24, fill=255)
+                mask = mask.filter(ImageFilter.GaussianBlur(radius=3))
+
+                # Crear sombra proyectada
+                shadow = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+                shadow_draw = ImageDraw.Draw(shadow)
+                shadow_draw.rounded_rectangle(
+                    [pos_x - 8, pos_y + 10, pos_x + garment_w + 8, pos_y + garment_h + 12],
+                    radius=28,
+                    fill=(0, 0, 0, 90)
+                )
+                shadow = shadow.filter(ImageFilter.GaussianBlur(radius=8))
+
+                # Fusión de capas
+                base_canvas = Image.alpha_composite(base_canvas, shadow)
+                base_canvas.paste(resized_garment, (pos_x, pos_y), mask)
+
+            # 4. Añadir marcas visuales de Try-On de alta tecnología (HUD FICCT AI)
+            hud_draw = ImageDraw.Draw(base_canvas)
+            # Badge superior
+            hud_draw.rounded_rectangle([20, 20, 360, 68], radius=14, fill=(15, 17, 26, 210), outline=(108, 92, 231, 255), width=2)
+            hud_draw.text((36, 28), "FICCT VIRTUAL TRY-ON AI", fill=(0, 206, 201, 255))
+            hud_draw.text((36, 46), f"{product_name[:24]} • {color} ({talla})", fill=(255, 255, 255, 230))
+
+            # Convertir a RGB y exportar a Base64 JPEG
+            final_rgb = base_canvas.convert("RGB")
+            out_buffer = io.BytesIO()
+            final_rgb.save(out_buffer, format="JPEG", quality=90)
+            encoded = base64.b64encode(out_buffer.getvalue()).decode("utf-8")
+            return f"data:image/jpeg;base64,{encoded}"
+
+        except Exception as e:
+            print(f"[_generate_tryon_composite_image] Error generando imagen compuesta: {e}")
+            return None

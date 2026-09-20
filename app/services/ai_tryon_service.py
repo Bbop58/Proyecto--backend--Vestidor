@@ -1,13 +1,12 @@
 import os
 import base64
 import logging
+import tempfile
 import httpx
 from typing import Optional
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
-from google import genai
-from google.genai import types
-from google.genai import errors
+from gradio_client import Client, handle_file
 
 from app.config import settings
 from app.models.product import Product
@@ -26,10 +25,10 @@ class AITryOnService:
         cliente_id: Optional[str] = None
     ) -> VirtualTryOnResponse:
         """
-        Procesa el vestidor virtual con la API oficial de Google Gemini (google-genai).
-        Recibe la foto del usuario y el ID del producto que está viendo, y genera
-        una fotografía realista de la persona vistiendo la prenda manteniendo intactos
-        su rostro, cuerpo, pose y fondo original.
+        Procesa el vestidor virtual con el modelo de IA IDM-VTON (Virtual Try-On).
+        Recibe la foto del usuario y el ID del producto que está viendo en la tienda,
+        ajusta con precisión la prenda sobre el cuerpo de la persona conservando intactos
+        su rostro, cuerpo, pose y el fondo original, 100% libre de costo.
         """
         # 1. Identificar y cargar el producto de la base de datos
         product = None
@@ -53,24 +52,10 @@ class AITryOnService:
                 detail="El producto seleccionado no existe o no está activo."
             )
 
-        # 2. Obtener la clave de API de Gemini
-        api_key = settings.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
-        if not api_key:
-            logger.error("GEMINI_API_KEY no configurada.")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="No se pudo generar la imagen del vestidor virtual en este momento. Por favor, intenta más tarde."
-            )
-
-        # 3. Limpiar y decodificar la foto del usuario
+        # 2. Limpiar y decodificar la foto del usuario
         user_raw = request.imagen_cliente_base64
-        user_mime = "image/jpeg"
         if "base64," in user_raw:
-            header, user_b64 = user_raw.split("base64,", 1)
-            if "png" in header.lower():
-                user_mime = "image/png"
-            elif "webp" in header.lower():
-                user_mime = "image/webp"
+            _, user_b64 = user_raw.split("base64,", 1)
         else:
             user_b64 = user_raw
 
@@ -83,81 +68,75 @@ class AITryOnService:
                 detail="La imagen proporcionada no tiene un formato válido."
             )
 
-        # 4. Obtener la imagen de la prenda
+        # 3. Obtener la imagen de la prenda
         garment_bytes: Optional[bytes] = None
-        garment_mime = "image/jpeg"
         if product.imagen_url and product.imagen_url.startswith("http"):
             try:
-                resp = httpx.get(product.imagen_url, timeout=4.0)
+                resp = httpx.get(product.imagen_url, timeout=10.0)
                 if resp.status_code == 200:
                     garment_bytes = resp.content
-                    content_type = resp.headers.get("content-type", "")
-                    if "png" in content_type:
-                        garment_mime = "image/png"
-                    elif "webp" in content_type:
-                        garment_mime = "image/webp"
             except Exception as e:
                 logger.info(f"No se pudo descargar la imagen remota {product.imagen_url}: {e}")
 
         if not garment_bytes:
             garment_bytes = user_bytes
-            garment_mime = user_mime
 
-        # 5. Prompt de alta fidelidad para el Vestidor Virtual
-        prompt_text = (
-            f"Image 1 is a photograph of a real person. "
-            f"Image 2 is a clothing item from our retail catalogue: '{product.nombre}'. "
-            f"Generate a realistic photograph of this EXACT same person from Image 1 wearing the clothing item from Image 2. "
-            f"Crucial requirements: "
-            f"1. Strictly preserve the person's face, facial features, hair, skin tone, body shape, and proportions from Image 1. "
-            f"2. Keep the person's exact posture, pose, camera angle, and original lighting intact. "
-            f"3. Keep the original background and environment of Image 1 completely intact. "
-            f"4. Replace the upper/relevant clothing with the garment from Image 2, naturally draping and fitting their torso with realistic fabric texture, natural wrinkles, and proper contact shadows. "
-            f"5. The final image must look completely natural and photorealistic, avoiding any visible cutouts or digital montage effect."
-        )
+        # 4. Guardar archivos temporales locales para el cliente de predicción
+        person_tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        garment_tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
 
-        # 6. Invocar la API oficial de Google Gemini usando google-genai
         try:
-            client = genai.Client(api_key=api_key)
-            contents = [
-                types.Part.from_text(text=prompt_text),
-                types.Part.from_bytes(data=user_bytes, mime_type=user_mime),
-                types.Part.from_bytes(data=garment_bytes, mime_type=garment_mime),
-            ]
+            person_tmp.write(user_bytes)
+            person_tmp.flush()
+            person_tmp.close()
 
-            response = client.models.generate_content(
-                model="gemini-3.1-flash-image",
-                contents=contents
+            garment_tmp.write(garment_bytes)
+            garment_tmp.flush()
+            garment_tmp.close()
+
+            logger.info(f"Iniciando inferencia de vestidor virtual para producto '{product.nombre}'...")
+
+            # 5. Invocar el motor de IA IDM-VTON
+            client = Client("yisol/IDM-VTON")
+            result = client.predict(
+                dict={
+                    "background": handle_file(person_tmp.name),
+                    "layers": [],
+                    "composite": None
+                },
+                garm_img=handle_file(garment_tmp.name),
+                garment_des=product.nombre or "Prenda de vestir de tienda",
+                is_checked=True,
+                is_checked_crop=False,
+                denoise_steps=30,
+                seed=42,
+                api_name="/tryon"
             )
 
-            result_b64: Optional[str] = None
-            if response.candidates:
-                for part in response.candidates[0].content.parts:
-                    if hasattr(part, "inline_data") and part.inline_data:
-                        p_mime = part.inline_data.mime_type or "image/png"
-                        p_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
-                        result_b64 = f"data:{p_mime};base64,{p_b64}"
-                        break
+            output_image_path = result[0] if isinstance(result, (list, tuple)) else result
+            if not output_image_path or not os.path.exists(output_image_path):
+                logger.error(f"Ruta de imagen de salida inválida: {output_image_path}")
+                raise Exception("El modelo no devolvió una imagen válida.")
 
-            if not result_b64:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="No se pudo generar la imagen del vestidor virtual en este momento. Por favor, intenta más tarde."
-                )
+            with open(output_image_path, "rb") as f:
+                res_bytes = f.read()
 
+            result_b64 = f"data:image/png;base64,{base64.b64encode(res_bytes).decode('utf-8')}"
+            logger.info(f"Vestidor virtual procesado exitosamente ({len(res_bytes)} bytes)")
             return VirtualTryOnResponse(imagen_resultado_base64=result_b64)
 
-        except errors.APIError as api_err:
-            logger.warning(f"Error en API Gemini: {api_err}")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="No se pudo generar la imagen del vestidor virtual en este momento. Por favor, intenta más tarde."
-            )
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error inesperado en vestidor virtual: {e}")
+            logger.error(f"Error procesando vestidor virtual: {e}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="No se pudo generar la imagen del vestidor virtual en este momento. Por favor, intenta más tarde."
             )
+        finally:
+            for tmp_path in [person_tmp.name, garment_tmp.name]:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception as e:
+                        logger.debug(f"Error eliminando archivo temporal {tmp_path}: {e}")

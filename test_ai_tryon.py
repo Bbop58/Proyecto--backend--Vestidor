@@ -1,6 +1,7 @@
 import sys
 import os
 import base64
+import httpx
 from fastapi.testclient import TestClient
 
 # UTF-8 stdout
@@ -20,40 +21,40 @@ client = TestClient(app)
 
 def test_ai_virtual_tryon():
     print("==================================================")
-    print("   TEST DE VESTIDOR VIRTUAL CON GEMINI (BACKEND)")
+    print("   TEST DE VESTIDOR VIRTUAL CON IDM-VTON (GRATIS)")
     print("==================================================")
 
     db = SessionLocal()
     try:
-        product = db.query(Product).first()
+        product = db.query(Product).filter(Product.activo == True).first()
         assert product is not None, "No hay productos en la base de datos para probar"
         print(f" -> Producto de prueba: {product.nombre} (ID: {product.id})")
 
-        # Imagen base64 de prueba (1x1 pixel PNG)
-        sample_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        # Descargar una foto real de una persona para que el modelo identifique pose y cuerpo
+        print(" -> Obteniendo imagen de prueba de persona...")
+        person_url = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&auto=format&fit=crop&q=80"
+        resp = httpx.get(person_url, timeout=10.0)
+        person_b64 = base64.b64encode(resp.content).decode("utf-8")
 
         payload = {
             "producto_id": str(product.id),
-            "imagen_cliente_base64": f"data:image/png;base64,{sample_png}"
+            "imagen_cliente_base64": f"data:image/jpeg;base64,{person_b64}"
         }
 
-        print("\n[PASO 1] Enviando petición simplificada a POST /api/v1/ai/virtual-tryon...")
+        print("\n[PASO 1] Enviando petición a POST /api/v1/ai/virtual-tryon...")
         res = client.post("/api/v1/ai/virtual-tryon", json=payload)
         
         print(f" -> Status code recibido: {res.status_code}")
         if res.status_code == 200:
             data = res.json()
             assert "imagen_resultado_base64" in data, "La respuesta no contiene imagen_resultado_base64"
-            print(" -> ¡Generación exitosa con Gemini (200 OK)!")
-            print(f"    * Longitud de imagen generada: {len(data['imagen_resultado_base64'])} caracteres")
-        elif res.status_code in (500, 503):
-            # Error controlado cuando no hay cuota de imágenes en el plan de la API
-            data = res.json()
-            print(f" -> Error controlado en español: {data.get('detail')}")
-            assert "No se pudo generar la imagen del vestidor virtual" in data.get("detail", ""), "El mensaje de error no es el esperado"
-            print(" -> Manejo de error de cuota/API verificado con éxito.")
+            print(" -> ¡Generación de vestidor virtual exitosa (200 OK)!")
+            print(f"    * Longitud de imagen base64: {len(data['imagen_resultado_base64'])} caracteres")
+            assert data["imagen_resultado_base64"].startswith("data:image/png;base64,"), "El formato no es data URI base64"
         else:
-            raise AssertionError(f"Status inesperado: {res.status_code} - {res.text}")
+            data = res.json()
+            print(f" -> Respuesta: {data}")
+            assert False, f"Fallo con status {res.status_code}: {res.text}"
 
         print("\n==================================================")
         print("   TEST DEL VESTIDOR VIRTUAL COMPLETADO CON ÉXITO")

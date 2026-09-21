@@ -14,6 +14,7 @@ from app.api.v1.reservations import router as reservations_router
 from app.api.v1.sales import router as sales_router
 from app.api.v1.payments import router as payments_router
 from app.api.v1.ai import router as ai_router
+from app.api.v1.voice_reports import router as voice_reports_router
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(auth_router)
@@ -31,6 +32,7 @@ api_v1_router.include_router(reservations_router)
 api_v1_router.include_router(sales_router)
 api_v1_router.include_router(payments_router)
 api_v1_router.include_router(ai_router)
+api_v1_router.include_router(voice_reports_router)
 
 
 

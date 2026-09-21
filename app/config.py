@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # Google Gemini AI Configuration
     GEMINI_API_KEY: str = ""
+    VOICE_GEMINI_API_KEY: str = ""
 
     # Hugging Face Configuration (User Access Token for IDM-VTON)
     HF_TOKEN: str = ""

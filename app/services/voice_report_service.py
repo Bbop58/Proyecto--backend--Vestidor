@@ -120,11 +120,16 @@ class VoiceReportService:
         Traduce una pregunta en lenguaje natural a consulta SQL usando el modelo de texto Gemini 2.5 Flash.
         Utiliza el Free Tier de texto (100% gratuito).
         """
-        api_key = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY")
+        api_key = (
+            settings.VOICE_GEMINI_API_KEY
+            or os.getenv("VOICE_GEMINI_API_KEY")
+            or settings.GEMINI_API_KEY
+            or os.getenv("GEMINI_API_KEY")
+        )
         if not api_key:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="GEMINI_API_KEY no está configurada en el servidor."
+                detail="Ni VOICE_GEMINI_API_KEY ni GEMINI_API_KEY están configuradas en el servidor."
             )
 
         client = genai.Client(api_key=api_key)

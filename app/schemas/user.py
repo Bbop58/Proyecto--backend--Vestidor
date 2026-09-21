@@ -15,10 +15,25 @@ class UserCreate(UserBase):
     role_id: Optional[uuid.UUID] = None
 
 
+class UserAdminCreate(UserBase):
+    password: str = Field(..., min_length=8, max_length=100, description="Minimum 8 characters")
+    role_id: Optional[uuid.UUID] = None
+    is_active: bool = True
+
+
 class UserUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=2, max_length=100)
     email: Optional[EmailStr] = None
     role_id: Optional[uuid.UUID] = None
+
+
+class UserAdminUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=2, max_length=100)
+    email: Optional[EmailStr] = None
+    role_id: Optional[uuid.UUID] = None
+    password: Optional[str] = Field(None, min_length=8, max_length=100)
+    is_active: Optional[bool] = None
+
 
 
 class UserResponse(UserBase):

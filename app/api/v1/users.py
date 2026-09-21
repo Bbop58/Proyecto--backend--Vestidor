@@ -1,8 +1,9 @@
+import uuid
 from typing import List
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.user import UserResponse, UserUpdate
+from app.schemas.user import UserResponse, UserUpdate, UserAdminCreate, UserAdminUpdate
 from app.schemas.auth import ChangePasswordRequest
 from app.schemas.common import MessageResponse
 from app.services.user_service import UserService
@@ -70,5 +71,83 @@ def change_my_password(
 ):
     AuthService.change_password(db, current_user, change_pwd_in)
     return MessageResponse(message="Contraseña actualizada exitosamente")
+
+
+@router.post(
+    "",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission("users.create"))],
+    summary="Crear nuevo usuario con rol asignado (Admin)"
+)
+def create_user(
+    user_in: UserAdminCreate,
+    db: Session = Depends(get_db)
+):
+    user = UserService.create_by_admin(db, user_in)
+    return build_user_response(user, db)
+
+
+@router.get(
+    "/{user_id}",
+    response_model=UserResponse,
+    dependencies=[Depends(require_permission("users.list"))],
+    summary="Obtener usuario por ID (Admin)"
+)
+def get_user_by_id(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db)
+):
+    user = UserService.get_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado"
+        )
+    return build_user_response(user, db)
+
+
+@router.put(
+    "/{user_id}",
+    response_model=UserResponse,
+    dependencies=[Depends(require_permission("users.update"))],
+    summary="Actualizar usuario y su rol (Admin)"
+)
+def update_user(
+    user_id: uuid.UUID,
+    user_in: UserAdminUpdate,
+    admin_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = UserService.get_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado"
+        )
+    updated = UserService.update_by_admin(db, user, user_in, admin_user)
+    return build_user_response(updated, db)
+
+
+@router.patch(
+    "/{user_id}/toggle-active",
+    response_model=UserResponse,
+    dependencies=[Depends(require_permission("users.update"))],
+    summary="Activar o desactivar cuenta de usuario (Admin)"
+)
+def toggle_user_active(
+    user_id: uuid.UUID,
+    admin_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = UserService.get_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado"
+        )
+    updated = UserService.toggle_active(db, user, admin_user)
+    return build_user_response(updated, db)
+
 
 

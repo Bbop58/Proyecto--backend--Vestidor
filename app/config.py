@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # Hugging Face Configuration (User Access Token for IDM-VTON)
     HF_TOKEN: str = ""
 
+    # Optional dedicated VTON endpoint (e.g. Google Colab Gradio Live URL: https://xxxx.gradio.live)
+    VTON_API_URL: str = ""
+
 
     @property
     def PAYPAL_API_BASE_URL(self) -> str:

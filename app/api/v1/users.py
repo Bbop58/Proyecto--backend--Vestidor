@@ -3,7 +3,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.user import UserResponse, UserUpdate
+from app.schemas.auth import ChangePasswordRequest
+from app.schemas.common import MessageResponse
 from app.services.user_service import UserService
+from app.services.auth_service import AuthService
 from app.services.role_service import RoleService
 from app.api.deps import get_current_user, require_permission
 from app.models.user import User
@@ -53,4 +56,19 @@ def update_me(
 ):
     updated_user = UserService.update(db, current_user, user_update)
     return build_user_response(updated_user, db)
+
+
+@router.post(
+    "/me/change-password",
+    response_model=MessageResponse,
+    summary="Cambiar contraseña del usuario autenticado"
+)
+def change_my_password(
+    change_pwd_in: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    AuthService.change_password(db, current_user, change_pwd_in)
+    return MessageResponse(message="Contraseña actualizada exitosamente")
+
 

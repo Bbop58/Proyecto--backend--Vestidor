@@ -27,3 +27,9 @@ class RefreshTokenRequest(BaseModel):
 
 class LogoutRequest(BaseModel):
     refresh_token: Optional[str] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, description="Contraseña actual")
+    new_password: str = Field(..., min_length=8, max_length=100, description="Nueva contraseña (mínimo 8 caracteres)")
+

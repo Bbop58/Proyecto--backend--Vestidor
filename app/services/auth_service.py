@@ -1,13 +1,15 @@
 from datetime import datetime, timezone
 from typing import Tuple, Optional
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from app.models.user import User
 from app.models.token_blacklist import TokenBlacklist
-from app.schemas.auth import RegisterRequest, LoginRequest
+from app.schemas.auth import RegisterRequest, LoginRequest, ChangePasswordRequest
 from app.schemas.user import UserCreate
 from app.services.user_service import UserService
 from app.core.security import (
     verify_password,
+    get_password_hash,
     create_access_token,
     create_refresh_token,
     decode_token
@@ -119,3 +121,22 @@ class AuthService:
             db.commit()
         except Exception:
             db.rollback()
+
+    @staticmethod
+    def change_password(db: Session, user: User, data: ChangePasswordRequest) -> None:
+        if not verify_password(data.current_password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La contraseña actual es incorrecta."
+            )
+        
+        if data.current_password == data.new_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La nueva contraseña debe ser diferente de la actual."
+            )
+        
+        user.hashed_password = get_password_hash(data.new_password)
+        db.commit()
+        db.refresh(user)
+

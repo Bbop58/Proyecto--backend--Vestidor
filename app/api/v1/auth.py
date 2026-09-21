@@ -7,7 +7,8 @@ from app.schemas.auth import (
     RegisterRequest,
     TokenResponse,
     RefreshTokenRequest,
-    LogoutRequest
+    LogoutRequest,
+    ChangePasswordRequest
 )
 from app.schemas.common import MessageResponse
 from app.schemas.user import UserResponse
@@ -105,3 +106,18 @@ def logout(
 ):
     AuthService.logout(db, payload, logout_in.refresh_token)
     return MessageResponse(message="Sesion cerrada exitosamente")
+
+
+@router.post(
+    "/change-password",
+    response_model=MessageResponse,
+    summary="Cambiar contraseña del usuario autenticado"
+)
+def change_password(
+    change_pwd_in: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    AuthService.change_password(db, current_user, change_pwd_in)
+    return MessageResponse(message="Contraseña actualizada exitosamente")
+

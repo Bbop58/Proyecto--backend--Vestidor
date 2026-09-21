@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     # Google Gemini AI Configuration
     GEMINI_API_KEY: str = ""
 
+    # Hugging Face Configuration (User Access Token for IDM-VTON)
+    HF_TOKEN: str = ""
+
 
     @property
     def PAYPAL_API_BASE_URL(self) -> str:

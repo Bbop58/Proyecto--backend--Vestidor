@@ -96,8 +96,14 @@ class AITryOnService:
 
             logger.info(f"Iniciando inferencia de vestidor virtual para producto '{product.nombre}'...")
 
-            # 5. Invocar el motor de IA IDM-VTON
-            client = Client("yisol/IDM-VTON")
+            # 5. Invocar el motor de IA IDM-VTON con autenticación y fallback
+            token = settings.HF_TOKEN if settings.HF_TOKEN else None
+            try:
+                client = Client("yisol/IDM-VTON", token=token)
+            except Exception as conn_err:
+                logger.warning(f"Fallo conexión por nombre de espacio ({conn_err}), intentando URL directa...")
+                client = Client("https://yisol-idm-vton.hf.space", token=token)
+
             result = client.predict(
                 dict={
                     "background": handle_file(person_tmp.name),
@@ -131,7 +137,7 @@ class AITryOnService:
             logger.error(f"Error procesando vestidor virtual: {e}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="No se pudo generar la imagen del vestidor virtual en este momento. Por favor, intenta más tarde."
+                detail=f"No se pudo generar la imagen del vestidor virtual en este momento ({type(e).__name__}). Por favor, intenta de nuevo."
             )
         finally:
             for tmp_path in [person_tmp.name, garment_tmp.name]:

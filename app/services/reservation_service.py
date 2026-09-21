@@ -180,7 +180,21 @@ class ReservationService:
         db.commit()
         db.refresh(reserva)
 
+        try:
+            from app.services.notification_service import NotificationService
+            NotificationService.create(
+                db=db,
+                user_id=cliente_id,
+                title="Reserva Registrada ⏳",
+                message=f"Tu reserva #{reserva.codigo_reserva} fue registrada con éxito por Bs {total_estimado:.2f}. Tienes 48h de vigencia una vez que esté preparada.",
+                type="RESERVATION_EXPIRING",
+                reference_id=str(reserva.id)
+            )
+        except Exception:
+            pass
+
         return ReservationService._format_reservation_response(reserva)
+
 
     @staticmethod
     def get_reservation_by_id(db: Session, reserva_id: uuid.UUID) -> dict:
@@ -290,7 +304,23 @@ class ReservationService:
         reserva.estado = ReservationStatus.PREPARADA
         db.commit()
         db.refresh(reserva)
+
+        try:
+            from app.services.notification_service import NotificationService
+            sucursal_nombre = reserva.sucursal.nombre if reserva.sucursal else "la sucursal"
+            NotificationService.create(
+                db=db,
+                user_id=reserva.cliente_id,
+                title="¡Tu reserva está lista para recoger! 📦",
+                message=f"Tu reserva #{reserva.codigo_reserva} ya está preparada en {sucursal_nombre}. Puedes pasar a retirarla.",
+                type="RESERVATION_READY",
+                reference_id=str(reserva.id)
+            )
+        except Exception:
+            pass
+
         return ReservationService._format_reservation_response(reserva)
+
 
     @staticmethod
     def pickup_reservation(

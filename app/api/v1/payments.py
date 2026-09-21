@@ -327,6 +327,23 @@ def capture_paypal_order(
         cajero_id=current_user.id
     )
 
+    # 5. Notificar al cliente sobre la compra digital exitosa
+    try:
+        from app.services.notification_service import NotificationService
+        target_user_id = data.cliente_id or current_user.id
+        comprobante = sale_dict.get("numero_comprobante", "N/A")
+        total_bob = sale_dict.get("total", 0.0)
+        NotificationService.create(
+            db=db,
+            user_id=target_user_id,
+            title="¡Compra Confirmada! 💳",
+            message=f"Tu pago de Bs {total_bob:.2f} fue procesado con éxito. Se emitió tu comprobante #{comprobante}.",
+            type="PURCHASE_SUCCESS",
+            reference_id=str(sale_dict.get("id", ""))
+        )
+    except Exception:
+        pass
+
     return PayPalCaptureOrderResponse(
         venta=SaleResponse(**sale_dict),
         paypal_order_id=data.order_id,

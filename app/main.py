@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.config import settings
 from app.api.v1.router import api_v1_router
+from app.database import engine, Base
+import app.models
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -30,6 +32,12 @@ app.add_middleware(
 
 # Include API v1 Router
 app.include_router(api_v1_router, prefix=settings.API_V1_STR)
+
+
+@app.on_event("startup")
+def on_startup():
+    Base.metadata.create_all(bind=engine)
+
 
 
 @app.get("/health", tags=["Health"])

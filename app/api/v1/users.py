@@ -9,6 +9,7 @@ from app.schemas.common import MessageResponse
 from app.services.user_service import UserService
 from app.services.auth_service import AuthService
 from app.services.role_service import RoleService
+from app.services.audit_service import AuditService
 from app.api.deps import get_current_user, require_permission
 from app.models.user import User
 
@@ -82,9 +83,16 @@ def change_my_password(
 )
 def create_user(
     user_in: UserAdminCreate,
+    admin_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     user = UserService.create_by_admin(db, user_in)
+    AuditService.log(
+        db=db,
+        action=f"Creación de usuario: {user.full_name} ({user.email})",
+        module="Usuarios",
+        user=admin_user
+    )
     return build_user_response(user, db)
 
 
@@ -126,6 +134,12 @@ def update_user(
             detail="Usuario no encontrado"
         )
     updated = UserService.update_by_admin(db, user, user_in, admin_user)
+    AuditService.log(
+        db=db,
+        action=f"Modificación de usuario: {updated.full_name} ({updated.email})",
+        module="Usuarios",
+        user=admin_user
+    )
     return build_user_response(updated, db)
 
 
@@ -147,6 +161,13 @@ def toggle_user_active(
             detail="Usuario no encontrado"
         )
     updated = UserService.toggle_active(db, user, admin_user)
+    estado = "activada" if updated.is_active else "desactivada"
+    AuditService.log(
+        db=db,
+        action=f"Cuenta de usuario {updated.email} {estado}",
+        module="Usuarios",
+        user=admin_user
+    )
     return build_user_response(updated, db)
 
 

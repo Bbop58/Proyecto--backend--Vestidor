@@ -69,6 +69,14 @@ PERMISSIONS_SEED = [
         "path": "/api/v1/roles/{id}",
         "description": "Eliminar roles"
     },
+    # Módulo Bitácora del Sistema (Solo Admin)
+    {
+        "code": "bitacora.list",
+        "module": "Bitácora",
+        "method": "GET",
+        "path": "/api/v1/bitacora",
+        "description": "Visualizar la bitácora de eventos del sistema"
+    },
     # Módulo Sucursales (Fase 1)
     {
         "code": "sucursales.list",

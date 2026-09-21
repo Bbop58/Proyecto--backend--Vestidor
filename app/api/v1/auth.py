@@ -14,6 +14,7 @@ from app.schemas.common import MessageResponse
 from app.schemas.user import UserResponse
 from app.services.auth_service import AuthService
 from app.services.user_service import UserService
+from app.services.audit_service import AuditService
 from app.api.deps import get_current_token_payload, get_current_user
 from app.models.user import User
 
@@ -31,6 +32,7 @@ def register(
     db: Session = Depends(get_db)
 ):
     user, access_token, refresh_token = AuthService.register(db, register_in)
+    AuditService.log(db, action="Registro de nuevo usuario", module="Autenticación", user=user)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -49,6 +51,7 @@ def login(
     db: Session = Depends(get_db)
 ):
     user, access_token, refresh_token = AuthService.login(db, login_in)
+    AuditService.log(db, action="Inicio de sesión", module="Autenticación", user=user)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -68,6 +71,7 @@ def login_swagger(
 ):
     login_in = LoginRequest(email=form_data.username, password=form_data.password)
     user, access_token, refresh_token = AuthService.login(db, login_in)
+    AuditService.log(db, action="Inicio de sesión (Swagger)", module="Autenticación", user=user)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -104,6 +108,12 @@ def logout(
     payload: dict = Depends(get_current_token_payload),
     db: Session = Depends(get_db)
 ):
+    user_id = payload.get("sub")
+    if user_id:
+        user = UserService.get_by_id(db, user_id)
+        if user:
+            AuditService.log(db, action="Cierre de sesión", module="Autenticación", user=user)
+
     AuthService.logout(db, payload, logout_in.refresh_token)
     return MessageResponse(message="Sesion cerrada exitosamente")
 
@@ -119,5 +129,6 @@ def change_password(
     db: Session = Depends(get_db)
 ):
     AuthService.change_password(db, current_user, change_pwd_in)
+    AuditService.log(db, action="Cambio de contraseña", module="Autenticación", user=current_user)
     return MessageResponse(message="Contraseña actualizada exitosamente")
 

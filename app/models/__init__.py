@@ -17,6 +17,7 @@ from app.models.reservation_detail import ReservationDetail
 from app.models.sale import Sale, SaleType, SaleStatus, PaymentMethod
 from app.models.sale_detail import SaleDetail
 from app.models.notification import Notification
+from app.models.audit_log import AuditLog
 
 __all__ = [
     "Base",
@@ -43,6 +44,7 @@ __all__ = [
     "PaymentMethod",
     "SaleDetail",
     "Notification",
+    "AuditLog",
 ]
 
 

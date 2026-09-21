@@ -16,6 +16,7 @@ from app.schemas.sale import (
     TopProductReport,
 )
 from app.services.sale_service import SaleService
+from app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/ventas", tags=["Ventas"])
 
@@ -63,7 +64,14 @@ def create_presencial_sale(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    return SaleService.create_presencial_sale(db, data, cajero_id=current_user.id)
+    sale = SaleService.create_presencial_sale(db, data, cajero_id=current_user.id)
+    AuditService.log(
+        db=db,
+        action=f"Venta presencial #{sale.numero_comprobante} - Total: Bs {sale.total}",
+        module="Ventas",
+        user=current_user
+    )
+    return sale
 
 
 @router.post(
@@ -77,7 +85,14 @@ def create_digital_sale(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    return SaleService.create_digital_sale(db, data, cliente_id=current_user.id)
+    sale = SaleService.create_digital_sale(db, data, cliente_id=current_user.id)
+    AuditService.log(
+        db=db,
+        action=f"Compra digital #{sale.numero_comprobante} - Total: Bs {sale.total}",
+        module="Ventas",
+        user=current_user
+    )
+    return sale
 
 
 @router.get(

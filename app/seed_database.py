@@ -36,9 +36,24 @@ def seed_all():
     print("Iniciando Sembrado Completo de la Base de Datos...")
     print("==================================================")
     
-    # 0. Crear tablas si no existen
+    # 0. Crear tablas si no existen y sincronizar columnas
     print("\n[0/6] Creando esquema de tablas en la base de datos...")
     Base.metadata.create_all(bind=engine)
+
+    from sqlalchemy import text
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS impuesto_iva NUMERIC(10, 2) DEFAULT 0.0 NOT NULL;
+                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS monto_neto NUMERIC(10, 2) DEFAULT 0.0 NOT NULL;
+                UPDATE ventas 
+                SET impuesto_iva = ROUND(monto_total * 0.13, 2),
+                    monto_neto = ROUND(monto_total - ROUND(monto_total * 0.13, 2), 2)
+                WHERE (monto_neto = 0 OR monto_neto IS NULL) AND monto_total > 0;
+            """))
+        print("  [OK] Columnas de impuestos (impuesto_iva, monto_neto) verificadas y migradas en 'ventas'.")
+    except Exception as e:
+        print(f"  [WARN] No se requirió migración manual o aviso: {e}")
 
     # 1. Sembrar roles, permisos y temporadas
     print("\n[1/6] Sembrando Roles, Permisos y Temporadas base...")

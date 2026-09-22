@@ -3,10 +3,11 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, status, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.api.deps import require_permission
+from app.api.deps import require_permission, get_current_user
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse
 from app.schemas.product_variant import ProductVariantCreate, ProductVariantResponse
 from app.services.product_service import ProductService
+from app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/productos", tags=["Productos"])
 
@@ -44,9 +45,17 @@ def list_products(
 )
 def create_product(
     product_in: ProductCreate,
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    return ProductService.create(db, product_in)
+    prod = ProductService.create(db, product_in)
+    AuditService.log(
+        db=db,
+        action=f"Creación de producto: {prod.nombre}",
+        module="Productos",
+        user=current_user
+    )
+    return prod
 
 
 @router.get(
@@ -74,9 +83,17 @@ def get_product(
 def update_product(
     product_id: uuid.UUID,
     product_in: ProductUpdate,
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    return ProductService.update(db, product_id, product_in)
+    prod = ProductService.update(db, product_id, product_in)
+    AuditService.log(
+        db=db,
+        action=f"Modificación de producto: {prod.nombre}",
+        module="Productos",
+        user=current_user
+    )
+    return prod
 
 
 @router.delete(
@@ -87,9 +104,17 @@ def update_product(
 )
 def delete_product(
     product_id: uuid.UUID,
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    return ProductService.soft_delete(db, product_id)
+    prod = ProductService.soft_delete(db, product_id)
+    AuditService.log(
+        db=db,
+        action=f"Desactivación de producto: {prod.nombre}",
+        module="Productos",
+        user=current_user
+    )
+    return prod
 
 
 # --- Variantes asociadas a un producto ---

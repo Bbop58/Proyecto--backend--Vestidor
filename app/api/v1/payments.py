@@ -17,6 +17,7 @@ from app.schemas.paypal import (
 )
 from app.services.paypal_service import PayPalService
 from app.services.sale_service import SaleService
+from app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/payments", tags=["Pagos y Pasarelas"])
 
@@ -325,6 +326,14 @@ def capture_paypal_order(
         db=db,
         data=sale_payload,
         cajero_id=current_user.id
+    )
+
+    # 4.1 Registrar pago en bitácora
+    AuditService.log(
+        db=db,
+        action=f"Pago PayPal confirmado (${monto_usd:.2f} USD) - Comprobante #{sale_dict.get('numero_comprobante')}",
+        module="Pagos",
+        user=current_user
     )
 
     # 5. Notificar al cliente sobre la compra digital exitosa

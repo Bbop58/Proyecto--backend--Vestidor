@@ -13,6 +13,7 @@ from app.schemas.reservation import (
     ExpireReservationsResponse,
 )
 from app.services.reservation_service import ReservationService
+from app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/reservas", tags=["Reservas"])
 
@@ -28,7 +29,15 @@ def create_reservation(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    return ReservationService.create_reservation(db, data, cliente_id=current_user.id)
+    res = ReservationService.create_reservation(db, data, cliente_id=current_user.id)
+    codigo = getattr(res, "codigo", "")
+    AuditService.log(
+        db=db,
+        action=f"Creación de reserva #{codigo}",
+        module="Reservas",
+        user=current_user
+    )
+    return res
 
 
 @router.get(
@@ -91,12 +100,20 @@ def cancel_reservation(
     current_user=Depends(get_current_user)
 ):
     is_staff = any(r.name in ["admin", "encargado"] for r in getattr(current_user, "roles", []))
-    return ReservationService.cancel_reservation(
+    res = ReservationService.cancel_reservation(
         db,
         reserva_id=reserva_id,
         user_id=current_user.id,
         is_staff=is_staff
     )
+    codigo = getattr(res, "codigo", "")
+    AuditService.log(
+        db=db,
+        action=f"Cancelación de reserva #{codigo}",
+        module="Reservas",
+        user=current_user
+    )
+    return res
 
 
 @router.patch(
@@ -110,7 +127,15 @@ def prepare_reservation(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    return ReservationService.prepare_reservation(db, reserva_id, user_id=current_user.id)
+    res = ReservationService.prepare_reservation(db, reserva_id, user_id=current_user.id)
+    codigo = getattr(res, "codigo", "")
+    AuditService.log(
+        db=db,
+        action=f"Reserva #{codigo} marcada como PREPARADA",
+        module="Reservas",
+        user=current_user
+    )
+    return res
 
 
 @router.patch(
@@ -124,7 +149,15 @@ def pickup_reservation(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    return ReservationService.pickup_reservation(db, reserva_id, user_id=current_user.id)
+    res = ReservationService.pickup_reservation(db, reserva_id, user_id=current_user.id)
+    codigo = getattr(res, "codigo", "")
+    AuditService.log(
+        db=db,
+        action=f"Reserva #{codigo} ENTREGADA al cliente",
+        module="Reservas",
+        user=current_user
+    )
+    return res
 
 
 @router.post(

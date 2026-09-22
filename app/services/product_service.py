@@ -83,6 +83,20 @@ class ProductService:
 
         db.commit()
         db.refresh(product)
+
+        # Notificar a todos los clientes sobre el nuevo producto en el catálogo
+        try:
+            from app.services.notification_service import NotificationService
+            NotificationService.notify_all_clients(
+                db=db,
+                title="✨ ¡Nuevo producto en el catálogo!",
+                message=f"Ya está disponible '{product.nombre}' a Bs {product.precio_base:.2f}. ¡Pruébatelo en el vestidor virtual!",
+                type="NEW_PRODUCT",
+                reference_id=str(product.id)
+            )
+        except Exception:
+            pass
+
         return product
 
     @staticmethod

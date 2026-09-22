@@ -38,6 +38,51 @@ class NotificationService:
             return None
 
     @staticmethod
+    def notify_all_clients(
+        db: Session,
+        title: str,
+        message: str,
+        type: str = "NEW_PRODUCT",
+        reference_id: Optional[str] = None
+    ) -> int:
+        try:
+            from app.models.user import User
+            from app.models.role import Role
+
+            # Buscar usuarios activos con rol cliente
+            users = (
+                db.query(User)
+                .join(Role, User.role_id == Role.id)
+                .filter(Role.name.ilike("%cliente%"), User.is_active == True)
+                .all()
+            )
+            # Si no hay usuarios con rol cliente específico, notificar a todos los usuarios activos
+            if not users:
+                users = db.query(User).filter(User.is_active == True).all()
+
+            count = 0
+            for u in users:
+                notif = Notification(
+                    user_id=u.id,
+                    title=title,
+                    message=message,
+                    type=type,
+                    reference_id=reference_id,
+                    is_read=False
+                )
+                db.add(notif)
+                count += 1
+
+            if count > 0:
+                db.commit()
+                logger.info(f"Notificación masiva '{title}' creada para {count} clientes")
+            return count
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error enviando notificación masiva: {e}")
+            return 0
+
+    @staticmethod
     def get_by_user(
         db: Session,
         user_id: uuid.UUID,

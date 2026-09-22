@@ -810,6 +810,76 @@ def seed_all():
             db.commit()
             print("  [OK] Creada Venta de prueba: VTA-2025-0002 (Digital / PayPal / 280.00 Bs.)")
 
+        sale3 = db.query(Sale).filter(Sale.numero_recibo == "VTA-2025-0003").first()
+        if not sale3 and central_branch and cliente_user and len(all_variants) >= 5:
+            v_sale3 = all_variants[4]
+            sale3 = Sale(
+                numero_recibo="VTA-2025-0003",
+                tipo=SaleType.DIGITAL,
+                estado=SaleStatus.COMPLETADA,
+                sucursal_id=central_branch.id,
+                cliente_id=cliente_user.id,
+                cajero_id=None,
+                metodo_pago=PaymentMethod.TARJETA,
+                referencia_pago="STRIPE_DIGITAL_AUTH_77192",
+                monto_total=Decimal("350.00"),
+                impuesto_iva=Decimal("45.50"),
+                monto_neto=Decimal("304.50"),
+                monto_recibido=Decimal("350.00"),
+                cambio=Decimal("0.00"),
+                nota="Compra digital en App Móvil pagada con tarjeta",
+                created_at=utc_now() - timedelta(days=1, hours=2)
+            )
+            db.add(sale3)
+            db.commit()
+            db.refresh(sale3)
+
+            det_sale3 = SaleDetail(
+                venta_id=sale3.id,
+                variante_id=v_sale3.id,
+                cantidad=1,
+                precio_unitario=Decimal("350.00"),
+                subtotal=Decimal("350.00")
+            )
+            db.add(det_sale3)
+            db.commit()
+            print("  [OK] Creada Venta de prueba: VTA-2025-0003 (Digital / Tarjeta / 350.00 Bs.)")
+
+        sale4 = db.query(Sale).filter(Sale.numero_recibo == "VTA-2025-0004").first()
+        if not sale4 and equipetrol_branch and cajero_user and cliente_user and len(all_variants) >= 6:
+            v_sale4 = all_variants[5]
+            sale4 = Sale(
+                numero_recibo="VTA-2025-0004",
+                tipo=SaleType.PRESENCIAL,
+                estado=SaleStatus.COMPLETADA,
+                sucursal_id=equipetrol_branch.id,
+                cliente_id=cliente_user.id,
+                cajero_id=cajero_user.id,
+                metodo_pago=PaymentMethod.QR,
+                referencia_pago="QR_SIMPLE_PAGO_BNB_4881",
+                monto_total=Decimal("180.00"),
+                impuesto_iva=Decimal("23.40"),
+                monto_neto=Decimal("156.60"),
+                monto_recibido=Decimal("180.00"),
+                cambio=Decimal("0.00"),
+                nota="Liquidación de compra en tienda física con QR Simple",
+                created_at=utc_now() - timedelta(hours=3)
+            )
+            db.add(sale4)
+            db.commit()
+            db.refresh(sale4)
+
+            det_sale4 = SaleDetail(
+                venta_id=sale4.id,
+                variante_id=v_sale4.id,
+                cantidad=1,
+                precio_unitario=Decimal("180.00"),
+                subtotal=Decimal("180.00")
+            )
+            db.add(det_sale4)
+            db.commit()
+            print("  [OK] Creada Venta de prueba: VTA-2025-0004 (Presencial / QR / 180.00 Bs.)")
+
         print("\n==================================================")
         print(" [SUCCESS] BASE DE DATOS POBLADA EXITOSAMENTE! ")
         print("==================================================")

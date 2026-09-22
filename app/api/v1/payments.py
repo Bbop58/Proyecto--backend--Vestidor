@@ -308,10 +308,14 @@ def capture_paypal_order(
             reserva_id=data.reserva_id
         ))
 
-    # 3. Construir payload de venta presencial con método PAYPAL
+    # 3. Determinar cliente y cajero
+    is_client_user = bool(current_user.role and "cliente" in current_user.role.name.lower())
+    target_cliente_id = data.cliente_id or (current_user.id if is_client_user else None)
+    cajero_id = None if is_client_user else current_user.id
+
     sale_payload = PresencialSaleCreate(
         sucursal_id=data.sucursal_id,
-        cliente_id=data.cliente_id,
+        cliente_id=target_cliente_id,
         items=sale_items,
         pago=PaymentInfo(
             metodo=PaymentMethod.PAYPAL,
@@ -325,7 +329,7 @@ def capture_paypal_order(
     sale_dict = SaleService.create_presencial_sale(
         db=db,
         data=sale_payload,
-        cajero_id=current_user.id
+        cajero_id=cajero_id
     )
 
     # 4.1 Registrar pago en bitácora

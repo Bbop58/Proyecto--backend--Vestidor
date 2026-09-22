@@ -61,6 +61,7 @@ class SaleService:
             "metodo_pago": venta.metodo_pago,
             "referencia_pago": venta.referencia_pago,
             "monto_total": float(venta.monto_total),
+            "total": float(venta.monto_total),
             "impuesto_iva": float(getattr(venta, "impuesto_iva", 0) or round(float(venta.monto_total) * 0.13, 2)),
             "monto_neto": float(getattr(venta, "monto_neto", 0) or round(float(venta.monto_total) * 0.87, 2)),
             "monto_recibido": float(venta.monto_recibido) if venta.monto_recibido is not None else None,
@@ -76,7 +77,7 @@ class SaleService:
     def create_presencial_sale(
         db: Session,
         data: PresencialSaleCreate,
-        cajero_id: uuid.UUID
+        cajero_id: Optional[uuid.UUID] = None
     ) -> dict:
         # 1. Validar sucursal
         branch = db.query(Branch).filter(Branch.id == data.sucursal_id, Branch.activa == True).first()
@@ -92,10 +93,13 @@ class SaleService:
         now = utc_now()
         numero_recibo = f"VTA-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
+        # Determinar tipo de venta (si no hay cajero y es PayPal/QR se considera DIGITAL)
+        sale_type = SaleType.DIGITAL if not cajero_id and data.pago.metodo in [PaymentMethod.PAYPAL, PaymentMethod.QR] else SaleType.PRESENCIAL
+
         # 3. Crear cabecera de venta
         venta = Sale(
             numero_recibo=numero_recibo,
-            tipo=SaleType.PRESENCIAL,
+            tipo=sale_type,
             estado=SaleStatus.COMPLETADA,
             sucursal_id=data.sucursal_id,
             cliente_id=data.cliente_id,
@@ -148,6 +152,10 @@ class SaleService:
                         status_code=400,
                         detail=f"La reserva {reserva.codigo} no está lista para ser cobrada (estado: {reserva.estado.value})"
                     )
+
+                # Si la venta no tenía cliente asignado, asociar al cliente de la reserva
+                if not venta.cliente_id and reserva.cliente_id:
+                    venta.cliente_id = reserva.cliente_id
 
                 # Descontar de stock_reservado
                 inv.stock_reservado = max(0, inv.stock_reservado - item.cantidad)

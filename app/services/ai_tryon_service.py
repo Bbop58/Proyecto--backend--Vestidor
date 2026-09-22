@@ -193,13 +193,30 @@ class AITryOnService:
 
         # 3. Obtener la imagen de la prenda
         garment_bytes: Optional[bytes] = None
-        if product.imagen_url and product.imagen_url.startswith("http"):
-            try:
-                resp = httpx.get(product.imagen_url, timeout=10.0)
-                if resp.status_code == 200:
-                    garment_bytes = resp.content
-            except Exception as e:
-                logger.info(f"No se pudo descargar la imagen remota {product.imagen_url}: {e}")
+        if product.imagen_url:
+            if product.imagen_url.startswith("/static/"):
+                local_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), product.imagen_url.lstrip("/"))
+                if os.path.exists(local_path):
+                    try:
+                        with open(local_path, "rb") as f:
+                            garment_bytes = f.read()
+                    except Exception as err:
+                        logger.warning(f"Error leyendo imagen local {local_path}: {err}")
+            elif product.imagen_url.startswith("http"):
+                # Si apunta a localhost/static, intentar leerlo de disco primero
+                if "/static/products/" in product.imagen_url:
+                    fname = product.imagen_url.split("/static/products/")[-1]
+                    local_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "products", fname)
+                    if os.path.exists(local_path):
+                        with open(local_path, "rb") as f:
+                            garment_bytes = f.read()
+                if not garment_bytes:
+                    try:
+                        resp = httpx.get(product.imagen_url, timeout=10.0)
+                        if resp.status_code == 200:
+                            garment_bytes = resp.content
+                    except Exception as e:
+                        logger.info(f"No se pudo descargar la imagen remota {product.imagen_url}: {e}")
 
         if not garment_bytes:
             garment_bytes = user_bytes

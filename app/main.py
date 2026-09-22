@@ -33,6 +33,13 @@ app.add_middleware(
 # Include API v1 Router
 app.include_router(api_v1_router, prefix=settings.API_V1_STR)
 
+# Mount static files directory for product images and assets
+import os
+from fastapi.staticfiles import StaticFiles
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
 
 @app.on_event("startup")
 def on_startup():

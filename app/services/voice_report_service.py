@@ -30,6 +30,8 @@ Tables & Columns:
    - estado: VARCHAR (Enum: 'PENDIENTE_PAGO', 'COMPLETADA', 'CANCELADA')
    - metodo_pago: VARCHAR (Enum: 'EFECTIVO', 'TARJETA', 'QR', 'PAYPAL')
    - monto_total: NUMERIC(10,2) (Total amount of sale in Bolivianos)
+   - impuesto_iva: NUMERIC(10,2) (13% IVA tax collected)
+   - monto_neto: NUMERIC(10,2) (87% net revenue / ganancia neta after tax)
    - sucursal_id: UUID (Foreign key to sucursales.id)
    - cliente_id: UUID (Foreign key to users.id)
    - cajero_id: UUID (Foreign key to users.id)

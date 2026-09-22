@@ -329,9 +329,10 @@ def capture_paypal_order(
     )
 
     # 4.1 Registrar pago en bitácora
+    recibo_num = sale_dict.get("numero_recibo") or sale_dict.get("numero_comprobante") or "N/A"
     AuditService.log(
         db=db,
-        action=f"Pago PayPal confirmado (${monto_usd:.2f} USD) - Comprobante #{sale_dict.get('numero_comprobante')}",
+        action=f"Pago PayPal confirmado (${monto_usd:.2f} USD) - Comprobante #{recibo_num}",
         module="Pagos",
         user=current_user
     )
@@ -340,8 +341,8 @@ def capture_paypal_order(
     try:
         from app.services.notification_service import NotificationService
         target_user_id = data.cliente_id or current_user.id
-        comprobante = sale_dict.get("numero_comprobante", "N/A")
-        total_bob = sale_dict.get("total", 0.0)
+        comprobante = sale_dict.get("numero_recibo") or sale_dict.get("numero_comprobante", "N/A")
+        total_bob = float(sale_dict.get("monto_total") or sale_dict.get("total", 0.0))
         NotificationService.create(
             db=db,
             user_id=target_user_id,

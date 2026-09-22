@@ -47,6 +47,8 @@ class Sale(Base):
     referencia_pago = Column(String(100), nullable=True)
     
     monto_total = Column(Numeric(10, 2), nullable=False, default=0.0)
+    impuesto_iva = Column(Numeric(10, 2), nullable=False, default=0.0)
+    monto_neto = Column(Numeric(10, 2), nullable=False, default=0.0)
     monto_recibido = Column(Numeric(10, 2), nullable=True)
     cambio = Column(Numeric(10, 2), nullable=True, default=0.0)
     

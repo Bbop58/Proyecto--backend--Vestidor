@@ -71,6 +71,8 @@ class SaleResponse(BaseModel):
     metodo_pago: PaymentMethod
     referencia_pago: Optional[str] = None
     monto_total: float
+    impuesto_iva: float = 0.0
+    monto_neto: float = 0.0
     monto_recibido: Optional[float] = None
     cambio: Optional[float] = None
     nota: Optional[str] = None
@@ -83,6 +85,8 @@ class SaleResponse(BaseModel):
 class SalesSummaryReport(BaseModel):
     total_ventas: int
     ingresos_totales: float
+    total_iva: float = 0.0
+    ganancia_neta: float = 0.0
     ticket_promedio: float
     ventas_efectivo: float
     ventas_tarjeta: float

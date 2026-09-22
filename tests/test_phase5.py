@@ -97,6 +97,8 @@ def test_phase5_complete_flow(client: TestClient, db_session: Session):
     sale_data = sale_resp.json()
     sale_id = sale_data["id"]
     assert sale_data["monto_total"] == 750.0  # 3 * 250 = 750
+    assert sale_data["impuesto_iva"] == 97.5  # 13% of 750
+    assert sale_data["monto_neto"] == 652.5   # 87% of 750
     assert sale_data["cambio"] == 50.0        # 800 - 750 = 50
     assert sale_data["estado"] == "COMPLETADA"
     assert len(sale_data["detalles"]) == 1
@@ -140,6 +142,8 @@ def test_phase5_complete_flow(client: TestClient, db_session: Session):
     sale_res_resp = client.post("/api/v1/ventas/presencial", json=sale_res_payload, headers=admin_headers)
     assert sale_res_resp.status_code == 201
     assert sale_res_resp.json()["monto_total"] == 500.0
+    assert sale_res_resp.json()["impuesto_iva"] == 65.0
+    assert sale_res_resp.json()["monto_neto"] == 435.0
 
     # Verify reservation is now COMPLETADA
     res_status = client.get(f"/api/v1/reservas/{reserva_id}", headers=admin_headers).json()
@@ -168,6 +172,8 @@ def test_phase5_complete_flow(client: TestClient, db_session: Session):
     summary = summary_resp.json()
     assert summary["total_ventas"] >= 1  # 1 completed sale (QR sale)
     assert summary["ventas_qr"] == 500.0
+    assert summary["total_iva"] == 65.0
+    assert summary["ganancia_neta"] == 435.0
 
     top_resp = client.get("/api/v1/ventas/reportes/top-productos", headers=admin_headers)
     assert top_resp.status_code == 200

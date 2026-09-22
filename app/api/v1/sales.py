@@ -65,9 +65,11 @@ def create_presencial_sale(
     current_user=Depends(get_current_user)
 ):
     sale = SaleService.create_presencial_sale(db, data, cajero_id=current_user.id)
+    recibo = sale.get("numero_recibo") if isinstance(sale, dict) else getattr(sale, "numero_recibo", "")
+    total = sale.get("monto_total") if isinstance(sale, dict) else getattr(sale, "monto_total", 0.0)
     AuditService.log(
         db=db,
-        action=f"Venta presencial #{sale.numero_comprobante} - Total: Bs {sale.total}",
+        action=f"Venta presencial #{recibo} - Total: Bs {total}",
         module="Ventas",
         user=current_user
     )
@@ -86,9 +88,11 @@ def create_digital_sale(
     current_user=Depends(get_current_user)
 ):
     sale = SaleService.create_digital_sale(db, data, cliente_id=current_user.id)
+    recibo = sale.get("numero_recibo") if isinstance(sale, dict) else getattr(sale, "numero_recibo", "")
+    total = sale.get("monto_total") if isinstance(sale, dict) else getattr(sale, "monto_total", 0.0)
     AuditService.log(
         db=db,
-        action=f"Compra digital #{sale.numero_comprobante} - Total: Bs {sale.total}",
+        action=f"Compra digital #{recibo} - Total: Bs {total}",
         module="Ventas",
         user=current_user
     )
@@ -168,9 +172,17 @@ def cancel_sale(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    return SaleService.cancel_sale(
+    res = SaleService.cancel_sale(
         db,
         venta_id=venta_id,
         motivo=data.motivo,
         usuario_id=current_user.id
     )
+    recibo = res.get("numero_recibo") if isinstance(res, dict) else getattr(res, "numero_recibo", "")
+    AuditService.log(
+        db=db,
+        action=f"Anulación de venta #{recibo} - Motivo: {data.motivo}",
+        module="Ventas",
+        user=current_user
+    )
+    return res

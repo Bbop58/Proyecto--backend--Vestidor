@@ -61,6 +61,8 @@ class SaleService:
             "metodo_pago": venta.metodo_pago,
             "referencia_pago": venta.referencia_pago,
             "monto_total": float(venta.monto_total),
+            "impuesto_iva": float(getattr(venta, "impuesto_iva", 0) or round(float(venta.monto_total) * 0.13, 2)),
+            "monto_neto": float(getattr(venta, "monto_neto", 0) or round(float(venta.monto_total) * 0.87, 2)),
             "monto_recibido": float(venta.monto_recibido) if venta.monto_recibido is not None else None,
             "cambio": float(venta.cambio) if venta.cambio is not None else 0.0,
             "nota": venta.nota,
@@ -194,8 +196,13 @@ class SaleService:
             )
             db.add(detalle)
 
-        # 5. Validar pago en efectivo y cambio
+        # 5. Validar pago en efectivo, cambio y cálculo de impuestos (13% IVA y 87% Ganancia neta)
+        iva = round(monto_total * 0.13, 2)
+        neto = round(monto_total - iva, 2)
         venta.monto_total = monto_total
+        venta.impuesto_iva = iva
+        venta.monto_neto = neto
+
         if data.pago.metodo == PaymentMethod.EFECTIVO and data.pago.monto_recibido is not None:
             if data.pago.monto_recibido < monto_total:
                 raise HTTPException(
@@ -282,7 +289,11 @@ class SaleService:
             )
             db.add(detalle)
 
+        iva = round(monto_total * 0.13, 2)
+        neto = round(monto_total - iva, 2)
         venta.monto_total = monto_total
+        venta.impuesto_iva = iva
+        venta.monto_neto = neto
         db.commit()
         db.refresh(venta)
         return SaleService._format_sale_response(venta)
@@ -383,13 +394,18 @@ class SaleService:
         ventas_tarjeta = sum(float(v.monto_total) for v in ventas if v.metodo_pago == PaymentMethod.TARJETA)
         ventas_qr = sum(float(v.monto_total) for v in ventas if v.metodo_pago == PaymentMethod.QR)
 
+        total_iva = sum(float(getattr(v, "impuesto_iva", 0) or round(float(v.monto_total) * 0.13, 2)) for v in ventas)
+        ganancia_neta = sum(float(getattr(v, "monto_neto", 0) or round(float(v.monto_total) - round(float(v.monto_total) * 0.13, 2), 2)) for v in ventas)
+
         return {
             "total_ventas": total_ventas,
-            "ingresos_totales": ingresos_totales,
-            "ticket_promedio": ticket_promedio,
-            "ventas_efectivo": ventas_efectivo,
-            "ventas_tarjeta": ventas_tarjeta,
-            "ventas_qr": ventas_qr,
+            "ingresos_totales": round(ingresos_totales, 2),
+            "ticket_promedio": round(ticket_promedio, 2),
+            "ventas_efectivo": round(ventas_efectivo, 2),
+            "ventas_tarjeta": round(ventas_tarjeta, 2),
+            "ventas_qr": round(ventas_qr, 2),
+            "total_iva": round(total_iva, 2),
+            "ganancia_neta": round(ganancia_neta, 2),
         }
 
     @staticmethod

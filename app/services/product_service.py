@@ -39,7 +39,10 @@ class ProductService:
             query = query.filter(
                 or_(
                     Product.nombre.ilike(search_term),
-                    Product.descripcion.ilike(search_term)
+                    Product.descripcion.ilike(search_term),
+                    Product.temporada.ilike(search_term),
+                    Product.proveedor.ilike(search_term),
+                    Product.variantes.any(ProductVariant.sku.ilike(search_term))
                 )
             )
         if activo is not None:

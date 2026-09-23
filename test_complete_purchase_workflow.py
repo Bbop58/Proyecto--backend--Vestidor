@@ -144,8 +144,8 @@ def test_full_workflow():
             "quantity": 1,
             "unit_amount_bob": precio_final
         }],
-        "return_url": "https://backend-production-d7d5d.up.railway.app/api/v1/payments/paypal/return",
-        "cancel_url": "https://backend-production-d7d5d.up.railway.app/api/v1/payments/paypal/cancel"
+        "return_url": "https://proyecto-backend-vestidor-production.up.railway.app/api/v1/payments/paypal/return",
+        "cancel_url": "https://proyecto-backend-vestidor-production.up.railway.app/api/v1/payments/paypal/cancel"
     }
     paypal_res = client.post("/api/v1/payments/paypal/create-order", json=paypal_order_payload, headers=client_headers)
     assert paypal_res.status_code == 201, f"Error creando orden PayPal: {paypal_res.text}"

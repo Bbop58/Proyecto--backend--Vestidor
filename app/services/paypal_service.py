@@ -93,8 +93,8 @@ class PayPalService:
             purchase_unit["custom_id"] = str(reserva_id)
 
         # URLs de retorno y cancelación
-        final_return_url = return_url or "https://backend-production-d7d5d.up.railway.app/api/v1/payments/paypal/return"
-        final_cancel_url = cancel_url or "https://backend-production-d7d5d.up.railway.app/api/v1/payments/paypal/cancel"
+        final_return_url = return_url or "https://proyecto-backend-vestidor-production.up.railway.app/api/v1/payments/paypal/return"
+        final_cancel_url = cancel_url or "https://proyecto-backend-vestidor-production.up.railway.app/api/v1/payments/paypal/cancel"
 
         payload = {
             "intent": "CAPTURE",

@@ -159,7 +159,7 @@ Respond strictly with a JSON object in this exact format:
 }}
 """
 
-        candidate_models = ["gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite"]
+        candidate_models = ["gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-flash-latest"]
         response = None
         last_err = None
 

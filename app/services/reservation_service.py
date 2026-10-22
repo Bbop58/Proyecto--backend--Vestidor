@@ -137,7 +137,7 @@ class ReservationService:
                 Inventory.variante_id == item.variante_id,
                 Inventory.activo == True
             ).first()
-
+#FIFOOOOOOO
             if not inv or inv.stock_disponible < item.cantidad:
                 disponible = inv.stock_disponible if inv else 0
                 raise HTTPException(

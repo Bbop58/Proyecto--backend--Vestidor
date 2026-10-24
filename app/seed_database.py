@@ -185,6 +185,15 @@ def seed_all():
                 "tenant_id": tenant_urban.id
             },
             {
+                "email": "admin@sistema.com",
+                "full_name": "Super Administrador",
+                "role_id": admin_role.id,
+                "password": get_password_hash("Password123!"),
+                "is_active": True,
+                "is_verified": True,
+                "tenant_id": tenant_urban.id
+            },
+            {
                 "email": "admin@urbanstyle.com",
                 "full_name": "Admin UrbanStyle (Pro)",
                 "role_id": admin_role.id,

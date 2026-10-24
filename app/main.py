@@ -68,6 +68,15 @@ def on_startup():
     except Exception as e:
         pass
 
+    import threading
+    def auto_seed():
+        try:
+            from app.seed_database import seed_all
+            seed_all()
+        except Exception as e:
+            print(f"[AUTO-SEED] Aviso: {e}")
+    threading.Thread(target=auto_seed, daemon=True).start()
+
 
 
 @app.get("/health", tags=["Health"])

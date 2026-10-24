@@ -17,6 +17,8 @@ from app.api.v1.ai import router as ai_router
 from app.api.v1.voice_reports import router as voice_reports_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.audit_logs import router as audit_logs_router
+from app.api.v1.exchanges import router as exchanges_router
+from app.api.v1.analytics import router as analytics_router
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(auth_router)
@@ -37,6 +39,9 @@ api_v1_router.include_router(ai_router)
 api_v1_router.include_router(voice_reports_router)
 api_v1_router.include_router(notifications_router)
 api_v1_router.include_router(audit_logs_router)
+api_v1_router.include_router(exchanges_router)
+api_v1_router.include_router(analytics_router)
+
 
 
 

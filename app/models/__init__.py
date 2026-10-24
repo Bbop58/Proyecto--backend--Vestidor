@@ -18,6 +18,8 @@ from app.models.sale import Sale, SaleType, SaleStatus, PaymentMethod
 from app.models.sale_detail import SaleDetail
 from app.models.notification import Notification
 from app.models.audit_log import AuditLog
+from app.models.product_exchange import ProductExchange
+from app.models.product_exchange_detail import ProductExchangeDetail
 
 __all__ = [
     "Base",
@@ -45,6 +47,8 @@ __all__ = [
     "SaleDetail",
     "Notification",
     "AuditLog",
+    "ProductExchange",
+    "ProductExchangeDetail",
 ]
 
 

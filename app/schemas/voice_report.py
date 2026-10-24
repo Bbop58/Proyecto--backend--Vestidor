@@ -26,3 +26,10 @@ class VoiceReportQueryResponse(BaseModel):
     filas: List[Dict[str, Any]]
     total_filas: int
     tiempo_ms: float
+
+
+class VoiceReportExcelExportRequest(BaseModel):
+    pregunta: str
+    interpretacion: Optional[str] = "Reporte de Inteligencia de Negocios"
+    columnas: List[str]
+    filas: List[Dict[str, Any]]

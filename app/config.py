@@ -65,11 +65,13 @@ class Settings(BaseSettings):
     def SQLALCHEMY_DATABASE_URI(self) -> str:
         db_url = self.DATABASE_URL or self.DATABASE_PUBLIC_URL or os.getenv("DATABASE_URL", "") or os.getenv("DATABASE_PUBLIC_URL", "")
         if db_url:
-            # Fix Railway postgres:// schema for SQLAlchemy 2.0
+            # Fix Railway postgres:// and postgresql:// schema to explicitly use psycopg2
             if db_url.startswith("postgres://"):
-                return db_url.replace("postgres://", "postgresql://", 1)
+                return db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+            elif db_url.startswith("postgresql://"):
+                return db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
             return db_url
-        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        return f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
 
 settings = Settings()

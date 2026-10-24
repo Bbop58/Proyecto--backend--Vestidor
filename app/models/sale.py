@@ -34,6 +34,7 @@ class Sale(Base):
     __tablename__ = "ventas"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
     numero_recibo = Column(String(30), unique=True, nullable=False, index=True)
     
     tipo = Column(Enum(SaleType, name="sale_type"), nullable=False, default=SaleType.PRESENCIAL)

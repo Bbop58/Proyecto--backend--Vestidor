@@ -9,22 +9,30 @@ from app.schemas.branch import BranchCreate, BranchUpdate
 
 class BranchService:
     @staticmethod
-    def get_all(db: Session, activa_only: bool = False) -> List[Branch]:
+    def get_all(db: Session, activa_only: bool = False, tenant_id: Optional[uuid.UUID] = None) -> List[Branch]:
         query = db.query(Branch)
+        if tenant_id:
+            query = query.filter(Branch.tenant_id == tenant_id)
         if activa_only:
             query = query.filter(Branch.activa == True)
         return query.order_by(Branch.nombre.asc()).all()
 
     @staticmethod
-    def get_by_id(db: Session, branch_id: uuid.UUID) -> Optional[Branch]:
-        return db.query(Branch).filter(Branch.id == branch_id).first()
+    def get_by_id(db: Session, branch_id: uuid.UUID, tenant_id: Optional[uuid.UUID] = None) -> Optional[Branch]:
+        query = db.query(Branch).filter(Branch.id == branch_id)
+        if tenant_id:
+            query = query.filter(Branch.tenant_id == tenant_id)
+        return query.first()
 
     @staticmethod
-    def get_by_name(db: Session, nombre: str) -> Optional[Branch]:
-        return db.query(Branch).filter(Branch.nombre.ilike(nombre.strip())).first()
+    def get_by_name(db: Session, nombre: str, tenant_id: Optional[uuid.UUID] = None) -> Optional[Branch]:
+        query = db.query(Branch).filter(Branch.nombre.ilike(nombre.strip()))
+        if tenant_id:
+            query = query.filter(Branch.tenant_id == tenant_id)
+        return query.first()
 
     @staticmethod
-    def create(db: Session, branch_in: BranchCreate) -> Branch:
+    def create(db: Session, branch_in: BranchCreate, tenant_id: Optional[uuid.UUID] = None) -> Branch:
         nombre = branch_in.nombre.strip()
         if not re.match(r"^[\w\sÁÉÍÓÚáéíóúÑñ.,-]+$", nombre, re.UNICODE):
             raise HTTPException(
@@ -32,14 +40,30 @@ class BranchService:
                 detail="El nombre de la sucursal contiene caracteres inválidos"
             )
 
-        existing = BranchService.get_by_name(db, nombre)
+        # Validación del límite de sucursales según el plan de suscripción del tenant
+        if tenant_id:
+            from app.models.subscription import Subscription
+            sub = db.query(Subscription).filter(
+                Subscription.tenant_id == tenant_id,
+                Subscription.estado == "ACTIVA"
+            ).first()
+            if sub and sub.plan:
+                active_count = db.query(Branch).filter(Branch.tenant_id == tenant_id, Branch.activa == True).count()
+                if active_count >= sub.plan.max_sucursales:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Límite de sucursales alcanzado: Su plan '{sub.plan.nombre}' solo permite hasta {sub.plan.max_sucursales} sucursales activas. Actualice al Plan Profesional para habilitar más sucursales."
+                    )
+
+        existing = BranchService.get_by_name(db, nombre, tenant_id=tenant_id)
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Ya existe una sucursal con el nombre '{nombre}'"
+                detail=f"Ya existe una sucursal con el nombre '{nombre}' en su empresa"
             )
 
         branch = Branch(
+            tenant_id=tenant_id,
             nombre=nombre,
             ciudad=branch_in.ciudad.strip(),
             direccion=branch_in.direccion.strip(),

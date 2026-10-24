@@ -19,6 +19,8 @@ from app.api.v1.notifications import router as notifications_router
 from app.api.v1.audit_logs import router as audit_logs_router
 from app.api.v1.exchanges import router as exchanges_router
 from app.api.v1.analytics import router as analytics_router
+from app.api.v1.subscriptions import router as subscriptions_router
+from app.api.v1.sync import router as sync_router
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(auth_router)
@@ -41,6 +43,8 @@ api_v1_router.include_router(notifications_router)
 api_v1_router.include_router(audit_logs_router)
 api_v1_router.include_router(exchanges_router)
 api_v1_router.include_router(analytics_router)
+api_v1_router.include_router(subscriptions_router)
+api_v1_router.include_router(sync_router)
 
 
 

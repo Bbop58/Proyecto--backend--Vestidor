@@ -15,6 +15,7 @@ class ProductExchange(Base):
     __tablename__ = "cambios_producto"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
     numero_cambio = Column(String(30), unique=True, nullable=False, index=True)
     
     venta_id = Column(UUID(as_uuid=True), ForeignKey("ventas.id", ondelete="RESTRICT"), nullable=False, index=True)

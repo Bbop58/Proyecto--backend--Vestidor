@@ -24,6 +24,9 @@ from app.models.reservation import Reservation, ReservationStatus
 from app.models.reservation_detail import ReservationDetail
 from app.models.sale import Sale, SaleType, SaleStatus, PaymentMethod
 from app.models.sale_detail import SaleDetail
+from app.models.tenant import Tenant
+from app.models.subscription_plan import SubscriptionPlan
+from app.models.subscription import Subscription
 from app.seed_permissions import seed as seed_permissions
 
 
@@ -50,8 +53,22 @@ def seed_all():
                 SET impuesto_iva = ROUND(monto_total * 0.13, 2),
                     monto_neto = ROUND(monto_total - ROUND(monto_total * 0.13, 2), 2)
                 WHERE (monto_neto = 0 OR monto_neto IS NULL) AND monto_total > 0;
+                
+                -- Multitenancy columns
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL;
+                ALTER TABLE sucursales ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE productos ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE categorias ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE temporadas ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE inventario ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE reservas ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE movimientos_inventario ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE cambios_producto ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
             """))
-        print("  [OK] Columnas de impuestos (impuesto_iva, monto_neto) verificadas y migradas en 'ventas'.")
+        print("  [OK] Columnas de impuestos y multitenant (tenant_id) verificadas y migradas.")
     except Exception as e:
         print(f"  [WARN] No se requirió migración manual o aviso: {e}")
 
@@ -61,6 +78,95 @@ def seed_all():
 
     db = SessionLocal()
     try:
+        # 1.5. Sembrar Planes de Suscripción y Empresas Multitenant
+        print("\n[1.5/6] Sembrando Planes de Suscripción y Empresas Multitenant...")
+        plan_pro = db.query(SubscriptionPlan).filter(SubscriptionPlan.codigo == "PROFESIONAL").first()
+        if not plan_pro:
+            plan_pro = SubscriptionPlan(
+                codigo="PROFESIONAL",
+                nombre="Plan Profesional",
+                descripcion="Hasta 10 sucursales, Reportes con IA e Inteligencia Artificial",
+                max_sucursales=10,
+                permite_reportes_ia=True,
+                permite_offline=True,
+                precio_mensual_bob=350.00,
+                activo=True
+            )
+            db.add(plan_pro)
+            db.flush()
+
+        plan_basico = db.query(SubscriptionPlan).filter(SubscriptionPlan.codigo == "BASICO").first()
+        if not plan_basico:
+            plan_basico = SubscriptionPlan(
+                codigo="BASICO",
+                nombre="Plan Básico",
+                descripcion="Máximo 2 sucursales, Operación Offline, Sin Reportes IA",
+                max_sucursales=2,
+                permite_reportes_ia=False,
+                permite_offline=True,
+                precio_mensual_bob=120.00,
+                activo=True
+            )
+            db.add(plan_basico)
+            db.flush()
+        db.commit()
+
+        # Empresa 1: UrbanStyle Bolivia S.R.L. (Plan Profesional)
+        tenant_urban = db.query(Tenant).filter(Tenant.slug == "urbanstyle").first()
+        if not tenant_urban:
+            tenant_urban = Tenant(
+                nombre="UrbanStyle Bolivia S.R.L.",
+                razon_social="UrbanStyle Bolivia Sociedad de Responsabilidad Limitada",
+                nit_rut="1029384756",
+                slug="urbanstyle",
+                logo_url="https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=200",
+                telefono="+591 3 3456789",
+                email_contacto="contacto@urbanstyle.com",
+                activo=True
+            )
+            db.add(tenant_urban)
+            db.flush()
+
+            sub_urban = Subscription(
+                tenant_id=tenant_urban.id,
+                plan_id=plan_pro.id,
+                estado="ACTIVA",
+                fecha_inicio=date.today(),
+                fecha_vencimiento=date.fromordinal(date.today().toordinal() + 365),
+                notas="Suscripción Anual Profesional"
+            )
+            db.add(sub_urban)
+            db.commit()
+            print("  [OK] Creada Empresa 1: UrbanStyle Bolivia S.R.L. (Plan Profesional)")
+
+        # Empresa 2: Moda Express Tarija (Plan Básico)
+        tenant_moda = db.query(Tenant).filter(Tenant.slug == "modaexpress").first()
+        if not tenant_moda:
+            tenant_moda = Tenant(
+                nombre="Moda Express Tarija",
+                razon_social="Moda Express Tarija Unipersonal",
+                nit_rut="7463529018",
+                slug="modaexpress",
+                logo_url="https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=200",
+                telefono="+591 4 6645566",
+                email_contacto="contacto@modaexpress.com",
+                activo=True
+            )
+            db.add(tenant_moda)
+            db.flush()
+
+            sub_moda = Subscription(
+                tenant_id=tenant_moda.id,
+                plan_id=plan_basico.id,
+                estado="ACTIVA",
+                fecha_inicio=date.today(),
+                fecha_vencimiento=date.fromordinal(date.today().toordinal() + 365),
+                notas="Suscripción Anual Básica"
+            )
+            db.add(sub_moda)
+            db.commit()
+            print("  [OK] Creada Empresa 2: Moda Express Tarija (Plan Básico)")
+
         # 2. Sembrar Usuarios con diferentes Roles
         print("\n[2/6] Sembrando Usuarios de Prueba...")
         admin_role = db.query(Role).filter(Role.name == "admin").first()
@@ -75,7 +181,44 @@ def seed_all():
                 "role_id": admin_role.id,
                 "password": get_password_hash("Password123!"),
                 "is_active": True,
-                "is_verified": True
+                "is_verified": True,
+                "tenant_id": tenant_urban.id
+            },
+            {
+                "email": "admin@urbanstyle.com",
+                "full_name": "Admin UrbanStyle (Pro)",
+                "role_id": admin_role.id,
+                "password": get_password_hash("Password123!"),
+                "is_active": True,
+                "is_verified": True,
+                "tenant_id": tenant_urban.id
+            },
+            {
+                "email": "cajero@urbanstyle.com",
+                "full_name": "Cajero UrbanStyle",
+                "role_id": cajero_role.id,
+                "password": get_password_hash("Password123!"),
+                "is_active": True,
+                "is_verified": True,
+                "tenant_id": tenant_urban.id
+            },
+            {
+                "email": "admin@modaexpress.com",
+                "full_name": "Admin Moda Express (Básico)",
+                "role_id": admin_role.id,
+                "password": get_password_hash("Password123!"),
+                "is_active": True,
+                "is_verified": True,
+                "tenant_id": tenant_moda.id
+            },
+            {
+                "email": "cajero@modaexpress.com",
+                "full_name": "Cajero Moda Express",
+                "role_id": cajero_role.id,
+                "password": get_password_hash("Password123!"),
+                "is_active": True,
+                "is_verified": True,
+                "tenant_id": tenant_moda.id
             },
             {
                 "email": "encargado@ficttstore.com",
@@ -83,7 +226,8 @@ def seed_all():
                 "role_id": encargado_role.id,
                 "password": get_password_hash("Password123!"),
                 "is_active": True,
-                "is_verified": True
+                "is_verified": True,
+                "tenant_id": tenant_urban.id
             },
             {
                 "email": "cajero@ficttstore.com",
@@ -91,7 +235,8 @@ def seed_all():
                 "role_id": cajero_role.id,
                 "password": get_password_hash("Password123!"),
                 "is_active": True,
-                "is_verified": True
+                "is_verified": True,
+                "tenant_id": tenant_urban.id
             },
             {
                 "email": "cliente@ficttstore.com",
@@ -99,7 +244,8 @@ def seed_all():
                 "role_id": cliente_role.id,
                 "password": get_password_hash("Password123!"),
                 "is_active": True,
-                "is_verified": True
+                "is_verified": True,
+                "tenant_id": tenant_urban.id
             },
             {
                 "email": "sofia.cliente@ficttstore.com",
@@ -107,7 +253,8 @@ def seed_all():
                 "role_id": cliente_role.id,
                 "password": get_password_hash("Password123!"),
                 "is_active": True,
-                "is_verified": True
+                "is_verified": True,
+                "tenant_id": tenant_urban.id
             }
         ]
 
@@ -121,7 +268,8 @@ def seed_all():
                     role_id=u_data["role_id"],
                     hashed_password=u_data["password"],
                     is_active=u_data["is_active"],
-                    is_verified=u_data["is_verified"]
+                    is_verified=u_data["is_verified"],
+                    tenant_id=u_data.get("tenant_id")
                 )
                 db.add(user)
                 db.commit()
@@ -131,6 +279,7 @@ def seed_all():
                 user.role_id = u_data["role_id"]
                 user.hashed_password = u_data["password"]
                 user.full_name = u_data["full_name"]
+                user.tenant_id = u_data.get("tenant_id")
                 db.commit()
                 print(f"  [+] Usuario actualizado: {user.email}")
             users_map[u_data["email"]] = user
@@ -143,28 +292,49 @@ def seed_all():
                 "ciudad": "Santa Cruz de la Sierra",
                 "direccion": "Av. Banzer y 3er Anillo Interno #150",
                 "telefono": "+591 3 3456789",
-                "activa": True
+                "activa": True,
+                "tenant_id": tenant_urban.id
             },
             {
                 "nombre": "Sucursal Equipetrol",
                 "ciudad": "Santa Cruz de la Sierra",
                 "direccion": "Av. San Martín #450, Esq. Calle 7",
                 "telefono": "+591 3 3498123",
-                "activa": True
+                "activa": True,
+                "tenant_id": tenant_urban.id
             },
             {
                 "nombre": "Sucursal Montero",
                 "ciudad": "Montero",
                 "direccion": "Calle Comercio #120, Zona Comercial",
                 "telefono": "+591 3 9223344",
-                "activa": True
+                "activa": True,
+                "tenant_id": tenant_urban.id
             },
             {
                 "nombre": "Sucursal Cochabamba",
                 "ciudad": "Cochabamba",
                 "direccion": "Av. América Este #780",
                 "telefono": "+591 4 4112233",
-                "activa": True
+                "activa": True,
+                "tenant_id": tenant_urban.id
+            },
+            # Sucursales Empresa 2 (Moda Express Tarija - Plan Básico con límite de 2)
+            {
+                "nombre": "Moda Express - Tarija Centro",
+                "ciudad": "Tarija",
+                "direccion": "Calle Sucre #240, Plaza Principal",
+                "telefono": "+591 4 6641122",
+                "activa": True,
+                "tenant_id": tenant_moda.id
+            },
+            {
+                "nombre": "Moda Express - El Molino",
+                "ciudad": "Tarija",
+                "direccion": "Av. Las Américas #890",
+                "telefono": "+591 4 6643344",
+                "activa": True,
+                "tenant_id": tenant_moda.id
             }
         ]
 
@@ -177,6 +347,9 @@ def seed_all():
                 db.commit()
                 db.refresh(branch)
                 print(f"  [OK] Creada sucursal: {branch.nombre} en {branch.ciudad}")
+            else:
+                branch.tenant_id = b_data.get("tenant_id", tenant_urban.id)
+                db.commit()
             branches_map[b_data["nombre"]] = branch
 
         # 4. Sembrar Proveedores y Categorías de Moda Masculina
@@ -219,10 +392,14 @@ def seed_all():
         for s_data in suppliers_data:
             supplier = db.query(Supplier).filter(Supplier.nombre == s_data["nombre"]).first()
             if not supplier:
-                supplier = Supplier(**s_data)
+                s_dict = {**s_data, "tenant_id": tenant_urban.id}
+                supplier = Supplier(**s_dict)
                 db.add(supplier)
                 db.commit()
                 print(f"  [OK] Creado proveedor: {supplier.nombre}")
+            else:
+                supplier.tenant_id = tenant_urban.id
+                db.commit()
 
         categories_data = [
             {"nombre": "Poleras & Remeras", "descripcion": "Poleras oversized, boxy fit, remeras básicas y urbanas para hombre"},
@@ -237,15 +414,35 @@ def seed_all():
         for c_data in categories_data:
             cat = db.query(Category).filter(Category.nombre == c_data["nombre"]).first()
             if not cat:
-                cat = Category(**c_data)
+                c_dict = {**c_data, "tenant_id": tenant_urban.id}
+                cat = Category(**c_dict)
                 db.add(cat)
                 db.commit()
                 db.refresh(cat)
                 print(f"  [OK] Creada categoría: {cat.nombre}")
             else:
+                cat.tenant_id = tenant_urban.id
                 cat.descripcion = c_data["descripcion"]
                 db.commit()
             categories_map[c_data["nombre"]] = cat
+
+        # Categoría para Moda Express (Empresa 2)
+        cat_moda = db.query(Category).filter(Category.nombre == "Moda Formal y Ejecutiva").first()
+        if not cat_moda:
+            cat_moda = Category(
+                nombre="Moda Formal y Ejecutiva",
+                descripcion="Prendas de vestir formales, trajes ejecutivos y vestidos elegantes",
+                activa=True,
+                tenant_id=tenant_moda.id
+            )
+            db.add(cat_moda)
+            db.commit()
+            db.refresh(cat_moda)
+            print("  [OK] Creada categoría exclusiva para Moda Express: Moda Formal y Ejecutiva")
+        else:
+            cat_moda.tenant_id = tenant_moda.id
+            db.commit()
+        categories_map["Moda Formal y Ejecutiva"] = cat_moda
 
         # 5. Sembrar Productos y Variantes de Moda Masculina (100% Exclusivo Hombre)
         print("\n[5/6] Sembrando Productos y Variantes (Catálogo Masculino con Fondo Blanco)...")
@@ -540,6 +737,7 @@ def seed_all():
             product = db.query(Product).filter(Product.nombre == p_info["nombre"]).first()
             if not product:
                 product = Product(
+                    tenant_id=tenant_urban.id,
                     nombre=p_info["nombre"],
                     descripcion=p_info["descripcion"],
                     precio_base=p_info["precio_base"],
@@ -554,6 +752,7 @@ def seed_all():
                 db.refresh(product)
                 print(f"  [OK] Creado producto masculino: {product.nombre}")
             else:
+                product.tenant_id = tenant_urban.id
                 product.imagen_url = p_info.get("imagen_url")
                 product.descripcion = p_info["descripcion"]
                 product.precio_base = p_info["precio_base"]
@@ -589,6 +788,94 @@ def seed_all():
                     db.commit()
                 all_variants.append(variant)
 
+        # 5.5. Sembrar Catálogo Exclusivo de Moda Express Tarija (Empresa 2)
+        print("\n[5.5/6] Sembrando Productos y Variantes de Moda Express Tarija (Empresa 2)...")
+        moda_products = [
+            {
+                "nombre": "Camisa Ejecutiva Slim Fit",
+                "descripcion": "Camisa formal 100% algodón egipcio antiarrugas para oficina y eventos ejecutivos.",
+                "precio_base": Decimal("180.00"),
+                "categoria_id": cat_moda.id,
+                "temporada": "Línea Ejecutiva 2025",
+                "proveedor": "Confecciones del Oriente",
+                "variantes": [
+                    {"talla": "S", "color": "Blanco Puro", "sku": "CAM-SLM-WHT-S", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Blanco Puro", "sku": "CAM-SLM-WHT-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Blanco Puro", "sku": "CAM-SLM-WHT-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Azul Cielo", "sku": "CAM-SLM-BLU-M", "precio_extra": Decimal("0.00")},
+                ]
+            },
+            {
+                "nombre": "Traje Formal Dos Piezas",
+                "descripcion": "Terno clásico formal en corte contemporáneo de lana fría con saco estructurado y pantalón recto.",
+                "precio_base": Decimal("650.00"),
+                "categoria_id": cat_moda.id,
+                "temporada": "Línea Ejecutiva 2025",
+                "proveedor": "Confecciones del Oriente",
+                "variantes": [
+                    {"talla": "38R", "color": "Azul Marino", "sku": "TRJ-FRM-NVY-38", "precio_extra": Decimal("0.00")},
+                    {"talla": "40R", "color": "Azul Marino", "sku": "TRJ-FRM-NVY-40", "precio_extra": Decimal("0.00")},
+                    {"talla": "42R", "color": "Gris Oxford", "sku": "TRJ-FRM-GRY-42", "precio_extra": Decimal("20.00")},
+                ]
+            },
+            {
+                "nombre": "Vestido de Fiesta Elegante",
+                "descripcion": "Vestido largo de fiesta en satén con escote drapeado y caída fluida para ocasiones de gala.",
+                "precio_base": Decimal("420.00"),
+                "categoria_id": cat_moda.id,
+                "temporada": "Colección Gala 2025",
+                "proveedor": "Textilera Andina S.A.",
+                "variantes": [
+                    {"talla": "S", "color": "Rojo Carmín", "sku": "VES-FST-RED-S", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Rojo Carmín", "sku": "VES-FST-RED-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Negro Noche", "sku": "VES-FST-BLK-L", "precio_extra": Decimal("0.00")},
+                ]
+            }
+        ]
+
+        moda_variants = []
+        for p_data in moda_products:
+            prod_m = db.query(Product).filter(Product.nombre == p_data["nombre"]).first()
+            if not prod_m:
+                prod_m = Product(
+                    tenant_id=tenant_moda.id,
+                    nombre=p_data["nombre"],
+                    descripcion=p_data["descripcion"],
+                    precio_base=p_data["precio_base"],
+                    categoria_id=p_data["categoria_id"],
+                    temporada=p_data["temporada"],
+                    proveedor=p_data["proveedor"],
+                    activo=True
+                )
+                db.add(prod_m)
+                db.commit()
+                db.refresh(prod_m)
+                print(f"  [OK] Creado producto Moda Express: {prod_m.nombre}")
+            else:
+                prod_m.tenant_id = tenant_moda.id
+                db.commit()
+
+            for v_data in p_data["variantes"]:
+                var_m = db.query(ProductVariant).filter(ProductVariant.sku == v_data["sku"]).first()
+                if not var_m:
+                    var_m = ProductVariant(
+                        producto_id=prod_m.id,
+                        talla=v_data["talla"],
+                        color=v_data["color"],
+                        sku=v_data["sku"],
+                        precio_extra=v_data["precio_extra"],
+                        activo=True
+                    )
+                    db.add(var_m)
+                    db.commit()
+                    db.refresh(var_m)
+                else:
+                    var_m.sku = v_data["sku"]
+                    var_m.precio_extra = v_data["precio_extra"]
+                    var_m.activo = True
+                    db.commit()
+                moda_variants.append(var_m)
+
         # 6. Sembrar Inventario en Sucursales y Movimientos
         print("\n[6/6] Sembrando Inventario, Reservas y Ventas...")
         central_branch = branches_map.get("Sucursal Central")
@@ -607,7 +894,7 @@ def seed_all():
         }
         for v in all_variants:
             for branch in branches_map.values():
-                if not branch:
+                if not branch or branch.tenant_id != tenant_urban.id:
                     continue
                 inv = db.query(Inventory).filter(
                     Inventory.sucursal_id == branch.id,
@@ -617,6 +904,7 @@ def seed_all():
                 if not inv:
                     stock_qty = stock_by_branch.get(branch.nombre, 15)
                     inv = Inventory(
+                        tenant_id=branch.tenant_id,
                         sucursal_id=branch.id,
                         variante_id=v.id,
                         stock_actual=stock_qty,
@@ -631,6 +919,7 @@ def seed_all():
 
                     # Registrar movimiento de recepción inicial
                     mov = InventoryMovement(
+                        tenant_id=branch.tenant_id,
                         inventario_id=inv.id,
                         tipo=MovementType.ENTRADA,
                         cantidad=stock_qty,
@@ -642,7 +931,38 @@ def seed_all():
                     )
                     db.add(mov)
                     db.commit()
+                else:
+                    inv.tenant_id = branch.tenant_id
+                    db.commit()
                 inventory_items.append(inv)
+
+        # Inventario de Moda Express (Empresa 2)
+        moda_branch_1 = branches_map.get("Moda Express - Tarija Centro")
+        moda_branch_2 = branches_map.get("Moda Express - El Molino")
+        for v in moda_variants:
+            for m_branch in [moda_branch_1, moda_branch_2]:
+                if not m_branch:
+                    continue
+                inv_m = db.query(Inventory).filter(
+                    Inventory.sucursal_id == m_branch.id,
+                    Inventory.variante_id == v.id
+                ).first()
+                if not inv_m:
+                    inv_m = Inventory(
+                        tenant_id=tenant_moda.id,
+                        sucursal_id=m_branch.id,
+                        variante_id=v.id,
+                        stock_actual=20,
+                        stock_reservado=0,
+                        stock_minimo=4,
+                        ubicacion=f"Sector Formal {v.talla}",
+                        activo=True
+                    )
+                    db.add(inv_m)
+                    db.commit()
+                else:
+                    inv_m.tenant_id = tenant_moda.id
+                    db.commit()
 
         print(f"  [OK] Inventario sembrado: {len(inventory_items)} registros de stock listos.")
 
@@ -731,6 +1051,7 @@ def seed_all():
         if not sale1 and central_branch and cajero_user and cliente_user and len(all_variants) >= 2:
             v_sale = all_variants[0]
             sale1 = Sale(
+                tenant_id=tenant_urban.id,
                 numero_recibo="VTA-2025-0001",
                 tipo=SaleType.PRESENCIAL,
                 estado=SaleStatus.COMPLETADA,
@@ -765,6 +1086,7 @@ def seed_all():
                 antes = inv_sale.stock_actual
                 inv_sale.stock_actual = max(0, inv_sale.stock_actual - 1)
                 mov_vta = InventoryMovement(
+                    tenant_id=tenant_urban.id,
                     inventario_id=inv_sale.id,
                     tipo=MovementType.SALIDA_VENTA,
                     cantidad=1,
@@ -782,6 +1104,7 @@ def seed_all():
         if not sale2 and equipetrol_branch and cajero_user and cliente_user and len(all_variants) >= 4:
             v_sale2 = all_variants[3]
             sale2 = Sale(
+                tenant_id=tenant_urban.id,
                 numero_recibo="VTA-2025-0002",
                 tipo=SaleType.DIGITAL,
                 estado=SaleStatus.COMPLETADA,
@@ -817,6 +1140,7 @@ def seed_all():
                 antes = inv_sale2.stock_actual
                 inv_sale2.stock_actual = max(0, inv_sale2.stock_actual - 1)
                 mov_vta2 = InventoryMovement(
+                    tenant_id=tenant_urban.id,
                     inventario_id=inv_sale2.id,
                     tipo=MovementType.SALIDA_VENTA,
                     cantidad=1,
@@ -834,6 +1158,7 @@ def seed_all():
         if not sale3 and central_branch and cliente_user and len(all_variants) >= 5:
             v_sale3 = all_variants[4]
             sale3 = Sale(
+                tenant_id=tenant_urban.id,
                 numero_recibo="VTA-2025-0003",
                 tipo=SaleType.DIGITAL,
                 estado=SaleStatus.COMPLETADA,
@@ -869,6 +1194,7 @@ def seed_all():
         if not sale4 and equipetrol_branch and cajero_user and cliente_user and len(all_variants) >= 6:
             v_sale4 = all_variants[5]
             sale4 = Sale(
+                tenant_id=tenant_urban.id,
                 numero_recibo="VTA-2025-0004",
                 tipo=SaleType.PRESENCIAL,
                 estado=SaleStatus.COMPLETADA,
@@ -900,14 +1226,54 @@ def seed_all():
             db.commit()
             print("  [OK] Creada Venta de prueba: VTA-2025-0004 (Presencial / QR / 180.00 Bs.)")
 
+        # Ventas de Moda Express (Empresa 2)
+        sale_m1 = db.query(Sale).filter(Sale.numero_recibo == "VTA-MODA-0001").first()
+        cajero_moda = users_map.get("cajero@modaexpress.com")
+        if not sale_m1 and moda_branch_1 and cajero_moda and len(moda_variants) >= 1:
+            v_m1 = moda_variants[0]
+            sale_m1 = Sale(
+                tenant_id=tenant_moda.id,
+                numero_recibo="VTA-MODA-0001",
+                tipo=SaleType.PRESENCIAL,
+                estado=SaleStatus.COMPLETADA,
+                sucursal_id=moda_branch_1.id,
+                cliente_id=None,
+                cajero_id=cajero_moda.id,
+                metodo_pago=PaymentMethod.EFECTIVO,
+                monto_total=Decimal("180.00"),
+                impuesto_iva=Decimal("23.40"),
+                monto_neto=Decimal("156.60"),
+                monto_recibido=Decimal("200.00"),
+                cambio=Decimal("20.00"),
+                nota="Venta mostrador Moda Express Tarija Centro",
+                created_at=utc_now() - timedelta(days=1)
+            )
+            db.add(sale_m1)
+            db.commit()
+            db.refresh(sale_m1)
+
+            det_m1 = SaleDetail(
+                venta_id=sale_m1.id,
+                variante_id=v_m1.id,
+                cantidad=1,
+                precio_unitario=Decimal("180.00"),
+                subtotal=Decimal("180.00")
+            )
+            db.add(det_m1)
+            db.commit()
+            print("  [OK] Creada Venta Moda Express: VTA-MODA-0001 (Presencial / 180.00 Bs.)")
+
         print("\n==================================================")
         print(" [SUCCESS] BASE DE DATOS POBLADA EXITOSAMENTE! ")
         print("==================================================")
-        print("Credenciales de prueba generadas:")
-        print(" * Admin:     admin@ficttstore.com     / Password123!")
-        print(" * Encargado: encargado@ficttstore.com / Password123!")
-        print(" * Cajero:    cajero@ficttstore.com    / Password123!")
-        print(" * Cliente:   cliente@ficttstore.com   / Password123!")
+        print("Empresas y Credenciales de prueba generadas:")
+        print("[EMPRESA 1] UrbanStyle Bolivia S.R.L. (Plan Profesional / IA Habilitada)")
+        print(" * Admin:     admin@urbanstyle.com     / Password123!")
+        print(" * Cajero:    cajero@urbanstyle.com    / Password123!")
+        print(" * Base:      admin@ficttstore.com     / Password123!")
+        print("[EMPRESA 2] Moda Express Tarija (Plan Basico / Limite 2 Sucursales / Sin IA)")
+        print(" * Admin:     admin@modaexpress.com    / Password123!")
+        print(" * Cajero:    cajero@modaexpress.com   / Password123!")
         print("==================================================")
 
     except Exception as e:

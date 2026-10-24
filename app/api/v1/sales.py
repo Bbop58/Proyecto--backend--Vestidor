@@ -133,7 +133,8 @@ def get_sales(
     cliente_id: Optional[uuid.UUID] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
 ):
     return SaleService.get_sales(
         db,
@@ -143,7 +144,8 @@ def get_sales(
         cajero_id=cajero_id,
         cliente_id=cliente_id,
         limit=limit,
-        offset=offset
+        offset=offset,
+        tenant_id=current_user.tenant_id
     )
 
 
@@ -155,9 +157,10 @@ def get_sales(
 )
 def get_sale(
     venta_id: uuid.UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
 ):
-    return SaleService.get_sale_by_id(db, venta_id)
+    return SaleService.get_sale_by_id(db, venta_id, tenant_id=current_user.tenant_id)
 
 
 @router.patch(

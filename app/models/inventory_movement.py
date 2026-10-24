@@ -25,6 +25,7 @@ class InventoryMovement(Base):
     __tablename__ = "movimientos_inventario"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
     inventario_id = Column(UUID(as_uuid=True), ForeignKey("inventario.id", ondelete="RESTRICT"), nullable=False, index=True)
 
     tipo = Column(SAEnum(MovementType, name="movement_type"), nullable=False, index=True)

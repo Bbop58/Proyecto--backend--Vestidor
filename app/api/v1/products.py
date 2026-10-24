@@ -24,7 +24,8 @@ def list_products(
     proveedor: Optional[str] = Query(None, description="Filtrar por proveedor"),
     search: Optional[str] = Query(None, description="Buscar por nombre o descripción"),
     activo: Optional[bool] = Query(None, description="Filtrar por estado activo/inactivo"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
 ):
     return ProductService.get_all(
         db,
@@ -32,7 +33,8 @@ def list_products(
         temporada=temporada,
         proveedor=proveedor,
         search=search,
-        activo=activo
+        activo=activo,
+        tenant_id=current_user.tenant_id
     )
 
 
@@ -48,7 +50,7 @@ def create_product(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    prod = ProductService.create(db, product_in)
+    prod = ProductService.create(db, product_in, tenant_id=current_user.tenant_id)
     AuditService.log(
         db=db,
         action=f"Creación de producto: {prod.nombre}",
@@ -66,9 +68,10 @@ def create_product(
 )
 def get_product(
     product_id: uuid.UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
 ):
-    product = ProductService.get_by_id(db, product_id)
+    product = ProductService.get_by_id(db, product_id, tenant_id=current_user.tenant_id)
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado")
     return product

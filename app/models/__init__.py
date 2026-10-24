@@ -21,8 +21,17 @@ from app.models.audit_log import AuditLog
 from app.models.product_exchange import ProductExchange
 from app.models.product_exchange_detail import ProductExchangeDetail
 
+from app.models.tenant import Tenant
+from app.models.subscription_plan import SubscriptionPlan
+from app.models.subscription import Subscription
+from app.models.sync_operation import SyncOperation
+
 __all__ = [
     "Base",
+    "Tenant",
+    "SubscriptionPlan",
+    "Subscription",
+    "SyncOperation",
     "User",
     "TokenBlacklist",
     "Role",

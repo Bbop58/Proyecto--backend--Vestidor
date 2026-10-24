@@ -74,6 +74,8 @@ class UserService:
         res = UserResponse.model_validate(user)
         if user.role_id:
             res.permissions = RoleService.get_permission_codes(db, user.role_id)
+        if user.tenant:
+            res.tenant_name = user.tenant.nombre
         return res
 
     @staticmethod

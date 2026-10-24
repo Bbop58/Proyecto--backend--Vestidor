@@ -3,7 +3,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.api.deps import require_permission
+from app.api.deps import require_permission, get_current_user
+from app.models.user import User
 from app.schemas.branch import BranchCreate, BranchUpdate, BranchResponse
 from app.services.branch_service import BranchService
 
@@ -18,9 +19,10 @@ router = APIRouter(prefix="/sucursales", tags=["Sucursales"])
 )
 def list_branches(
     activa_only: bool = Query(False, description="Filtrar solo sucursales activas"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    return BranchService.get_all(db, activa_only=activa_only)
+    return BranchService.get_all(db, activa_only=activa_only, tenant_id=current_user.tenant_id)
 
 
 @router.post(
@@ -32,9 +34,10 @@ def list_branches(
 )
 def create_branch(
     branch_in: BranchCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    return BranchService.create(db, branch_in)
+    return BranchService.create(db, branch_in, tenant_id=current_user.tenant_id)
 
 
 @router.get(
@@ -45,9 +48,10 @@ def create_branch(
 )
 def get_branch(
     branch_id: uuid.UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    branch = BranchService.get_by_id(db, branch_id)
+    branch = BranchService.get_by_id(db, branch_id, tenant_id=current_user.tenant_id)
     if not branch:
         from fastapi import HTTPException
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sucursal no encontrada")

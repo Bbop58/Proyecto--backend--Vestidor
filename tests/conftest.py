@@ -6,11 +6,8 @@ from sqlalchemy.orm import sessionmaker, Session
 from app.main import app as fastapi_app
 from app.database import Base, get_db
 from app.config import settings
-import app.models.role
-import app.models.permission
-import app.models.role_permission
-import app.models.user
-import app.models.token_blacklist
+import app.models
+
 
 
 # Test database URI

@@ -14,6 +14,7 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True, index=True)
     role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id"), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
     full_name = Column(String(255), nullable=False)
@@ -24,4 +25,5 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     role = relationship("Role", back_populates="users", lazy="joined")
+    tenant = relationship("Tenant", foreign_keys=[tenant_id], lazy="joined")
 

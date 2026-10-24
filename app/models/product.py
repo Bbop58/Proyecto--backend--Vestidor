@@ -14,6 +14,7 @@ class Product(Base):
     __tablename__ = "productos"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
     nombre = Column(String(100), index=True, nullable=False)
     descripcion = Column(Text, nullable=True)
     precio_base = Column(Numeric(10, 2), nullable=False)

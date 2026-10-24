@@ -25,8 +25,11 @@ class ProductService:
         proveedor: Optional[str] = None,
         search: Optional[str] = None,
         activo: Optional[bool] = None,
+        tenant_id: Optional[uuid.UUID] = None,
     ) -> List[Product]:
         query = db.query(Product)
+        if tenant_id:
+            query = query.filter(Product.tenant_id == tenant_id)
 
         if categoria_id:
             query = query.filter(Product.categoria_id == categoria_id)
@@ -51,11 +54,14 @@ class ProductService:
         return query.order_by(Product.created_at.desc()).all()
 
     @staticmethod
-    def get_by_id(db: Session, product_id: uuid.UUID) -> Optional[Product]:
-        return db.query(Product).filter(Product.id == product_id).first()
+    def get_by_id(db: Session, product_id: uuid.UUID, tenant_id: Optional[uuid.UUID] = None) -> Optional[Product]:
+        query = db.query(Product).filter(Product.id == product_id)
+        if tenant_id:
+            query = query.filter(Product.tenant_id == tenant_id)
+        return query.first()
 
     @staticmethod
-    def create(db: Session, product_in: ProductCreate) -> Product:
+    def create(db: Session, product_in: ProductCreate, tenant_id: Optional[uuid.UUID] = None) -> Product:
         category = db.query(Category).filter(Category.id == product_in.categoria_id).first()
         if not category:
             raise HTTPException(
@@ -64,6 +70,7 @@ class ProductService:
             )
 
         product = Product(
+            tenant_id=tenant_id,
             nombre=product_in.nombre.strip(),
             descripcion=product_in.descripcion.strip() if product_in.descripcion else None,
             precio_base=product_in.precio_base,

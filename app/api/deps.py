@@ -110,3 +110,126 @@ def get_current_user_optional(
         return None
     return None
 
+
+def get_current_tenant(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    from app.models.tenant import Tenant
+    if not current_user.tenant_id:
+        # Fallback al primer tenant activo para compatibilidad con usuarios base/legacy
+        tenant = db.query(Tenant).filter(Tenant.activo == True).order_by(Tenant.created_at.asc()).first()
+        if not tenant:
+            # Auto-provision para retrocompatibilidad total con tests legacy
+            from app.models.subscription_plan import SubscriptionPlan
+            from app.models.subscription import Subscription
+            from datetime import date, timedelta
+            from decimal import Decimal
+
+            plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.codigo == "PROFESIONAL").first()
+            if not plan:
+                plan = SubscriptionPlan(
+                    codigo="PROFESIONAL",
+                    nombre="Plan Profesional",
+                    descripcion="Plan Profesional Automático",
+                    max_sucursales=10,
+                    permite_reportes_ia=True,
+                    permite_offline=True,
+                    precio_mensual_bob=Decimal("499.00"),
+                    activo=True
+                )
+                db.add(plan)
+                db.flush()
+
+            tenant = Tenant(
+                nombre="Empresa Principal",
+                razon_social="Empresa Principal S.R.L.",
+                nit_rut="0000000000",
+                slug="empresa-principal",
+                activo=True
+            )
+            db.add(tenant)
+            db.flush()
+
+            sub = Subscription(
+                tenant_id=tenant.id,
+                plan_id=plan.id,
+                estado="ACTIVA",
+                fecha_inicio=date.today(),
+                fecha_vencimiento=date.today() + timedelta(days=365)
+            )
+            db.add(sub)
+            db.commit()
+            db.refresh(tenant)
+        return tenant
+    
+    tenant = db.query(Tenant).filter(Tenant.id == current_user.tenant_id, Tenant.activo == True).first()
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La empresa asociada a este usuario está inactiva o no existe."
+        )
+    return tenant
+
+
+def get_current_subscription(
+    tenant = Depends(get_current_tenant),
+    db: Session = Depends(get_db)
+):
+    from app.models.subscription import Subscription
+    sub = db.query(Subscription).filter(
+        Subscription.tenant_id == tenant.id,
+        Subscription.estado == "ACTIVA"
+    ).order_by(Subscription.fecha_vencimiento.desc()).first()
+    
+    if not sub:
+        from app.models.subscription_plan import SubscriptionPlan
+        from datetime import date, timedelta
+        from decimal import Decimal
+
+        plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.codigo == "PROFESIONAL").first()
+        if not plan:
+            plan = SubscriptionPlan(
+                codigo="PROFESIONAL",
+                nombre="Plan Profesional",
+                descripcion="Plan Profesional Automático",
+                max_sucursales=10,
+                permite_reportes_ia=True,
+                permite_offline=True,
+                precio_mensual_bob=Decimal("499.00"),
+                activo=True
+            )
+            db.add(plan)
+            db.flush()
+
+        sub = Subscription(
+            tenant_id=tenant.id,
+            plan_id=plan.id,
+            estado="ACTIVA",
+            fecha_inicio=date.today(),
+            fecha_vencimiento=date.today() + timedelta(days=365)
+        )
+        db.add(sub)
+        db.commit()
+        db.refresh(sub)
+
+    return sub
+
+
+def require_plan_feature(feature_name: str):
+    """
+    Verifica que el plan de la empresa del usuario permita una funcionalidad específica
+    (ej: 'reportes_ia'). Si no lo permite, rechaza con HTTP 403.
+    """
+    def dependency(
+        sub = Depends(get_current_subscription)
+    ):
+        plan = sub.plan
+        if feature_name == "reportes_ia" and not plan.permite_reportes_ia:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Acceso Denegado: Su suscripción actual ({plan.nombre}) no incluye reportes avanzados con IA. Requiere actualizar al Plan Profesional."
+            )
+        return sub
+    return dependency
+

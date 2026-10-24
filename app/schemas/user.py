@@ -44,6 +44,8 @@ class UserResponse(UserBase):
     is_verified: bool
     role: Optional[RoleResponse] = None
     permissions: List[str] = []
+    tenant_id: Optional[uuid.UUID] = None
+    tenant_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

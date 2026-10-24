@@ -98,6 +98,7 @@ class SaleService:
 
         # 3. Crear cabecera de venta
         venta = Sale(
+            tenant_id=branch.tenant_id,
             numero_recibo=numero_recibo,
             tipo=sale_type,
             estado=SaleStatus.COMPLETADA,
@@ -307,8 +308,11 @@ class SaleService:
         return SaleService._format_sale_response(venta)
 
     @staticmethod
-    def get_sale_by_id(db: Session, venta_id: uuid.UUID) -> dict:
-        venta = db.query(Sale).filter(Sale.id == venta_id).first()
+    def get_sale_by_id(db: Session, venta_id: uuid.UUID, tenant_id: Optional[uuid.UUID] = None) -> dict:
+        q = db.query(Sale).filter(Sale.id == venta_id)
+        if tenant_id:
+            q = q.filter(Sale.tenant_id == tenant_id)
+        venta = q.first()
         if not venta:
             raise HTTPException(status_code=404, detail="Venta no encontrada")
         return SaleService._format_sale_response(venta)
@@ -322,9 +326,12 @@ class SaleService:
         cajero_id: Optional[uuid.UUID] = None,
         cliente_id: Optional[uuid.UUID] = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
+        tenant_id: Optional[uuid.UUID] = None
     ) -> List[dict]:
         q = db.query(Sale)
+        if tenant_id:
+            q = q.filter(Sale.tenant_id == tenant_id)
         if sucursal_id:
             q = q.filter(Sale.sucursal_id == sucursal_id)
         if tipo:

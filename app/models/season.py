@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Integer, Date, Boolean, DateTime
+from sqlalchemy import Column, String, Integer, Date, Boolean, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
 
@@ -13,7 +13,8 @@ class Season(Base):
     __tablename__ = "temporadas"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    nombre = Column(String(50), unique=True, index=True, nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
+    nombre = Column(String(50), index=True, nullable=False)
     año = Column(Integer, nullable=False, index=True)
     fecha_inicio = Column(Date, nullable=False)
     fecha_fin = Column(Date, nullable=False)

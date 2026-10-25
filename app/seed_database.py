@@ -1,6 +1,7 @@
 import sys
 import os
 import uuid
+import random
 from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal
 
@@ -32,6 +33,472 @@ from app.seed_permissions import seed as seed_permissions
 
 def utc_now():
     return datetime.now(timezone.utc)
+
+
+def seed_historical_sales_and_reservations(
+    db,
+    tenant_urban,
+    tenant_moda,
+    branches_map,
+    users_map,
+    all_variants,
+    moda_variants
+):
+    print("\n[7/7] Sembrando Historial Equitativo por Sucursal y Mes (Enero - Octubre 2026)...")
+
+    existing_sales_count = db.query(Sale).count()
+    if existing_sales_count >= 100:
+        print(f"  [+] Ya existen {existing_sales_count} ventas en base de datos. Se conserva el historial.")
+        return
+
+    random.seed(42)
+
+    cliente_role = db.query(Role).filter(Role.name == "cliente").first()
+    if not cliente_role:
+        return
+
+    admin_user = users_map.get("admin@ficttstore.com") or users_map.get("admin@urbanstyle.com")
+    cajero_urban_central = users_map.get("cajero@ficttstore.com")
+    cajero_urban_general = users_map.get("cajero@urbanstyle.com") or cajero_urban_central
+    cajero_moda = users_map.get("cajero@modaexpress.com")
+
+    cached_hash = get_password_hash("Password123!")
+
+    # 1. Clientes para UrbanStyle (35 clientes)
+    urban_customer_names = [
+        ("Mateo Fernández", "mateo.fernandez@gmail.com"),
+        ("Lucas Rojas", "lucas.rojas@gmail.com"),
+        ("Alejandro Vargas", "alejandro.vargas@gmail.com"),
+        ("Diego Castro", "diego.castro@gmail.com"),
+        ("Carlos Mendoza", "carlos.mendoza@gmail.com"),
+        ("Valeria Paz", "valeria.paz@gmail.com"),
+        ("Gabriel Suárez", "gabriel.suarez@gmail.com"),
+        ("Andrea Soliz", "andrea.soliz@gmail.com"),
+        ("Rodrigo Torrico", "rodrigo.torrico@gmail.com"),
+        ("Camila Montero", "camila.montero@gmail.com"),
+        ("Sebastián Flores", "sebastian.flores@gmail.com"),
+        ("Mariana Ayala", "mariana.ayala@gmail.com"),
+        ("Nicolás Balcázar", "nicolas.balcazar@gmail.com"),
+        ("Fernanda Salazar", "fernanda.salazar@gmail.com"),
+        ("Luis Guzmán", "luis.guzman@gmail.com"),
+        ("Daniela Terrazas", "daniela.terrazas@gmail.com"),
+        ("Joaquín Aguilera", "joaquin.aguilera@gmail.com"),
+        ("Paola Arce", "paola.arce@gmail.com"),
+        ("Hugo Claros", "hugo.claros@gmail.com"),
+        ("Natalia Justiniano", "natalia.justiniano@gmail.com"),
+        ("Pablo Calvimontes", "pablo.calvimontes@gmail.com"),
+        ("Carolina Serrano", "carolina.serrano@gmail.com"),
+        ("Bruno Delgado", "bruno.delgado@gmail.com"),
+        ("Patricia Cabrera", "patricia.cabrera@gmail.com"),
+        ("Mauricio Zambrana", "mauricio.zambrana@gmail.com"),
+        ("Claudia Escalante", "claudia.escalante@gmail.com"),
+        ("Javier Banzer", "javier.banzer@gmail.com"),
+        ("Silvia Chávez", "silvia.chavez@gmail.com"),
+        ("Esteban Rivero", "esteban.rivero@gmail.com"),
+        ("Adriana Ribera", "adriana.ribera@gmail.com"),
+        ("Felipe Mercado", "felipe.mercado@gmail.com"),
+        ("Luciana Villarroel", "luciana.villarroel@gmail.com"),
+        ("Ignacio Peinado", "ignacio.peinado@gmail.com"),
+        ("Julio César Prado", "julio.prado@gmail.com"),
+        ("Lorena Justiniano", "lorena.justiniano@gmail.com"),
+    ]
+
+    urban_customers = []
+    for full_name, email in urban_customer_names:
+        u = db.query(User).filter(User.email == email).first()
+        if not u:
+            u = User(
+                email=email,
+                full_name=full_name,
+                role_id=cliente_role.id,
+                hashed_password=cached_hash,
+                is_active=True,
+                is_verified=True,
+                tenant_id=tenant_urban.id
+            )
+            db.add(u)
+            db.flush()
+        urban_customers.append(u)
+
+    # Clientes para Moda Express (8 clientes)
+    moda_customer_names = [
+        ("Óscar Valdivia Tarija", "oscar.valdivia.tja@gmail.com"),
+        ("María Álvarez Tarija", "maria.alvarez.tja@gmail.com"),
+        ("Pedro Gutiérrez Tarija", "pedro.gutierrez.tja@gmail.com"),
+        ("Lucía Farfán Tarija", "lucia.farfan.tja@gmail.com"),
+        ("Gonzalo Valdez Tarija", "gonzalo.valdez.tja@gmail.com"),
+        ("Elena Cardoso Tarija", "elena.cardoso.tja@gmail.com"),
+        ("Marcelo Villegas Tarija", "marcelo.villegas.tja@gmail.com"),
+        ("Renata Barrientos Tarija", "renata.barrientos.tja@gmail.com"),
+    ]
+
+    moda_customers = []
+    for full_name, email in moda_customer_names:
+        u = db.query(User).filter(User.email == email).first()
+        if not u:
+            u = User(
+                email=email,
+                full_name=full_name,
+                role_id=cliente_role.id,
+                hashed_password=cached_hash,
+                is_active=True,
+                is_verified=True,
+                tenant_id=tenant_moda.id
+            )
+            db.add(u)
+            db.flush()
+        moda_customers.append(u)
+
+    db.commit()
+    print(f"  [OK] Clientes registrados: {len(urban_customers)} UrbanStyle y {len(moda_customers)} Moda Express.")
+
+    # 2. Refuerzo de Stock Inicial en Inventario
+    print("  -> Reforzando stock inicial y registrando reabastecimiento en kardex...")
+    inv_map = {}
+    for inv in db.query(Inventory).all():
+        inv_map[(inv.sucursal_id, inv.variante_id)] = inv
+        if inv.stock_actual < 300:
+            diff = 350 - inv.stock_actual
+            inv.stock_actual = 350
+            mov_ref = InventoryMovement(
+                tenant_id=inv.tenant_id,
+                inventario_id=inv.id,
+                tipo=MovementType.ENTRADA,
+                cantidad=diff,
+                stock_antes=inv.stock_actual - diff,
+                stock_despues=350,
+                referencia="REABASTECIMIENTO-ANUAL-2026",
+                nota="Carga de inventario de seguridad y reposición anual",
+                usuario_id=admin_user.id if admin_user else None,
+                created_at=datetime(2026, 1, 10, 9, 0, tzinfo=timezone.utc)
+            )
+            db.add(mov_ref)
+    db.commit()
+
+    # 3. Agrupar variantes por categoría para estacionalidad
+    variants_by_cat = {}
+    for v in all_variants:
+        cat_name = v.producto.categoria.nombre if (v.producto and v.producto.categoria) else "General"
+        variants_by_cat.setdefault(cat_name, []).append(v)
+
+    # Configuración equitativa por sucursales
+    urban_branch_configs = [
+        {"branch": branches_map.get("Sucursal Central"), "target": 28, "cajero": cajero_urban_central, "code": "CEN"},
+        {"branch": branches_map.get("Sucursal Equipetrol"), "target": 24, "cajero": cajero_urban_general, "code": "EQU"},
+        {"branch": branches_map.get("Sucursal Cochabamba"), "target": 20, "cajero": cajero_urban_central, "code": "CBB"},
+        {"branch": branches_map.get("Sucursal Montero"), "target": 16, "cajero": cajero_urban_general, "code": "MON"},
+    ]
+    moda_branch_configs = [
+        {"branch": branches_map.get("Moda Express - Tarija Centro"), "target": 14, "cajero": cajero_moda, "code": "TJC"},
+        {"branch": branches_map.get("Moda Express - El Molino"), "target": 11, "cajero": cajero_moda, "code": "MLN"},
+    ]
+
+    bill_denominations = [20, 50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 800, 1000]
+
+    total_sales_created = 0
+    total_reservations_created = 0
+
+    print("  -> Generando ventas y reservas mes a mes (Enero a Octubre 2026)...")
+
+    for month in range(1, 11):
+        month_seq = 1
+        
+        # Ponderación estacional para UrbanStyle
+        if month in [1, 2]:
+            cat_weights = [("Shorts & Bermudas", 0.40), ("Poleras & Remeras", 0.40), ("Camisas & Sobrecamisas", 0.15), ("Pantalones & Jeans", 0.05)]
+        elif month in [3, 4]:
+            cat_weights = [("Pantalones & Jeans", 0.35), ("Camisas & Sobrecamisas", 0.30), ("Poleras & Remeras", 0.25), ("Hoodies & Polerones", 0.10)]
+        elif month in [5, 6, 7]:
+            cat_weights = [("Hoodies & Polerones", 0.45), ("Chaquetas & Abrigos", 0.35), ("Pantalones & Jeans", 0.20)]
+        else: # 8, 9, 10
+            cat_weights = [("Poleras & Remeras", 0.35), ("Shorts & Bermudas", 0.25), ("Chaquetas & Abrigos", 0.20), ("Pantalones & Jeans", 0.20)]
+
+        cat_names = [cw[0] for cw in cat_weights]
+        cat_probs = [cw[1] for cw in cat_weights]
+
+        # --- A. VENTAS URBANSTYLE ---
+        for b_cfg in urban_branch_configs:
+            branch = b_cfg["branch"]
+            if not branch:
+                continue
+
+            for _ in range(b_cfg["target"]):
+                day = random.randint(1, 28)
+                hour = random.choice([10, 11, 12, 14, 15, 16, 17, 18, 19, 20])
+                minute = random.randint(0, 59)
+                second = random.randint(0, 59)
+                sale_date = datetime(2026, month, day, hour, minute, second, tzinfo=timezone.utc)
+
+                is_presencial = random.random() < 0.70
+                sale_type = SaleType.PRESENCIAL if is_presencial else SaleType.DIGITAL
+                cajero = b_cfg["cajero"] if is_presencial else None
+
+                if is_presencial:
+                    metodo_pago = random.choice([PaymentMethod.EFECTIVO, PaymentMethod.EFECTIVO, PaymentMethod.QR, PaymentMethod.TARJETA])
+                else:
+                    metodo_pago = random.choice([PaymentMethod.PAYPAL, PaymentMethod.TARJETA, PaymentMethod.QR])
+
+                cliente = random.choice(urban_customers) if random.random() < 0.65 else None
+                receipt_no = f"VTA-2026{month:02d}-{month_seq:04d}-{b_cfg['code']}"
+
+                ref_pago = None
+                if metodo_pago == PaymentMethod.QR:
+                    ref_pago = f"QR_BNB_PAGO_{month:02d}_{month_seq:04d}"
+                elif metodo_pago == PaymentMethod.TARJETA:
+                    ref_pago = f"STRIPE_AUTH_POS_{month:02d}_{month_seq:04d}"
+                elif metodo_pago == PaymentMethod.PAYPAL:
+                    ref_pago = f"PAYPAL_SANDBOX_{month:02d}{month_seq:04d}E"
+
+                num_items = random.choices([1, 2, 3], weights=[0.55, 0.35, 0.10])[0]
+                selected_variants = []
+                for _ in range(num_items):
+                    chosen_cat = random.choices(cat_names, weights=cat_probs)[0]
+                    pool = variants_by_cat.get(chosen_cat) or all_variants
+                    if pool:
+                        selected_variants.append(random.choice(pool))
+
+                if not selected_variants:
+                    selected_variants = [random.choice(all_variants)]
+
+                monto_total = Decimal("0.00")
+                sale_items_data = []
+                for v in selected_variants:
+                    qty = random.choices([1, 2], weights=[0.85, 0.15])[0]
+                    price = v.producto.precio_base + v.precio_extra
+                    subtot = price * qty
+                    monto_total += subtot
+                    sale_items_data.append((v, qty, price, subtot))
+
+                impuesto_iva = round(monto_total * Decimal("0.13"), 2)
+                monto_neto = monto_total - impuesto_iva
+
+                if metodo_pago == PaymentMethod.EFECTIVO:
+                    tot_int = int(monto_total)
+                    opts = [b for b in bill_denominations if b >= tot_int]
+                    monto_recibido = Decimal(opts[0]) if opts else monto_total
+                    cambio = monto_recibido - monto_total
+                else:
+                    monto_recibido = monto_total
+                    cambio = Decimal("0.00")
+
+                new_sale = Sale(
+                    tenant_id=tenant_urban.id,
+                    numero_recibo=receipt_no,
+                    tipo=sale_type,
+                    estado=SaleStatus.COMPLETADA,
+                    sucursal_id=branch.id,
+                    cliente_id=cliente.id if cliente else None,
+                    cajero_id=cajero.id if cajero else None,
+                    metodo_pago=metodo_pago,
+                    referencia_pago=ref_pago,
+                    monto_total=monto_total,
+                    impuesto_iva=impuesto_iva,
+                    monto_neto=monto_neto,
+                    monto_recibido=monto_recibido,
+                    cambio=cambio,
+                    nota=f"Venta {'mostrador' if is_presencial else 'digital'} - {branch.nombre}",
+                    created_at=sale_date,
+                    updated_at=sale_date
+                )
+                db.add(new_sale)
+                db.flush()
+
+                for var, qty, pr, st in sale_items_data:
+                    det = SaleDetail(
+                        venta_id=new_sale.id,
+                        variante_id=var.id,
+                        cantidad=qty,
+                        precio_unitario=pr,
+                        subtotal=st,
+                        created_at=sale_date
+                    )
+                    db.add(det)
+
+                    inv = inv_map.get((branch.id, var.id))
+                    if inv:
+                        antes = inv.stock_actual
+                        inv.stock_actual = max(0, inv.stock_actual - qty)
+                        mov = InventoryMovement(
+                            tenant_id=tenant_urban.id,
+                            inventario_id=inv.id,
+                            tipo=MovementType.SALIDA_VENTA,
+                            cantidad=qty,
+                            stock_antes=antes,
+                            stock_despues=inv.stock_actual,
+                            referencia=receipt_no,
+                            nota=f"Venta en {branch.nombre}",
+                            usuario_id=cajero.id if cajero else (admin_user.id if admin_user else None),
+                            created_at=sale_date
+                        )
+                        db.add(mov)
+
+                month_seq += 1
+                total_sales_created += 1
+
+        # --- B. VENTAS MODA EXPRESS ---
+        for b_cfg in moda_branch_configs:
+            branch = b_cfg["branch"]
+            if not branch:
+                continue
+
+            for _ in range(b_cfg["target"]):
+                day = random.randint(1, 28)
+                hour = random.choice([10, 11, 14, 15, 16, 17, 18, 19])
+                minute = random.randint(0, 59)
+                second = random.randint(0, 59)
+                sale_date = datetime(2026, month, day, hour, minute, second, tzinfo=timezone.utc)
+
+                is_presencial = random.random() < 0.80
+                sale_type = SaleType.PRESENCIAL if is_presencial else SaleType.DIGITAL
+                cajero = b_cfg["cajero"] if is_presencial else None
+
+                metodo_pago = random.choice([PaymentMethod.EFECTIVO, PaymentMethod.EFECTIVO, PaymentMethod.QR, PaymentMethod.TARJETA]) if is_presencial else random.choice([PaymentMethod.QR, PaymentMethod.TARJETA])
+                cliente = random.choice(moda_customers) if random.random() < 0.60 else None
+                receipt_no = f"VTA-MODA-{month:02d}-{month_seq:04d}-{b_cfg['code']}"
+
+                ref_pago = f"QR_BNB_MODA_{month:02d}_{month_seq:04d}" if metodo_pago == PaymentMethod.QR else None
+                if metodo_pago == PaymentMethod.TARJETA:
+                    ref_pago = f"STRIPE_MODA_{month:02d}_{month_seq:04d}"
+
+                var = random.choice(moda_variants)
+                qty = 1
+                price = var.producto.precio_base + var.precio_extra
+                subtot = price * qty
+                monto_total = subtot
+
+                impuesto_iva = round(monto_total * Decimal("0.13"), 2)
+                monto_neto = monto_total - impuesto_iva
+
+                if metodo_pago == PaymentMethod.EFECTIVO:
+                    tot_int = int(monto_total)
+                    opts = [b for b in bill_denominations if b >= tot_int]
+                    monto_recibido = Decimal(opts[0]) if opts else monto_total
+                    cambio = monto_recibido - monto_total
+                else:
+                    monto_recibido = monto_total
+                    cambio = Decimal("0.00")
+
+                new_sale = Sale(
+                    tenant_id=tenant_moda.id,
+                    numero_recibo=receipt_no,
+                    tipo=sale_type,
+                    estado=SaleStatus.COMPLETADA,
+                    sucursal_id=branch.id,
+                    cliente_id=cliente.id if cliente else None,
+                    cajero_id=cajero.id if cajero else None,
+                    metodo_pago=metodo_pago,
+                    referencia_pago=ref_pago,
+                    monto_total=monto_total,
+                    impuesto_iva=impuesto_iva,
+                    monto_neto=monto_neto,
+                    monto_recibido=monto_recibido,
+                    cambio=cambio,
+                    nota=f"Venta Moda Express - {branch.nombre}",
+                    created_at=sale_date,
+                    updated_at=sale_date
+                )
+                db.add(new_sale)
+                db.flush()
+
+                det = SaleDetail(
+                    venta_id=new_sale.id,
+                    variante_id=var.id,
+                    cantidad=qty,
+                    precio_unitario=price,
+                    subtotal=subtot,
+                    created_at=sale_date
+                )
+                db.add(det)
+
+                inv = inv_map.get((branch.id, var.id))
+                if inv:
+                    antes = inv.stock_actual
+                    inv.stock_actual = max(0, inv.stock_actual - qty)
+                    mov = InventoryMovement(
+                        tenant_id=tenant_moda.id,
+                        inventario_id=inv.id,
+                        tipo=MovementType.SALIDA_VENTA,
+                        cantidad=qty,
+                        stock_antes=antes,
+                        stock_despues=inv.stock_actual,
+                        referencia=receipt_no,
+                        nota=f"Venta en {branch.nombre}",
+                        usuario_id=cajero.id if cajero else None,
+                        created_at=sale_date
+                    )
+                    db.add(mov)
+
+                month_seq += 1
+                total_sales_created += 1
+
+        # --- C. RESERVAS POR SUCURSAL Y MES ---
+        for b_cfg in (urban_branch_configs + moda_branch_configs):
+            branch = b_cfg["branch"]
+            if not branch:
+                continue
+
+            tenant = tenant_urban if b_cfg in urban_branch_configs else tenant_moda
+            cust_pool = urban_customers if b_cfg in urban_branch_configs else moda_customers
+            var_pool = all_variants if b_cfg in urban_branch_configs else moda_variants
+
+            num_res = 2 if b_cfg in urban_branch_configs else 1
+            for r_idx in range(num_res):
+                r_day = random.randint(1, 25)
+                r_hour = random.randint(10, 18)
+                res_created = datetime(2026, month, r_day, r_hour, 0, tzinfo=timezone.utc)
+                res_cli = random.choice(cust_pool)
+                res_code = f"RES-2026{month:02d}-{b_cfg['code']}-{r_idx+1}"
+
+                if month == 10:
+                    estado_res = ReservationStatus.PREPARADA if r_idx == 0 else ReservationStatus.PENDIENTE
+                    exp_date = res_created + timedelta(days=3)
+                else:
+                    estado_res = random.choices(
+                        [ReservationStatus.COMPLETADA, ReservationStatus.EXPIRADA, ReservationStatus.CANCELADA],
+                        weights=[0.75, 0.15, 0.10]
+                    )[0]
+                    exp_date = res_created + timedelta(days=3)
+
+                r_var = random.choice(var_pool)
+                r_qty = 1
+                r_price = r_var.producto.precio_base + r_var.precio_extra
+
+                res = Reservation(
+                    tenant_id=tenant.id,
+                    codigo=res_code,
+                    cliente_id=res_cli.id,
+                    sucursal_id=branch.id,
+                    estado=estado_res,
+                    fecha_hora_esperada=res_created + timedelta(days=1),
+                    fecha_expiracion=exp_date,
+                    total_estimado=r_price,
+                    nota=f"Reserva {estado_res.value.lower()} en {branch.nombre}",
+                    activo=True,
+                    created_at=res_created
+                )
+                db.add(res)
+                db.flush()
+
+                r_det = ReservationDetail(
+                    reserva_id=res.id,
+                    variante_id=r_var.id,
+                    cantidad=r_qty,
+                    precio_unitario=r_price,
+                    subtotal=r_price
+                )
+                db.add(r_det)
+
+                if estado_res in [ReservationStatus.PREPARADA, ReservationStatus.PENDIENTE]:
+                    inv_r = inv_map.get((branch.id, r_var.id))
+                    if inv_r:
+                        inv_r.stock_reservado += r_qty
+
+                total_reservations_created += 1
+
+        db.commit()
+        print(f"    -> Mes {month:02d}/2026 completado ({month_seq - 1} ventas sembradas).")
+
+    print(f"  [SUCCESS] Sembrado histórico completado: {total_sales_created} ventas y {total_reservations_created} reservas generadas en 10 meses.")
 
 
 def seed_all():
@@ -1271,6 +1738,17 @@ def seed_all():
             db.add(det_m1)
             db.commit()
             print("  [OK] Creada Venta Moda Express: VTA-MODA-0001 (Presencial / 180.00 Bs.)")
+
+        # 7. Sembrado masivo y equitativo por sucursal mes a mes (Enero a Octubre 2026)
+        seed_historical_sales_and_reservations(
+            db=db,
+            tenant_urban=tenant_urban,
+            tenant_moda=tenant_moda,
+            branches_map=branches_map,
+            users_map=users_map,
+            all_variants=all_variants,
+            moda_variants=moda_variants
+        )
 
         print("\n==================================================")
         print(" [SUCCESS] BASE DE DATOS POBLADA EXITOSAMENTE! ")

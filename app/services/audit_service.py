@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional
+from typing import List, Optional, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.models.audit_log import AuditLog
@@ -17,32 +17,45 @@ class AuditService:
         user: Optional[User] = None,
         user_name: Optional[str] = None,
         user_email: Optional[str] = None,
-        user_role: Optional[str] = None
+        user_role: Optional[str] = None,
+        user_id: Optional[Any] = None,
+        tenant_id: Optional[Any] = None,
+        details: Optional[Any] = None,
+        request: Optional[Any] = None,
+        *args,
+        **kwargs
     ) -> Optional[AuditLog]:
         """
         Registra una entrada en la bitácora del sistema de forma segura.
         """
         try:
-            u_id = None
+            u_id = user_id
+            t_id = tenant_id
             u_name = user_name
             u_email = user_email
             u_role = user_role
 
             if user:
                 u_id = user.id
+                t_id = getattr(user, "tenant_id", t_id)
                 if not u_name:
                     u_name = user.full_name
                 if not u_email:
                     u_email = user.email
                 if not u_role:
-                    u_role = user.role.name if user.role else "sin_rol"
+                    u_role = user.role.name if getattr(user, "role", None) else "sin_rol"
+
+            action_text = action
+            if details:
+                action_text = f"{action}: {details}"[:100]
 
             audit_entry = AuditLog(
+                tenant_id=t_id,
                 user_id=u_id,
                 user_name=u_name or "Desconocido",
                 user_email=u_email or "N/A",
                 user_role=u_role or "N/A",
-                action=action,
+                action=action_text,
                 module=module
             )
             db.add(audit_entry)
@@ -86,3 +99,7 @@ class AuditService:
             q = q.filter(AuditLog.user_role.ilike(role.strip()))
 
         return q.order_by(AuditLog.created_at.desc()).offset(offset).limit(limit).all()
+
+
+audit_service = AuditService()
+

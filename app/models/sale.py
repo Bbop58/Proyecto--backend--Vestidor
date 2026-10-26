@@ -53,6 +53,9 @@ class Sale(Base):
     monto_recibido = Column(Numeric(10, 2), nullable=True)
     cambio = Column(Numeric(10, 2), nullable=True, default=0.0)
     
+    costo_envio = Column(Numeric(10, 2), nullable=True, default=0.0)
+    direccion_envio = Column(String(300), nullable=True)
+    
     nota = Column(String(300), nullable=True)
     motivo_cancelacion = Column(String(300), nullable=True)
     

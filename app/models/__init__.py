@@ -25,6 +25,8 @@ from app.models.tenant import Tenant
 from app.models.subscription_plan import SubscriptionPlan
 from app.models.subscription import Subscription
 from app.models.sync_operation import SyncOperation
+from app.models.favorite import Favorite
+from app.models.delivery_rate import DeliveryRate
 
 __all__ = [
     "Base",
@@ -58,6 +60,8 @@ __all__ = [
     "AuditLog",
     "ProductExchange",
     "ProductExchangeDetail",
+    "Favorite",
+    "DeliveryRate",
 ]
 
 

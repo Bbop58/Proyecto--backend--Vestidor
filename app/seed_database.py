@@ -28,6 +28,8 @@ from app.models.sale_detail import SaleDetail
 from app.models.tenant import Tenant
 from app.models.subscription_plan import SubscriptionPlan
 from app.models.subscription import Subscription
+from app.models.favorite import Favorite
+from app.models.delivery_rate import DeliveryRate
 from app.seed_permissions import seed as seed_permissions
 
 
@@ -501,6 +503,109 @@ def seed_historical_sales_and_reservations(
     print(f"  [SUCCESS] Sembrado histórico completado: {total_sales_created} ventas y {total_reservations_created} reservas generadas en 10 meses.")
 
 
+def seed_delivery_rates_and_favorites(db, tenant_urban, branches_map):
+    print("\n[8/8] Sembrando Tarifas de Delivery y Favoritos de Clientes...")
+    
+    # 1. Delivery Rates
+    existing_rates = db.query(DeliveryRate).count()
+    if existing_rates == 0:
+        rates_to_create = []
+        for branch_name, branch in branches_map.items():
+            if not branch or branch.tenant_id != tenant_urban.id:
+                continue
+            city = branch.ciudad or "Santa Cruz"
+            if "Santa Cruz" in city:
+                rates_to_create.extend([
+                    DeliveryRate(
+                        branch_id=branch.id,
+                        tenant_id=tenant_urban.id,
+                        zona_nombre="Zona Central y 1er Anillo",
+                        ciudad=city,
+                        costo_envio=Decimal("15.00"),
+                        tiempo_estimado_horas=24,
+                        activo=True
+                    ),
+                    DeliveryRate(
+                        branch_id=branch.id,
+                        tenant_id=tenant_urban.id,
+                        zona_nombre="Equipetrol y Urbarí",
+                        ciudad=city,
+                        costo_envio=Decimal("20.00"),
+                        tiempo_estimado_horas=24,
+                        activo=True
+                    ),
+                    DeliveryRate(
+                        branch_id=branch.id,
+                        tenant_id=tenant_urban.id,
+                        zona_nombre="Plan 3000 y Villa 1ro de Mayo",
+                        ciudad=city,
+                        costo_envio=Decimal("25.00"),
+                        tiempo_estimado_horas=48,
+                        activo=True
+                    ),
+                ])
+            elif "La Paz" in city:
+                rates_to_create.extend([
+                    DeliveryRate(
+                        branch_id=branch.id,
+                        tenant_id=tenant_urban.id,
+                        zona_nombre="Centro / Miraflores / Sopocachi",
+                        ciudad=city,
+                        costo_envio=Decimal("15.00"),
+                        tiempo_estimado_horas=24,
+                        activo=True
+                    ),
+                    DeliveryRate(
+                        branch_id=branch.id,
+                        tenant_id=tenant_urban.id,
+                        zona_nombre="Zona Sur / Calacoto / San Miguel",
+                        ciudad=city,
+                        costo_envio=Decimal("20.00"),
+                        tiempo_estimado_horas=24,
+                        activo=True
+                    ),
+                ])
+            else:
+                rates_to_create.append(
+                    DeliveryRate(
+                        branch_id=branch.id,
+                        tenant_id=tenant_urban.id,
+                        zona_nombre=f"Radio Urbano {city}",
+                        ciudad=city,
+                        costo_envio=Decimal("18.00"),
+                        tiempo_estimado_horas=24,
+                        activo=True
+                    )
+                )
+        
+        for r in rates_to_create:
+            db.add(r)
+        db.commit()
+        print(f"  [OK] Sembradas {len(rates_to_create)} tarifas de delivery.")
+    else:
+        print(f"  [+] Ya existen {existing_rates} tarifas de delivery registradas.")
+
+    # 2. Favorites
+    existing_favs = db.query(Favorite).count()
+    if existing_favs == 0:
+        clients = db.query(User).filter(User.tenant_id == tenant_urban.id).limit(5).all()
+        products = db.query(Product).filter(Product.tenant_id == tenant_urban.id, Product.activo == True).limit(5).all()
+        fav_count = 0
+        for client in clients:
+            for prod in products[:2]:
+                fav = Favorite(
+                    user_id=client.id,
+                    product_id=prod.id,
+                    tenant_id=tenant_urban.id
+                )
+                db.add(fav)
+                fav_count += 1
+        db.commit()
+        print(f"  [OK] Sembrados {fav_count} favoritos iniciales para clientes.")
+    else:
+        print(f"  [+] Ya existen {existing_favs} favoritos registrados.")
+
+
 def seed_all():
     print("==================================================")
     print("Iniciando Sembrado Completo de la Base de Datos...")
@@ -516,6 +621,8 @@ def seed_all():
             conn.execute(text("""
                 ALTER TABLE ventas ADD COLUMN IF NOT EXISTS impuesto_iva NUMERIC(10, 2) DEFAULT 0.0 NOT NULL;
                 ALTER TABLE ventas ADD COLUMN IF NOT EXISTS monto_neto NUMERIC(10, 2) DEFAULT 0.0 NOT NULL;
+                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS costo_envio NUMERIC(10, 2) DEFAULT 0.0;
+                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS direccion_envio VARCHAR(300);
                 UPDATE ventas 
                 SET impuesto_iva = ROUND(monto_total * 0.13, 2),
                     monto_neto = ROUND(monto_total - ROUND(monto_total * 0.13, 2), 2)
@@ -534,8 +641,10 @@ def seed_all():
                 ALTER TABLE movimientos_inventario ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
                 ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
                 ALTER TABLE cambios_producto ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE favoritos ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+                ALTER TABLE tarifas_delivery ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
             """))
-        print("  [OK] Columnas de impuestos y multitenant (tenant_id) verificadas y migradas.")
+        print("  [OK] Columnas de impuestos, multitenant y envíos verificadas y migradas.")
     except Exception as e:
         print(f"  [WARN] No se requirió migración manual o aviso: {e}")
 
@@ -1748,6 +1857,13 @@ def seed_all():
             users_map=users_map,
             all_variants=all_variants,
             moda_variants=moda_variants
+        )
+
+        # 8. Sembrado de Tarifas de Delivery y Favoritos
+        seed_delivery_rates_and_favorites(
+            db=db,
+            tenant_urban=tenant_urban,
+            branches_map=branches_map
         )
 
         print("\n==================================================")

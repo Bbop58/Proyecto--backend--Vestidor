@@ -202,6 +202,15 @@ def update_current_tenant_branding(
     return TenantInfo.model_validate(tenant)
 
 
+def is_platform_superadmin(user: User) -> bool:
+    """Verifica si el usuario es el Super Administrador global de la plataforma SaaS (admin@sistema.com).
+    Los administradores de inquilinos (ej. admin@modaexpress.com) solo administran su propia empresa."""
+    if not user or not user.email:
+        return False
+    email = user.email.lower().strip()
+    return email == "admin@sistema.com" or email.endswith("@sistema.com")
+
+
 @router.get(
     "/admin/tenants-overview",
     response_model=SaaSSummaryResponse,
@@ -211,10 +220,10 @@ def get_saas_tenants_overview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if not current_user.role or current_user.role.name not in ["admin"]:
+    if not is_platform_superadmin(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Acceso restringido: Solo el Administrador de la Plataforma puede ver todas las empresas."
+            detail="Acceso restringido: Solo el Super Administrador de la Plataforma SaaS (admin@sistema.com) puede ver todas las empresas."
         )
 
     tenants = db.query(Tenant).order_by(Tenant.created_at.asc()).all()
@@ -304,10 +313,10 @@ def create_new_tenant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if not current_user.role or current_user.role.name not in ["admin"]:
+    if not is_platform_superadmin(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Solo el Administrador de la Plataforma puede dar de alta nuevas empresas."
+            detail="Solo el Super Administrador de la Plataforma SaaS (admin@sistema.com) puede dar de alta nuevas empresas."
         )
 
     clean_slug = request.slug.lower().strip()
@@ -417,10 +426,10 @@ def toggle_tenant_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if not current_user.role or current_user.role.name not in ["admin"]:
+    if not is_platform_superadmin(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Acceso restringido al Administrador de la Plataforma."
+            detail="Acceso restringido: Solo el Super Administrador de la Plataforma SaaS puede suspender o activar empresas."
         )
 
     t = db.query(Tenant).filter(Tenant.id == tenant_id).first()

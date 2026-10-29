@@ -76,6 +76,10 @@ class UserService:
             res.permissions = RoleService.get_permission_codes(db, user.role_id)
         if user.tenant:
             res.tenant_name = user.tenant.nombre
+            res.tenant_logo_url = user.tenant.logo_url
+            res.tenant_color_primario = user.tenant.color_primario or "#4f46e5"
+            res.tenant_color_secundario = user.tenant.color_secundario or "#818cf8"
+            res.tenant_eslogan = user.tenant.eslogan
         return res
 
     @staticmethod

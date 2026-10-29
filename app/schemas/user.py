@@ -46,6 +46,10 @@ class UserResponse(UserBase):
     permissions: List[str] = []
     tenant_id: Optional[uuid.UUID] = None
     tenant_name: Optional[str] = None
+    tenant_logo_url: Optional[str] = None
+    tenant_color_primario: Optional[str] = "#4f46e5"
+    tenant_color_secundario: Optional[str] = "#818cf8"
+    tenant_eslogan: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

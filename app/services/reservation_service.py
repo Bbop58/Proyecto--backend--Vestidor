@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -72,7 +72,7 @@ class ReservationService:
         if not branch:
             raise HTTPException(status_code=404, detail="Sucursal no encontrada o inactiva")
 
-        # 2. Validar límite de reservas activas (máximo 5)
+        # 2. Validar lÃ­mite de reservas activas (mÃ¡ximo 5)
         active_count = db.query(Reservation).filter(
             Reservation.cliente_id == cliente_id,
             Reservation.estado.in_([ReservationStatus.PENDIENTE, ReservationStatus.PREPARADA]),
@@ -81,7 +81,7 @@ class ReservationService:
         if active_count >= 5:
             raise HTTPException(
                 status_code=400,
-                detail="Has alcanzado el límite máximo de 5 reservas activas simultáneas."
+                detail="Has alcanzado el lÃ­mite mÃ¡ximo de 5 reservas activas simultÃ¡neas."
             )
 
         now = utc_now()
@@ -98,7 +98,7 @@ class ReservationService:
                 detail="La fecha y hora esperada de recogida debe ser en el futuro."
             )
 
-        # 4. Generar código único
+        # 4. Generar cÃ³digo Ãºnico
         codigo = f"RES-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
         fecha_expiracion = now + timedelta(hours=24)
 
@@ -119,7 +119,7 @@ class ReservationService:
 
         total_estimado = 0.0
 
-        # 6. Validar y procesar cada ítem
+        # 6. Validar y procesar cada Ã­tem
         for item in data.items:
             variant = db.query(ProductVariant).filter(
                 ProductVariant.id == item.variante_id,
@@ -185,8 +185,8 @@ class ReservationService:
             NotificationService.create(
                 db=db,
                 user_id=cliente_id,
-                title="Reserva Registrada ⏳",
-                message=f"Tu reserva #{reserva.codigo_reserva} fue registrada con éxito por Bs {total_estimado:.2f}. Tienes 48h de vigencia una vez que esté preparada.",
+                title="Reserva Registrada â³",
+                message=f"Tu reserva #{reserva.codigo_reserva} fue registrada con Ã©xito por Bs {total_estimado:.2f}. Tienes 48h de vigencia una vez que estÃ© preparada.",
                 type="RESERVATION_EXPIRING",
                 reference_id=str(reserva.id)
             )
@@ -247,10 +247,10 @@ class ReservationService:
         if not is_staff and reserva.cliente_id != user_id:
             raise HTTPException(status_code=403, detail="No tienes permiso para cancelar esta reserva")
 
-        if reserva.estado != ReservationStatus.PENDIENTE:
+        if reserva.estado not in [ReservationStatus.PENDIENTE, ReservationStatus.PREPARADA]:
             raise HTTPException(
                 status_code=400,
-                detail=f"Solo se pueden cancelar reservas en estado PENDIENTE (estado actual: {reserva.estado.value})"
+                detail=f"Solo se pueden cancelar reservas en estado PENDIENTE o PREPARADA (estado actual: {reserva.estado.value})"
             )
 
         # Liberar stock reservado
@@ -262,13 +262,14 @@ class ReservationService:
             if inv:
                 inv.stock_reservado = max(0, inv.stock_reservado - detalle.cantidad)
                 mov = InventoryMovement(
+                    tenant_id=getattr(reserva, "tenant_id", None),
                     inventario_id=inv.id,
                     tipo=MovementType.LIBERACION_RESERVA,
                     cantidad=detalle.cantidad,
                     stock_antes=inv.stock_actual,
                     stock_despues=inv.stock_actual,
                     referencia=reserva.codigo,
-                    nota="Liberación de stock por cancelación de reserva",
+                    nota="LiberaciÃ³n de stock por cancelaciÃ³n de reserva",
                     usuario_id=user_id
                 )
                 db.add(mov)
@@ -311,8 +312,8 @@ class ReservationService:
             NotificationService.create(
                 db=db,
                 user_id=reserva.cliente_id,
-                title="¡Tu reserva está lista para recoger! 📦",
-                message=f"Tu reserva #{reserva.codigo_reserva} ya está preparada en {sucursal_nombre}. Puedes pasar a retirarla.",
+                title="Â¡Tu reserva estÃ¡ lista para recoger! ðŸ“¦",
+                message=f"Tu reserva #{reserva.codigo_reserva} ya estÃ¡ preparada en {sucursal_nombre}. Puedes pasar a retirarla.",
                 type="RESERVATION_READY",
                 reference_id=str(reserva.id)
             )
@@ -372,7 +373,7 @@ class ReservationService:
                         stock_antes=inv.stock_actual,
                         stock_despues=inv.stock_actual,
                         referencia=reserva.codigo,
-                        nota="Liberación automática por expiración de reserva",
+                        nota="LiberaciÃ³n automÃ¡tica por expiraciÃ³n de reserva",
                         usuario_id=None
                     )
                     db.add(mov)

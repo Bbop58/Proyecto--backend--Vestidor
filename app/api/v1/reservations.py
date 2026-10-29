@@ -14,6 +14,7 @@ from app.schemas.reservation import (
 )
 from app.services.reservation_service import ReservationService
 from app.services.audit_service import AuditService
+from app.services.role_service import RoleService
 
 router = APIRouter(prefix="/reservas", tags=["Reservas"])
 
@@ -33,7 +34,7 @@ def create_reservation(
     codigo = getattr(res, "codigo", "")
     AuditService.log(
         db=db,
-        action=f"Creación de reserva #{codigo}",
+        action=f"CreaciÃ³n de reserva #{codigo}",
         module="Reservas",
         user=current_user
     )
@@ -99,7 +100,9 @@ def cancel_reservation(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    is_staff = any(r.name in ["admin", "encargado"] for r in getattr(current_user, "roles", []))
+    role_name = current_user.role.name if getattr(current_user, "role", None) else ""
+    user_permissions = RoleService.get_permission_codes(db, current_user.role_id) if current_user.role_id else []
+    is_staff = (role_name in ["admin", "encargado"]) or ("reservas.update" in user_permissions) or ("reservas.delete" in user_permissions)
     res = ReservationService.cancel_reservation(
         db,
         reserva_id=reserva_id,
@@ -109,7 +112,7 @@ def cancel_reservation(
     codigo = getattr(res, "codigo", "")
     AuditService.log(
         db=db,
-        action=f"Cancelación de reserva #{codigo}",
+        action=f"CancelaciÃ³n de reserva #{codigo}",
         module="Reservas",
         user=current_user
     )

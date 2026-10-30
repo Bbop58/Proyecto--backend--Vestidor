@@ -33,6 +33,8 @@ class TenantInfo(BaseModel):
     telefono: Optional[str] = None
     email_contacto: Optional[str] = None
     activo: bool
+    plan_codigo: Optional[str] = None
+    plan_nombre: Optional[str] = None
 
 
 class CurrentSubscriptionResponse(BaseModel):

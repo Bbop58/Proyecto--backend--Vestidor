@@ -30,13 +30,27 @@ router = APIRouter(prefix="/subscriptions", tags=["SaaS Suscripciones y Multiten
 @router.get(
     "/public/tenants",
     response_model=List[TenantInfo],
-    summary="Listado público de empresas activas con su branding para la pantalla de Login"
+    summary="Listado público de empresas activas con su branding para la pantalla de Login y Directorio SaaS"
 )
 def list_public_tenants(
     db: Session = Depends(get_db)
 ):
     tenants = db.query(Tenant).filter(Tenant.activo == True).order_by(Tenant.nombre.asc()).all()
-    return [TenantInfo.model_validate(t) for t in tenants]
+    result: List[TenantInfo] = []
+    for t in tenants:
+        info = TenantInfo.model_validate(t)
+        sub = db.query(Subscription).filter(
+            Subscription.tenant_id == t.id,
+            Subscription.estado == "ACTIVA"
+        ).order_by(Subscription.fecha_vencimiento.desc()).first()
+        if sub and sub.plan:
+            info.plan_codigo = sub.plan.codigo
+            info.plan_nombre = sub.plan.nombre
+        else:
+            info.plan_codigo = "BASICO"
+            info.plan_nombre = "Plan Básico"
+        result.append(info)
+    return result
 
 
 @router.get(
@@ -302,23 +316,7 @@ def get_saas_tenants_overview(
     )
 
 
-@router.post(
-    "/admin/tenants",
-    response_model=TenantOverviewItem,
-    status_code=status.HTTP_201_CREATED,
-    summary="[SuperAdmin] Registrar una nueva empresa cliente en la plataforma SaaS"
-)
-def create_new_tenant(
-    request: TenantCreateRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    if not is_platform_superadmin(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Solo el Super Administrador de la Plataforma SaaS (admin@sistema.com) puede dar de alta nuevas empresas."
-        )
-
+def _execute_create_tenant(db: Session, request: TenantCreateRequest) -> TenantOverviewItem:
     clean_slug = request.slug.lower().strip()
     existing = db.query(Tenant).filter(Tenant.slug == clean_slug).first()
     if existing:
@@ -414,6 +412,43 @@ def create_new_tenant(
         dias_restantes=365,
         estado_suscripcion="ACTIVA"
     )
+
+
+@router.post(
+    "/onboarding",
+    response_model=TenantOverviewItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="[Público] Registro de una nueva empresa en el SaaS (Onboarding autónomo)"
+)
+def public_onboarding(
+    request: TenantCreateRequest,
+    db: Session = Depends(get_db)
+):
+    if not request.admin_email or not request.admin_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El correo electrónico y la contraseña del administrador son requeridos para el alta de la empresa."
+        )
+    return _execute_create_tenant(db, request)
+
+
+@router.post(
+    "/admin/tenants",
+    response_model=TenantOverviewItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="[SuperAdmin] Registrar una nueva empresa cliente en la plataforma SaaS"
+)
+def create_new_tenant(
+    request: TenantCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if not is_platform_superadmin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo el Super Administrador de la Plataforma SaaS (admin@sistema.com) puede dar de alta nuevas empresas."
+        )
+    return _execute_create_tenant(db, request)
 
 
 @router.put(

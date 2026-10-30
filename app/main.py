@@ -53,10 +53,13 @@ def on_startup():
                 ALTER TABLE ventas ADD COLUMN IF NOT EXISTS costo_envio NUMERIC(10, 2) DEFAULT 0.0;
                 ALTER TABLE ventas ADD COLUMN IF NOT EXISTS direccion_envio VARCHAR(300);
                 
-                -- Columnas Branding Tenant
+                -- Columnas Branding Tenant y Pasarela Multi-Tenant
                 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS color_primario VARCHAR(20) DEFAULT '#4f46e5';
                 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS color_secundario VARCHAR(20) DEFAULT '#818cf8';
                 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS eslogan VARCHAR(200);
+                ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paypal_client_id VARCHAR(255);
+                ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paypal_client_secret VARCHAR(255);
+                ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paypal_mode VARCHAR(20) DEFAULT 'sandbox';
 
                 -- Columnas Multitenant (tenant_id)
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL;

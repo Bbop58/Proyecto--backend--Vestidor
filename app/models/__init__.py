@@ -27,6 +27,8 @@ from app.models.subscription import Subscription
 from app.models.sync_operation import SyncOperation
 from app.models.favorite import Favorite
 from app.models.delivery_rate import DeliveryRate
+from app.models.user_wallet import UserWallet
+from app.models.wallet_transaction import WalletTransaction
 
 __all__ = [
     "Base",
@@ -62,6 +64,8 @@ __all__ = [
     "ProductExchangeDetail",
     "Favorite",
     "DeliveryRate",
+    "UserWallet",
+    "WalletTransaction",
 ]
 
 

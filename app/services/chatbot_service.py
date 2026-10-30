@@ -72,7 +72,7 @@ class ChatbotService:
         tenant_slug_val = tenant.slug if tenant else "urbanstyle"
         is_moda_express = "moda" in tenant_slug_val.lower()
 
-        # 2. Recopilar datos reales de la BD para este tenant
+        # 2. Recopilar datos reales de la BD para este tenant (optimizado con variantes ya cargadas)
         products_info = []
         if tenant:
             products = (
@@ -82,12 +82,9 @@ class ChatbotService:
                 .all()
             )
             for p in products:
-                variants = db.query(ProductVariant).filter(
-                    ProductVariant.producto_id == p.id,
-                    ProductVariant.activo == True
-                ).all()
-                tallas = list(set([v.talla for v in variants if v.talla]))
-                colores = list(set([v.color for v in variants if v.color]))
+                # p.variantes ya tiene lazy="joined" en el modelo, usamos p.variantes directamente evitando N+1 queries
+                tallas = list(set([v.talla for v in p.variantes if v.activo and v.talla]))
+                colores = list(set([v.color for v in p.variantes if v.activo and v.color]))
                 products_info.append(
                     f"- {p.nombre}: {float(p.precio_base):.2f} Bs. "
                     f"Tallas: {', '.join(tallas) or 'Única'}. Colores: {', '.join(colores) or 'Varios'}."
@@ -170,7 +167,8 @@ DIRECTIVAS CONVERSACIONALES:
                     )
                 )
 
-                candidate_models = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
+                # Priorizamos gemini-3.1-flash-lite y 3.5-flash-lite para máxima velocidad (<1s) y evitar 503 por alta demanda en 3.8-flash
+                candidate_models = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"]
                 last_err = None
 
                 for model_name in candidate_models:
@@ -182,6 +180,7 @@ DIRECTIVAS CONVERSACIONALES:
                                 system_instruction=system_instruction,
                                 temperature=0.7,
                                 max_output_tokens=600,
+                                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                             )
                         )
                         if response and response.text:

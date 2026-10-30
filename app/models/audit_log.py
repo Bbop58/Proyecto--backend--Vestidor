@@ -21,6 +21,7 @@ class AuditLog(Base):
     user_role = Column(String(50), nullable=True, index=True)
     action = Column(String(100), nullable=False, index=True)
     module = Column(String(50), nullable=False, index=True)
+    ip_address = Column(String(50), nullable=True, default="127.0.0.1", index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
 
     user = relationship("User", backref="audit_logs")

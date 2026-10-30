@@ -12,5 +12,6 @@ class AuditLogResponse(BaseModel):
     user_name: Optional[str] = None
     user_email: Optional[str] = None
     user_role: Optional[str] = None
+    ip_address: Optional[str] = "127.0.0.1"
     action: str
     module: str

@@ -18,3 +18,4 @@ class ChatbotResponse(BaseModel):
     suggested_prompts: List[str] = Field(default_factory=list, description="Chips interactivos de preguntas rápidas sugeridas")
     tenant_name: str = Field(..., description="Nombre de la empresa que atiende")
     tenant_slug: str = Field(..., description="Slug de la empresa")
+

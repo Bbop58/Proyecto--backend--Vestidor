@@ -34,3 +34,4 @@ def send_chatbot_message(
         tenant_slug=payload.tenant_slug,
         current_user=current_user
     )
+

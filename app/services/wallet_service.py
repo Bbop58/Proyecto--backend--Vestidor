@@ -55,7 +55,8 @@ class WalletService:
                 saldo_actual=zero_saldo,
                 saldo_retenido=zero_saldo,
                 nonce_secuencia=0,
-                firma_balance=initial_sig
+                firma_balance=initial_sig,
+                moneda="BOB"
             )
             db.add(wallet)
             db.commit()
@@ -228,6 +229,7 @@ class WalletService:
         exitosas = 0
         fallidas = 0
         detalles_resultado = []
+        notificaciones_pendientes = []
 
         for ord_data in orders:
             # 1. Idempotencia: Verificar si esta operación offline ya fue sincronizada
@@ -238,7 +240,10 @@ class WalletService:
             if existing_tx:
                 detalles_resultado.append({
                     "client_operation_id": str(ord_data.client_operation_id),
+                    "status": "CONFIRMADA",
                     "estado": "YA_PROCESADA",
+                    "receipt_number": existing_tx.referencia_externa,
+                    "numero_recibo": existing_tx.referencia_externa,
                     "mensaje": "Operación offline previamente sincronizada.",
                     "referencia": existing_tx.referencia_externa
                 })
@@ -251,7 +256,9 @@ class WalletService:
             if wallet.saldo_actual < monto_orden:
                 detalles_resultado.append({
                     "client_operation_id": str(ord_data.client_operation_id),
+                    "status": "RECHAZADA_POR_SOBREGIRO",
                     "estado": "RECHAZADA_POR_SOBREGIRO",
+                    "error_detail": f"Saldo central insuficiente (Disponible: {wallet.saldo_actual} Bs vs Requerido: {monto_orden} Bs).",
                     "mensaje": f"Saldo central insuficiente (Disponible: {wallet.saldo_actual} Bs vs Requerido: {monto_orden} Bs).",
                 })
                 fallidas += 1
@@ -276,20 +283,18 @@ class WalletService:
             if stock_insuficiente:
                 detalles_resultado.append({
                     "client_operation_id": str(ord_data.client_operation_id),
+                    "status": "COMPENSADA_POR_STOCK",
                     "estado": "COMPENSADA_POR_STOCK",
+                    "error_detail": "Prenda agotada en sucursal durante el periodo offline. Fondos no debitados.",
                     "mensaje": "Prenda agotada en sucursal durante el periodo offline. Fondos no debitados.",
                 })
-                try:
-                    NotificationService.create(
-                        db=db,
-                        user_id=user_id,
-                        title="Aviso de Compra Offline ⚠️",
-                        message="Una prenda de tu compra offline se agotó en tienda. Tu saldo de Billetera no fue debitado.",
-                        type="COMPENSACION_STOCK",
-                        reference_id=str(ord_data.client_operation_id)
-                    )
-                except Exception:
-                    pass
+                notificaciones_pendientes.append((
+                    user_id,
+                    "Aviso de Compra Offline ⚠️",
+                    "Una prenda de tu compra offline se agotó en tienda. Tu saldo de Billetera no fue debitado.",
+                    "COMPENSACION_STOCK",
+                    str(ord_data.client_operation_id)
+                ))
                 fallidas += 1
                 continue
 
@@ -297,6 +302,7 @@ class WalletService:
             fecha_recibo = datetime.utcnow().strftime("%Y%m%d")
             short_id = uuid.uuid4().hex[:6].upper()
             num_recibo = f"VTA-WAL-{fecha_recibo}-{short_id}"
+            auth_code = ord_data.codigo_autorizacion_offline or ord_data.firma_cliente or f"OFF-{str(ord_data.client_operation_id)[:8].upper()}"
 
             iva = round(monto_orden * Decimal("0.13"), 2)
             neto = monto_orden - iva
@@ -310,13 +316,13 @@ class WalletService:
                 cliente_id=user_id,
                 cajero_id=None,
                 metodo_pago=PaymentMethod.PAYPAL,  # Clasificada como cobro digital garantizado
-                referencia_pago=f"BILLETERA_AUTH_{ord_data.codigo_autorizacion_offline}",
+                referencia_pago=f"BILLETERA_AUTH_{auth_code}",
                 monto_total=monto_orden,
                 impuesto_iva=iva,
                 monto_neto=neto,
                 monto_recibido=monto_orden,
                 cambio=Decimal("0.00"),
-                nota=f"Compra Offline reconciliada vía Billetera Virtual (Auth: {ord_data.codigo_autorizacion_offline})"
+                nota=f"Compra Offline reconciliada vía Billetera Virtual (Auth: {auth_code})"
             )
             db.add(nueva_venta)
             db.flush()
@@ -327,6 +333,7 @@ class WalletService:
                 inv.stock_actual = max(0, inv.stock_actual - itm.cantidad)
 
                 mov = InventoryMovement(
+                    tenant_id=tenant_id,
                     inventario_id=inv.id,
                     tipo=MovementType.SALIDA_VENTA,
                     cantidad=-itm.cantidad,
@@ -367,34 +374,45 @@ class WalletService:
                 origen="MOBILE",
                 estado_sync="CONCILIADO",
                 notas=f"Pago offline regularizado. Comprobante #{num_recibo}",
-                metadatos={"auth_code": ord_data.codigo_autorizacion_offline, "recibo": num_recibo}
+                metadatos={"auth_code": auth_code, "recibo": num_recibo}
             )
             db.add(tx)
 
             detalles_resultado.append({
                 "client_operation_id": str(ord_data.client_operation_id),
+                "status": "CONFIRMADA",
                 "estado": "CONFIRMADA",
+                "receipt_number": num_recibo,
                 "numero_recibo": num_recibo,
                 "monto_debitado": float(monto_orden),
                 "nuevo_saldo": float(saldo_pos)
             })
             exitosas += 1
 
-            # Disparar notificación push oficial
-            try:
-                NotificationService.create(
-                    db=db,
-                    user_id=user_id,
-                    title="¡Compra Offline Sincronizada! 🎉",
-                    message=f"Tu compra offline #{num_recibo} por Bs. {float(monto_orden):.2f} ha sido consolidada con tus fondos de Billetera.",
-                    type="VENTA",
-                    reference_id=str(nueva_venta.id)
-                )
-            except Exception:
-                pass
+            notificaciones_pendientes.append((
+                user_id,
+                "¡Compra Offline Sincronizada! 🎉",
+                f"Tu compra offline #{num_recibo} por Bs. {float(monto_orden):.2f} ha sido consolidada con tus fondos de Billetera.",
+                "VENTA",
+                str(nueva_venta.id)
+            ))
 
         db.commit()
         db.refresh(wallet)
+
+        # Disparar notificaciones DESPUÉS del commit seguro
+        for n_uid, n_title, n_msg, n_type, n_ref in notificaciones_pendientes:
+            try:
+                NotificationService.create(
+                    db=db,
+                    user_id=n_uid,
+                    title=n_title,
+                    message=n_msg,
+                    type=n_type,
+                    reference_id=n_ref
+                )
+            except Exception:
+                pass
 
         return {
             "procesadas": len(orders),
@@ -403,6 +421,7 @@ class WalletService:
             "nuevo_saldo": float(wallet.saldo_actual),
             "nuevo_nonce": wallet.nonce_secuencia,
             "nueva_firma": wallet.firma_balance or "",
-            "detalles": detalles_resultado
+            "detalles": detalles_resultado,
+            "results": detalles_resultado
         }
 

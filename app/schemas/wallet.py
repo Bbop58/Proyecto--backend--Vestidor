@@ -83,7 +83,10 @@ class OfflineOrderPayload(BaseModel):
     items: List[OfflineOrderItem] = Field(..., min_length=1)
     monto_total: float = Field(..., gt=0)
     fecha_orden: Optional[datetime] = None
-    codigo_autorizacion_offline: str
+    fecha_local: Optional[str] = None
+    nonce: Optional[int] = None
+    firma_cliente: Optional[str] = None
+    codigo_autorizacion_offline: Optional[str] = None
     nota: Optional[str] = None
 
 
@@ -99,4 +102,5 @@ class BatchOfflineSyncResponse(BaseModel):
     nuevo_nonce: int
     nueva_firma: str
     detalles: List[Dict[str, Any]]
+    results: Optional[List[Dict[str, Any]]] = None
 

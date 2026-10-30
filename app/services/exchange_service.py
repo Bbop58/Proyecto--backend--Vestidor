@@ -329,6 +329,7 @@ class ExchangeService:
 
         # 7. Crear cabecera del cambio
         cambio = ProductExchange(
+            tenant_id=venta.tenant_id,
             numero_cambio=numero_cambio,
             venta_id=venta.id,
             sucursal_id=venta.sucursal_id,
@@ -359,6 +360,7 @@ class ExchangeService:
 
             if not inv_devuelta:
                 inv_devuelta = Inventory(
+                    tenant_id=venta.tenant_id,
                     sucursal_id=venta.sucursal_id,
                     variante_id=item.variante_devuelta_id,
                     stock_actual=0,
@@ -372,6 +374,7 @@ class ExchangeService:
             inv_devuelta.stock_actual += item.cantidad_devuelta
 
             mov_dev = InventoryMovement(
+                tenant_id=venta.tenant_id,
                 inventario_id=inv_devuelta.id,
                 tipo=MovementType.DEVOLUCION,
                 cantidad=item.cantidad_devuelta,
@@ -389,6 +392,7 @@ class ExchangeService:
             inv_ent.stock_actual -= item.cantidad_entregada
 
             mov_ent = InventoryMovement(
+                tenant_id=venta.tenant_id,
                 inventario_id=inv_ent.id,
                 tipo=MovementType.SALIDA_VENTA,
                 cantidad=item.cantidad_entregada,

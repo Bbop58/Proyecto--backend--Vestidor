@@ -30,6 +30,8 @@ from app.models.subscription_plan import SubscriptionPlan
 from app.models.subscription import Subscription
 from app.models.favorite import Favorite
 from app.models.delivery_rate import DeliveryRate
+from app.models.product_exchange import ProductExchange
+from app.models.product_exchange_detail import ProductExchangeDetail
 from app.seed_permissions import seed as seed_permissions
 
 
@@ -68,23 +70,23 @@ def seed_historical_sales_and_reservations(
 
     # 1. Clientes para UrbanStyle (35 clientes)
     urban_customer_names = [
-        ("Mateo FernÃ¡ndez", "mateo.fernandez@gmail.com"),
+        ("Mateo Fernández", "mateo.fernandez@gmail.com"),
         ("Lucas Rojas", "lucas.rojas@gmail.com"),
         ("Alejandro Vargas", "alejandro.vargas@gmail.com"),
         ("Diego Castro", "diego.castro@gmail.com"),
         ("Carlos Mendoza", "carlos.mendoza@gmail.com"),
         ("Valeria Paz", "valeria.paz@gmail.com"),
-        ("Gabriel SuÃ¡rez", "gabriel.suarez@gmail.com"),
+        ("Gabriel Suárez", "gabriel.suarez@gmail.com"),
         ("Andrea Soliz", "andrea.soliz@gmail.com"),
         ("Rodrigo Torrico", "rodrigo.torrico@gmail.com"),
         ("Camila Montero", "camila.montero@gmail.com"),
-        ("SebastiÃ¡n Flores", "sebastian.flores@gmail.com"),
+        ("Sebastián Flores", "sebastian.flores@gmail.com"),
         ("Mariana Ayala", "mariana.ayala@gmail.com"),
-        ("NicolÃ¡s BalcÃ¡zar", "nicolas.balcazar@gmail.com"),
+        ("Nicolás Balcázar", "nicolas.balcazar@gmail.com"),
         ("Fernanda Salazar", "fernanda.salazar@gmail.com"),
-        ("Luis GuzmÃ¡n", "luis.guzman@gmail.com"),
+        ("Luis Guzmán", "luis.guzman@gmail.com"),
         ("Daniela Terrazas", "daniela.terrazas@gmail.com"),
-        ("JoaquÃ­n Aguilera", "joaquin.aguilera@gmail.com"),
+        ("Joaquín Aguilera", "joaquin.aguilera@gmail.com"),
         ("Paola Arce", "paola.arce@gmail.com"),
         ("Hugo Claros", "hugo.claros@gmail.com"),
         ("Natalia Justiniano", "natalia.justiniano@gmail.com"),
@@ -95,13 +97,13 @@ def seed_historical_sales_and_reservations(
         ("Mauricio Zambrana", "mauricio.zambrana@gmail.com"),
         ("Claudia Escalante", "claudia.escalante@gmail.com"),
         ("Javier Banzer", "javier.banzer@gmail.com"),
-        ("Silvia ChÃ¡vez", "silvia.chavez@gmail.com"),
+        ("Silvia Chávez", "silvia.chavez@gmail.com"),
         ("Esteban Rivero", "esteban.rivero@gmail.com"),
         ("Adriana Ribera", "adriana.ribera@gmail.com"),
         ("Felipe Mercado", "felipe.mercado@gmail.com"),
         ("Luciana Villarroel", "luciana.villarroel@gmail.com"),
         ("Ignacio Peinado", "ignacio.peinado@gmail.com"),
-        ("Julio CÃ©sar Prado", "julio.prado@gmail.com"),
+        ("Julio César Prado", "julio.prado@gmail.com"),
         ("Lorena Justiniano", "lorena.justiniano@gmail.com"),
     ]
 
@@ -124,10 +126,10 @@ def seed_historical_sales_and_reservations(
 
     # Clientes para Moda Express (8 clientes)
     moda_customer_names = [
-        ("Ã“scar Valdivia Tarija", "oscar.valdivia.tja@gmail.com"),
-        ("MarÃ­a Ãlvarez Tarija", "maria.alvarez.tja@gmail.com"),
-        ("Pedro GutiÃ©rrez Tarija", "pedro.gutierrez.tja@gmail.com"),
-        ("LucÃ­a FarfÃ¡n Tarija", "lucia.farfan.tja@gmail.com"),
+        ("Óscar Valdivia Tarija", "oscar.valdivia.tja@gmail.com"),
+        ("María Álvarez Tarija", "maria.alvarez.tja@gmail.com"),
+        ("Pedro Gutiérrez Tarija", "pedro.gutierrez.tja@gmail.com"),
+        ("Lucía Farfán Tarija", "lucia.farfan.tja@gmail.com"),
         ("Gonzalo Valdez Tarija", "gonzalo.valdez.tja@gmail.com"),
         ("Elena Cardoso Tarija", "elena.cardoso.tja@gmail.com"),
         ("Marcelo Villegas Tarija", "marcelo.villegas.tja@gmail.com"),
@@ -170,20 +172,20 @@ def seed_historical_sales_and_reservations(
                 stock_antes=inv.stock_actual - diff,
                 stock_despues=350,
                 referencia="REABASTECIMIENTO-ANUAL-2026",
-                nota="Carga de inventario de seguridad y reposiciÃ³n anual",
+                nota="Carga de inventario de seguridad y reposición anual",
                 usuario_id=admin_user.id if admin_user else None,
                 created_at=datetime(2026, 1, 10, 9, 0, tzinfo=timezone.utc)
             )
             db.add(mov_ref)
     db.commit()
 
-    # 3. Agrupar variantes por categorÃ­a para estacionalidad
+    # 3. Agrupar variantes por categoría para estacionalidad
     variants_by_cat = {}
     for v in all_variants:
         cat_name = v.producto.categoria.nombre if (v.producto and v.producto.categoria) else "General"
         variants_by_cat.setdefault(cat_name, []).append(v)
 
-    # ConfiguraciÃ³n equitativa por sucursales
+    # Configuración equitativa por sucursales
     urban_branch_configs = [
         {"branch": branches_map.get("Sucursal Central"), "target": 28, "cajero": cajero_urban_central, "code": "CEN"},
         {"branch": branches_map.get("Sucursal Equipetrol"), "target": 24, "cajero": cajero_urban_general, "code": "EQU"},
@@ -205,7 +207,7 @@ def seed_historical_sales_and_reservations(
     for month in range(1, 11):
         month_seq = 1
         
-        # PonderaciÃ³n estacional para UrbanStyle
+        # Ponderación estacional para UrbanStyle
         if month in [1, 2]:
             cat_weights = [("Shorts & Bermudas", 0.40), ("Poleras & Remeras", 0.40), ("Camisas & Sobrecamisas", 0.15), ("Pantalones & Jeans", 0.05)]
         elif month in [3, 4]:
@@ -500,10 +502,10 @@ def seed_historical_sales_and_reservations(
         db.commit()
         print(f"    -> Mes {month:02d}/2026 completado ({month_seq - 1} ventas sembradas).")
 
-    print(f"  [SUCCESS] Sembrado histÃ³rico completado: {total_sales_created} ventas y {total_reservations_created} reservas generadas en 10 meses.")
+    print(f"  [SUCCESS] Sembrado histórico completado: {total_sales_created} ventas y {total_reservations_created} reservas generadas en 10 meses.")
 
 
-def seed_delivery_rates_and_favorites(db, tenant_urban, branches_map):
+def seed_delivery_rates_and_favorites(db, tenant_urban, tenant_moda, branches_map):
     print("\n[8/8] Sembrando Tarifas de Delivery y Favoritos de Clientes...")
     
     # 1. Delivery Rates
@@ -528,7 +530,7 @@ def seed_delivery_rates_and_favorites(db, tenant_urban, branches_map):
                     DeliveryRate(
                         branch_id=branch.id,
                         tenant_id=tenant_urban.id,
-                        zona_nombre="Equipetrol y UrbarÃ­",
+                        zona_nombre="Equipetrol y Urbarí",
                         ciudad=city,
                         costo_envio=Decimal("20.00"),
                         tiempo_estimado_horas=24,
@@ -578,6 +580,32 @@ def seed_delivery_rates_and_favorites(db, tenant_urban, branches_map):
                     )
                 )
         
+
+        # Tarifas de Delivery para Moda Express (Tarija)
+        for branch_name, branch in branches_map.items():
+            if not branch or branch.tenant_id != tenant_moda.id:
+                continue
+            rates_to_create.extend([
+                DeliveryRate(
+                    branch_id=branch.id,
+                    tenant_id=tenant_moda.id,
+                    zona_nombre=f"Radio Urbano - {branch.nombre}",
+                    ciudad="Tarija",
+                    costo_envio=Decimal("10.00"),
+                    tiempo_estimado_horas=24,
+                    activo=True
+                ),
+                DeliveryRate(
+                    branch_id=branch.id,
+                    tenant_id=tenant_moda.id,
+                    zona_nombre="Zonas Aledañas y Periferia Tarija",
+                    ciudad="Tarija",
+                    costo_envio=Decimal("18.00"),
+                    tiempo_estimado_horas=48,
+                    activo=True
+                ),
+            ])
+
         for r in rates_to_create:
             db.add(r)
         db.commit()
@@ -604,6 +632,126 @@ def seed_delivery_rates_and_favorites(db, tenant_urban, branches_map):
         print(f"  [OK] Sembrados {fav_count} favoritos iniciales para clientes.")
     else:
         print(f"  [+] Ya existen {existing_favs} favoritos registrados.")
+
+
+
+
+def seed_product_exchanges(db, tenant_urban, branches_map, users_map):
+    print("\n[9/9] Sembrando Registro de Cambios de Prendas (Garantías Retail)...")
+    existing_exchanges = db.query(ProductExchange).count()
+    if existing_exchanges > 0:
+        print(f"  [+] Ya existen {existing_exchanges} cambios de prenda registrados.")
+        return
+
+    central_branch = branches_map.get("Sucursal Central")
+    cajero = users_map.get("cajero@urbanstyle.com") or users_map.get("cajero@ficttstore.com")
+    cliente = users_map.get("cliente@ficttstore.com")
+
+    sale = db.query(Sale).filter(
+        Sale.tenant_id == tenant_urban.id,
+        Sale.sucursal_id == central_branch.id,
+        Sale.estado == SaleStatus.COMPLETADA
+    ).first()
+
+    if not sale or not sale.detalles or not cajero:
+        print("  [WARN] No se encontró venta base para sembrar cambio de prendas.")
+        return
+
+    det_devuelto = sale.detalles[0]
+    var_devuelta = det_devuelto.variante
+
+    var_entregada = db.query(ProductVariant).filter(
+        ProductVariant.producto_id == var_devuelta.producto_id,
+        ProductVariant.id != var_devuelta.id,
+        ProductVariant.activo == True
+    ).first()
+
+    if not var_entregada:
+        var_entregada = var_devuelta
+
+    precio_dev = Decimal(str(det_devuelto.precio_unitario))
+    prod_ent = var_entregada.producto
+    precio_ent = prod_ent.precio_base + var_entregada.precio_extra
+    diff = precio_ent - precio_dev
+
+    numero_cambio = "CAM-20261015-0001"
+
+    cambio = ProductExchange(
+        tenant_id=tenant_urban.id,
+        numero_cambio=numero_cambio,
+        venta_id=sale.id,
+        sucursal_id=central_branch.id,
+        cajero_id=cajero.id,
+        cliente_id=sale.cliente_id or (cliente.id if cliente else None),
+        fecha_cambio=datetime(2026, 10, 15, 15, 30, tzinfo=timezone.utc),
+        dias_transcurridos=3,
+        monto_total_devuelto=precio_dev,
+        monto_total_entregado=precio_ent,
+        diferencia=diff,
+        metodo_pago_diferencia="EFECTIVO" if diff > 0 else "NINGUNO",
+        motivo="Cambio por talla más grande (ajuste de confección)",
+        estado_prenda="BUEN_ESTADO",
+        nota="Prenda devuelta intacta con etiquetas originales. Cambio presencial en caja."
+    )
+    db.add(cambio)
+    db.flush()
+
+    det_cambio = ProductExchangeDetail(
+        cambio_id=cambio.id,
+        variante_devuelta_id=var_devuelta.id,
+        cantidad_devuelta=1,
+        precio_unitario_devuelto=precio_dev,
+        variante_entregada_id=var_entregada.id,
+        cantidad_entregada=1,
+        precio_unitario_entregado=precio_ent,
+        subtotal_diferencia=diff
+    )
+    db.add(det_cambio)
+
+    inv_dev = db.query(Inventory).filter(
+        Inventory.sucursal_id == central_branch.id,
+        Inventory.variante_id == var_devuelta.id
+    ).first()
+    if inv_dev:
+        antes = inv_dev.stock_actual
+        inv_dev.stock_actual += 1
+        mov_in = InventoryMovement(
+            tenant_id=tenant_urban.id,
+            inventario_id=inv_dev.id,
+            tipo=MovementType.DEVOLUCION,
+            cantidad=1,
+            stock_antes=antes,
+            stock_despues=inv_dev.stock_actual,
+            referencia=numero_cambio,
+            nota="Reingreso por cambio de prenda: Talla devuelta",
+            usuario_id=cajero.id,
+            created_at=datetime(2026, 10, 15, 15, 30, tzinfo=timezone.utc)
+        )
+        db.add(mov_in)
+
+    inv_ent = db.query(Inventory).filter(
+        Inventory.sucursal_id == central_branch.id,
+        Inventory.variante_id == var_entregada.id
+    ).first()
+    if inv_ent:
+        antes_ent = inv_ent.stock_actual
+        inv_ent.stock_actual = max(0, inv_ent.stock_actual - 1)
+        mov_out = InventoryMovement(
+            tenant_id=tenant_urban.id,
+            inventario_id=inv_ent.id,
+            tipo=MovementType.SALIDA_VENTA,
+            cantidad=1,
+            stock_antes=antes_ent,
+            stock_despues=inv_ent.stock_actual,
+            referencia=numero_cambio,
+            nota="Salida por entrega de prenda en cambio de talla",
+            usuario_id=cajero.id,
+            created_at=datetime(2026, 10, 15, 15, 30, tzinfo=timezone.utc)
+        )
+        db.add(mov_out)
+
+    db.commit()
+    print(f"  [OK] Sembrado cambio de prenda de prueba: {numero_cambio} (Diferencia: {diff} Bs.)")
 
 
 def seed_all():
@@ -643,10 +791,18 @@ def seed_all():
                 ALTER TABLE cambios_producto ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
                 ALTER TABLE favoritos ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
                 ALTER TABLE tarifas_delivery ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+
+                -- Limpieza y corrección de encoding en registros preexistentes
+                UPDATE subscription_plans SET nombre = 'Plan Básico', descripcion = 'Máximo 2 sucursales, Operación Offline, Sin Reportes IA', precio_mensual_bob = 199.00 WHERE codigo = 'BASICO';
+                UPDATE subscription_plans SET nombre = 'Plan Profesional', descripcion = 'Hasta 10 sucursales, Reportes con IA e Inteligencia Artificial', precio_mensual_bob = 499.00 WHERE codigo = 'PROFESIONAL';
+                UPDATE categorias SET descripcion = 'Poleras oversized, boxy fit, remeras básicas y urbanas para hombre' WHERE nombre = 'Poleras & Remeras';
+                UPDATE categorias SET descripcion = 'Camisas de lino, franela leñadora, sobrecamisas y estilo resort' WHERE nombre = 'Camisas & Sobrecamisas';
+                UPDATE categorias SET descripcion = 'Pantalones cargo tácticos, jeans baggy 90s y pantalones chino stretch' WHERE nombre = 'Pantalones & Jeans';
+                UPDATE productos SET activo = true WHERE tenant_id IN (SELECT id FROM tenants WHERE slug = 'modaexpress');
             """))
-        print("  [OK] Columnas de impuestos, multitenant y envÃ­os verificadas y migradas.")
+        print("  [OK] Columnas de impuestos, multitenant y envíos verificadas y migradas.")
     except Exception as e:
-        print(f"  [WARN] No se requiriÃ³ migraciÃ³n manual o aviso: {e}")
+        print(f"  [WARN] No se requirió migración manual o aviso: {e}")
 
     # 1. Sembrar roles, permisos y temporadas
     print("\n[1/6] Sembrando Roles, Permisos y Temporadas base...")
@@ -654,8 +810,8 @@ def seed_all():
 
     db = SessionLocal()
     try:
-        # 1.5. Sembrar Planes de SuscripciÃ³n y Empresas Multitenant
-        print("\n[1.5/6] Sembrando Planes de SuscripciÃ³n y Empresas Multitenant...")
+        # 1.5. Sembrar Planes de Suscripción y Empresas Multitenant
+        print("\n[1.5/6] Sembrando Planes de Suscripción y Empresas Multitenant...")
         plan_pro = db.query(SubscriptionPlan).filter(SubscriptionPlan.codigo == "PROFESIONAL").first()
         if not plan_pro:
             plan_pro = SubscriptionPlan(
@@ -665,26 +821,42 @@ def seed_all():
                 max_sucursales=10,
                 permite_reportes_ia=True,
                 permite_offline=True,
-                precio_mensual_bob=350.00,
+                precio_mensual_bob=499.00,
                 activo=True
             )
             db.add(plan_pro)
             db.flush()
+        else:
+            plan_pro.nombre = "Plan Profesional"
+            plan_pro.descripcion = "Hasta 10 sucursales, Reportes con IA e Inteligencia Artificial"
+            plan_pro.max_sucursales = 10
+            plan_pro.permite_reportes_ia = True
+            plan_pro.permite_offline = True
+            plan_pro.precio_mensual_bob = 499.00
+            plan_pro.activo = True
 
         plan_basico = db.query(SubscriptionPlan).filter(SubscriptionPlan.codigo == "BASICO").first()
         if not plan_basico:
             plan_basico = SubscriptionPlan(
                 codigo="BASICO",
-                nombre="Plan BÃ¡sico",
-                descripcion="MÃ¡ximo 2 sucursales, OperaciÃ³n Offline, Sin Reportes IA",
+                nombre="Plan Básico",
+                descripcion="Máximo 2 sucursales, Operación Offline, Sin Reportes IA",
                 max_sucursales=2,
                 permite_reportes_ia=False,
                 permite_offline=True,
-                precio_mensual_bob=120.00,
+                precio_mensual_bob=199.00,
                 activo=True
             )
             db.add(plan_basico)
             db.flush()
+        else:
+            plan_basico.nombre = "Plan Básico"
+            plan_basico.descripcion = "Máximo 2 sucursales, Operación Offline, Sin Reportes IA"
+            plan_basico.max_sucursales = 2
+            plan_basico.permite_reportes_ia = False
+            plan_basico.permite_offline = True
+            plan_basico.precio_mensual_bob = 199.00
+            plan_basico.activo = True
         db.commit()
 
         # Empresa 1: UrbanStyle Bolivia S.R.L. (Plan Profesional)
@@ -712,7 +884,7 @@ def seed_all():
                 estado="ACTIVA",
                 fecha_inicio=date.today(),
                 fecha_vencimiento=date.fromordinal(date.today().toordinal() + 365),
-                notas="SuscripciÃ³n Anual Profesional"
+                notas="Suscripción Anual Profesional"
             )
             db.add(sub_urban)
             db.commit()
@@ -723,7 +895,7 @@ def seed_all():
             tenant_urban.eslogan = "Streetwear & Urban Culture"
             db.commit()
 
-        # Empresa 2: Moda Express Tarija (Plan BÃ¡sico)
+        # Empresa 2: Moda Express Tarija (Plan Básico)
         tenant_moda = db.query(Tenant).filter(Tenant.slug == "modaexpress").first()
         if not tenant_moda:
             tenant_moda = Tenant(
@@ -748,11 +920,11 @@ def seed_all():
                 estado="ACTIVA",
                 fecha_inicio=date.today(),
                 fecha_vencimiento=date.fromordinal(date.today().toordinal() + 365),
-                notas="SuscripciÃ³n Anual BÃ¡sica"
+                notas="Suscripción Anual Básica"
             )
             db.add(sub_moda)
             db.commit()
-            print("  [OK] Creada Empresa 2: Moda Express Tarija (Plan BÃ¡sico)")
+            print("  [OK] Creada Empresa 2: Moda Express Tarija (Plan Básico)")
 
         # 2. Sembrar Usuarios con diferentes Roles
         print("\n[2/6] Sembrando Usuarios de Prueba...")
@@ -800,7 +972,7 @@ def seed_all():
             },
             {
                 "email": "admin@modaexpress.com",
-                "full_name": "Admin Moda Express (BÃ¡sico)",
+                "full_name": "Admin Moda Express (Básico)",
                 "role_id": admin_role.id,
                 "password": get_password_hash("Password123!"),
                 "is_active": True,
@@ -817,6 +989,15 @@ def seed_all():
                 "tenant_id": tenant_moda.id
             },
             {
+                "email": "cliente@modaexpress.com",
+                "full_name": "Valeria Morales Cliente",
+                "role_id": cliente_role.id,
+                "password": get_password_hash("Password123!"),
+                "is_active": True,
+                "is_verified": True,
+                "tenant_id": tenant_moda.id
+            },
+            {
                 "email": "encargado@ficttstore.com",
                 "full_name": "Carlos Encargado Sucursal",
                 "role_id": encargado_role.id,
@@ -827,7 +1008,7 @@ def seed_all():
             },
             {
                 "email": "cajero@ficttstore.com",
-                "full_name": "MarÃ­a Cajera Central",
+                "full_name": "María Cajera Central",
                 "role_id": cajero_role.id,
                 "password": get_password_hash("Password123!"),
                 "is_active": True,
@@ -836,7 +1017,7 @@ def seed_all():
             },
             {
                 "email": "cliente@ficttstore.com",
-                "full_name": "Juan PÃ©rez Cliente",
+                "full_name": "Juan Pérez Cliente",
                 "role_id": cliente_role.id,
                 "password": get_password_hash("Password123!"),
                 "is_active": True,
@@ -845,7 +1026,7 @@ def seed_all():
             },
             {
                 "email": "sofia.cliente@ficttstore.com",
-                "full_name": "SofÃ­a Morales",
+                "full_name": "Sofía Morales",
                 "role_id": cliente_role.id,
                 "password": get_password_hash("Password123!"),
                 "is_active": True,
@@ -894,7 +1075,7 @@ def seed_all():
             {
                 "nombre": "Sucursal Equipetrol",
                 "ciudad": "Santa Cruz de la Sierra",
-                "direccion": "Av. San MartÃ­n #450, Esq. Calle 7",
+                "direccion": "Av. San Martín #450, Esq. Calle 7",
                 "telefono": "+591 3 3498123",
                 "activa": True,
                 "tenant_id": tenant_urban.id
@@ -910,12 +1091,12 @@ def seed_all():
             {
                 "nombre": "Sucursal Cochabamba",
                 "ciudad": "Cochabamba",
-                "direccion": "Av. AmÃ©rica Este #780",
+                "direccion": "Av. América Este #780",
                 "telefono": "+591 4 4112233",
                 "activa": True,
                 "tenant_id": tenant_urban.id
             },
-            # Sucursales Empresa 2 (Moda Express Tarija - Plan BÃ¡sico con lÃ­mite de 2)
+            # Sucursales Empresa 2 (Moda Express Tarija - Plan Básico con límite de 2)
             {
                 "nombre": "Moda Express - Tarija Centro",
                 "ciudad": "Tarija",
@@ -927,7 +1108,7 @@ def seed_all():
             {
                 "nombre": "Moda Express - El Molino",
                 "ciudad": "Tarija",
-                "direccion": "Av. Las AmÃ©ricas #890",
+                "direccion": "Av. Las Américas #890",
                 "telefono": "+591 4 6643344",
                 "activa": True,
                 "tenant_id": tenant_moda.id
@@ -948,12 +1129,12 @@ def seed_all():
                 db.commit()
             branches_map[b_data["nombre"]] = branch
 
-        # 4. Sembrar Proveedores y CategorÃ­as de Moda Masculina
-        print("\n[4/6] Sembrando Proveedores y CategorÃ­as...")
+        # 4. Sembrar Proveedores y Categorías de Moda Masculina
+        print("\n[4/6] Sembrando Proveedores y Categorías...")
         suppliers_data = [
             {
                 "nombre": "Textilera Andina S.A.",
-                "contacto": "Roberto GÃ³mez",
+                "contacto": "Roberto Gómez",
                 "telefono": "+591 2 2841100",
                 "email": "ventas@textilandina.com",
                 "direccion": "Parque Industrial Calle 3, La Paz",
@@ -964,7 +1145,7 @@ def seed_all():
                 "contacto": "Laura Fernandez",
                 "telefono": "+591 3 3556677",
                 "email": "contacto@modaurbanabolivia.com",
-                "direccion": "Av. Doble VÃ­a a La Guardia Km 4, Santa Cruz",
+                "direccion": "Av. Doble Vía a La Guardia Km 4, Santa Cruz",
                 "activo": True
             },
             {
@@ -980,7 +1161,7 @@ def seed_all():
                 "contacto": "Valeria Rios",
                 "telefono": "+591 4 4220011",
                 "email": "info@streetweardenim.com",
-                "direccion": "Av. HeroÃ­nas #560, Cochabamba",
+                "direccion": "Av. Heroínas #560, Cochabamba",
                 "activo": True
             }
         ]
@@ -998,10 +1179,10 @@ def seed_all():
                 db.commit()
 
         categories_data = [
-            {"nombre": "Poleras & Remeras", "descripcion": "Poleras oversized, boxy fit, remeras bÃ¡sicas y urbanas para hombre"},
+            {"nombre": "Poleras & Remeras", "descripcion": "Poleras oversized, boxy fit, remeras básicas y urbanas para hombre"},
             {"nombre": "Hoodies & Polerones", "descripcion": "Hoodies frizados pesados, polerones crewneck y hoodies con cierre"},
-            {"nombre": "Camisas & Sobrecamisas", "descripcion": "Camisas de lino, franela leÃ±adora, sobrecamisas y estilo resort"},
-            {"nombre": "Pantalones & Jeans", "descripcion": "Pantalones cargo tÃ¡cticos, jeans baggy 90s y pantalones chino stretch"},
+            {"nombre": "Camisas & Sobrecamisas", "descripcion": "Camisas de lino, franela leñadora, sobrecamisas y estilo resort"},
+            {"nombre": "Pantalones & Jeans", "descripcion": "Pantalones cargo tácticos, jeans baggy 90s y pantalones chino stretch"},
             {"nombre": "Chaquetas & Abrigos", "descripcion": "Bombers urbanas, cazadoras trucker en denim y cortavientos"},
             {"nombre": "Shorts & Bermudas", "descripcion": "Shorts cargo de verano, bermudas denim y shorts deportivos"}
         ]
@@ -1015,14 +1196,14 @@ def seed_all():
                 db.add(cat)
                 db.commit()
                 db.refresh(cat)
-                print(f"  [OK] Creada categorÃ­a: {cat.nombre}")
+                print(f"  [OK] Creada categoría: {cat.nombre}")
             else:
                 cat.tenant_id = tenant_urban.id
                 cat.descripcion = c_data["descripcion"]
                 db.commit()
             categories_map[c_data["nombre"]] = cat
 
-        # CategorÃ­a para Moda Express (Empresa 2)
+        # Categoría para Moda Express (Empresa 2)
         cat_moda = db.query(Category).filter(Category.nombre == "Moda Formal y Ejecutiva").first()
         if not cat_moda:
             cat_moda = Category(
@@ -1034,20 +1215,20 @@ def seed_all():
             db.add(cat_moda)
             db.commit()
             db.refresh(cat_moda)
-            print("  [OK] Creada categorÃ­a exclusiva para Moda Express: Moda Formal y Ejecutiva")
+            print("  [OK] Creada categoría exclusiva para Moda Express: Moda Formal y Ejecutiva")
         else:
             cat_moda.tenant_id = tenant_moda.id
             db.commit()
         categories_map["Moda Formal y Ejecutiva"] = cat_moda
 
         # 5. Sembrar Productos y Variantes de Moda Masculina (100% Exclusivo Hombre)
-        print("\n[5/6] Sembrando Productos y Variantes (CatÃ¡logo Masculino con Fondo Blanco)...")
+        print("\n[5/6] Sembrando Productos y Variantes (Catálogo Masculino con Fondo Blanco)...")
 
         # Migrar nombres de productos anteriores para conservar historial de ventas/reservas
         renames_map = {
-            "Polera Oversize FICTT Core": "Polera GrÃ¡fica Venom Streetwear",
+            "Polera Oversize FICTT Core": "Polera Gráfica Venom Streetwear",
             "Polera Heavyweight Boxy Fit": "Polera Minimalista Yahweh Yireh",
-            "Polera GrÃ¡fica Cyber Street": "Polera GrÃ¡fica Venom Streetwear",
+            "Polera Gráfica Cyber Street": "Polera Gráfica Venom Streetwear",
         }
         for old_name, new_name in renames_map.items():
             old_p = db.query(Product).filter(Product.nombre == old_name).first()
@@ -1063,11 +1244,11 @@ def seed_all():
         products_data = [
             # 1. Poleras
             {
-                "nombre": "Polera GrÃ¡fica Venom Streetwear",
-                "descripcion": "Polera 100% algodÃ³n peinado 240g de corte streetwear con estampado frontal serigrÃ¡fico Venom Eddie Brock en alta definiciÃ³n.",
+                "nombre": "Polera Gráfica Venom Streetwear",
+                "descripcion": "Polera 100% algodón peinado 240g de corte streetwear con estampado frontal serigráfico Venom Eddie Brock en alta definición.",
                 "precio_base": Decimal("125.00"),
                 "categoria_nombre": "Poleras & Remeras",
-                "temporada": "ColecciÃ³n Streetwear FICTT 2025",
+                "temporada": "Colección Streetwear FICTT 2025",
                 "proveedor": "Textilera Andina S.A.",
                 "imagen_url": "/static/products/polera_venom_graphic.png",
                 "variantes": [
@@ -1081,7 +1262,7 @@ def seed_all():
             },
             {
                 "nombre": "Polera Minimalista Yahweh Yireh",
-                "descripcion": "Polera boxy fit de estructura pesada 280g, cuello cerrado reforzado y tipografÃ­a minimalista blanca sobre negro.",
+                "descripcion": "Polera boxy fit de estructura pesada 280g, cuello cerrado reforzado y tipografía minimalista blanca sobre negro.",
                 "precio_base": Decimal("130.00"),
                 "categoria_nombre": "Poleras & Remeras",
                 "temporada": "Primavera-Verano 2025",
@@ -1102,7 +1283,7 @@ def seed_all():
                 "descripcion": "Buzo con capucha frizado 400g con bolsillo canguro reforzado y cordones gruesos en negro mate.",
                 "precio_base": Decimal("280.00"),
                 "categoria_nombre": "Hoodies & Polerones",
-                "temporada": "ColecciÃ³n Streetwear FICTT 2025",
+                "temporada": "Colección Streetwear FICTT 2025",
                 "proveedor": "Confecciones del Oriente",
                 "imagen_url": "/static/products/hoodie_heavyweight_canguro.jpg",
                 "variantes": [
@@ -1115,11 +1296,11 @@ def seed_all():
                 ]
             },
             {
-                "nombre": "PolerÃ³n Crewneck Minimalist",
-                "descripcion": "Sweatshirt cuello redondo en felpa francesa gris melange de corte clÃ¡sico sin capucha para estilo smart casual masculino.",
+                "nombre": "Polerón Crewneck Minimalist",
+                "descripcion": "Sweatshirt cuello redondo en felpa francesa gris melange de corte clásico sin capucha para estilo smart casual masculino.",
                 "precio_base": Decimal("240.00"),
                 "categoria_nombre": "Hoodies & Polerones",
-                "temporada": "OtoÃ±o-Invierno 2025",
+                "temporada": "Otoño-Invierno 2025",
                 "proveedor": "Confecciones del Oriente",
                 "imagen_url": "/static/products/poleron_crewneck_minimalist.jpg",
                 "variantes": [
@@ -1132,16 +1313,16 @@ def seed_all():
             },
             {
                 "nombre": "Hoodie Zip-Up Tech Fleece",
-                "descripcion": "Chaqueta buzo con cierre frontal completo YKK, tejido tÃ©rmico Tech Fleece carbÃ³n y bolsillos sellados con cremallera.",
+                "descripcion": "Chaqueta buzo con cierre frontal completo YKK, tejido térmico Tech Fleece carbón y bolsillos sellados con cremallera.",
                 "precio_base": Decimal("310.00"),
                 "categoria_nombre": "Hoodies & Polerones",
-                "temporada": "OtoÃ±o-Invierno 2025",
+                "temporada": "Otoño-Invierno 2025",
                 "proveedor": "Moda Urbana Bolivia",
                 "imagen_url": "/static/products/hoodie_tech_zipup.jpg",
                 "variantes": [
-                    {"talla": "M", "color": "CarbÃ³n", "sku": "HOD-ZIP-DRK-M", "precio_extra": Decimal("0.00")},
-                    {"talla": "L", "color": "CarbÃ³n", "sku": "HOD-ZIP-DRK-L", "precio_extra": Decimal("0.00")},
-                    {"talla": "XL", "color": "CarbÃ³n", "sku": "HOD-ZIP-DRK-XL", "precio_extra": Decimal("15.00")},
+                    {"talla": "M", "color": "Carbón", "sku": "HOD-ZIP-DRK-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Carbón", "sku": "HOD-ZIP-DRK-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "XL", "color": "Carbón", "sku": "HOD-ZIP-DRK-XL", "precio_extra": Decimal("15.00")},
                     {"talla": "M", "color": "Negro Mate", "sku": "HOD-ZIP-BLK-M", "precio_extra": Decimal("0.00")},
                     {"talla": "L", "color": "Negro Mate", "sku": "HOD-ZIP-BLK-L", "precio_extra": Decimal("0.00")},
                 ]
@@ -1149,7 +1330,7 @@ def seed_all():
             # 3. Camisas & Sobrecamisas
             {
                 "nombre": "Camisa Casual Lino Cuello Mao",
-                "descripcion": "Camisa de lino puro blanco con cuello mao mandarin, manga larga arremangable y corte relajado para climas cÃ¡lidos.",
+                "descripcion": "Camisa de lino puro blanco con cuello mao mandarin, manga larga arremangable y corte relajado para climas cálidos.",
                 "precio_base": Decimal("180.00"),
                 "categoria_nombre": "Camisas & Sobrecamisas",
                 "temporada": "Primavera-Verano 2025",
@@ -1165,11 +1346,11 @@ def seed_all():
                 ]
             },
             {
-                "nombre": "Sobrecamisa Franela LeÃ±adora",
+                "nombre": "Sobrecamisa Franela Leñadora",
                 "descripcion": "Sobrecamisa gruesa de franela escocesa a cuadros rojo y negro con doble bolsillo con solapa en el pecho.",
                 "precio_base": Decimal("210.00"),
                 "categoria_nombre": "Camisas & Sobrecamisas",
-                "temporada": "OtoÃ±o-Invierno 2025",
+                "temporada": "Otoño-Invierno 2025",
                 "proveedor": "Moda Urbana Bolivia",
                 "imagen_url": "/static/products/sobrecamisa_franela_lenadora.jpg",
                 "variantes": [
@@ -1182,25 +1363,25 @@ def seed_all():
             },
             {
                 "nombre": "Camisa Resort Cuello Cubano",
-                "descripcion": "Camisa veraniega con cuello abierto estilo camp collar en tejido suave y fresco con patrÃ³n geomÃ©trico minimalista.",
+                "descripcion": "Camisa veraniega con cuello abierto estilo camp collar en tejido suave y fresco con patrón geométrico minimalista.",
                 "precio_base": Decimal("165.00"),
                 "categoria_nombre": "Camisas & Sobrecamisas",
                 "temporada": "Primavera-Verano 2025",
                 "proveedor": "Textilera Andina S.A.",
                 "imagen_url": "/static/products/camisa_resort_cubana.jpg",
                 "variantes": [
-                    {"talla": "S", "color": "Beige GeomÃ©trico", "sku": "CAM-RST-BGE-S", "precio_extra": Decimal("0.00")},
-                    {"talla": "M", "color": "Beige GeomÃ©trico", "sku": "CAM-RST-BGE-M", "precio_extra": Decimal("0.00")},
-                    {"talla": "L", "color": "Beige GeomÃ©trico", "sku": "CAM-RST-BGE-L", "precio_extra": Decimal("0.00")},
-                    {"talla": "XL", "color": "Beige GeomÃ©trico", "sku": "CAM-RST-BGE-XL", "precio_extra": Decimal("10.00")},
+                    {"talla": "S", "color": "Beige Geométrico", "sku": "CAM-RST-BGE-S", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Beige Geométrico", "sku": "CAM-RST-BGE-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Beige Geométrico", "sku": "CAM-RST-BGE-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "XL", "color": "Beige Geométrico", "sku": "CAM-RST-BGE-XL", "precio_extra": Decimal("10.00")},
                     {"talla": "M", "color": "Blanco Crudo", "sku": "CAM-RST-WHT-M", "precio_extra": Decimal("0.00")},
                     {"talla": "L", "color": "Blanco Crudo", "sku": "CAM-RST-WHT-L", "precio_extra": Decimal("0.00")},
                 ]
             },
             # 4. Pantalones & Jeans
             {
-                "nombre": "PantalÃ³n Cargo TÃ¡ctico Streetwear",
-                "descripcion": "PantalÃ³n cargo ripstop tÃ¡ctico con 6 bolsillos utilitarios de gran capacidad en negro sÃ³lido y calce regular.",
+                "nombre": "Pantalón Cargo Táctico Streetwear",
+                "descripcion": "Pantalón cargo ripstop táctico con 6 bolsillos utilitarios de gran capacidad en negro sólido y calce regular.",
                 "precio_base": Decimal("220.00"),
                 "categoria_nombre": "Pantalones & Jeans",
                 "temporada": "Primavera-Verano 2025",
@@ -1217,10 +1398,10 @@ def seed_all():
             },
             {
                 "nombre": "Jeans Baggy Skate 90s",
-                "descripcion": "PantalÃ³n vaquero denim rÃ­gido 14oz con corte ancho skate de tiro medio y lavado celeste vintage para hombre.",
+                "descripcion": "Pantalón vaquero denim rígido 14oz con corte ancho skate de tiro medio y lavado celeste vintage para hombre.",
                 "precio_base": Decimal("235.00"),
                 "categoria_nombre": "Pantalones & Jeans",
-                "temporada": "ColecciÃ³n Streetwear FICTT 2025",
+                "temporada": "Colección Streetwear FICTT 2025",
                 "proveedor": "Streetwear Denim Lab",
                 "imagen_url": "/static/products/jeans_baggy_skate.jpg",
                 "variantes": [
@@ -1232,8 +1413,8 @@ def seed_all():
                 ]
             },
             {
-                "nombre": "PantalÃ³n Chino Slim Fit Stretch",
-                "descripcion": "PantalÃ³n chino formal-casual en gabardina de algodÃ³n beige khaki con elastano para mÃ¡xima comodidad.",
+                "nombre": "Pantalón Chino Slim Fit Stretch",
+                "descripcion": "Pantalón chino formal-casual en gabardina de algodón beige khaki con elastano para máxima comodidad.",
                 "precio_base": Decimal("195.00"),
                 "categoria_nombre": "Pantalones & Jeans",
                 "temporada": "Primavera-Verano 2025",
@@ -1250,10 +1431,10 @@ def seed_all():
             # 5. Chaquetas & Abrigos
             {
                 "nombre": "Chaqueta Bomber MA-1 Streetwear",
-                "descripcion": "Chaqueta aviadora bomber de satÃ©n de nylon negro con forro interior naranja clÃ¡sico y bolsillo militar en manga.",
+                "descripcion": "Chaqueta aviadora bomber de satén de nylon negro con forro interior naranja clásico y bolsillo militar en manga.",
                 "precio_base": Decimal("350.00"),
                 "categoria_nombre": "Chaquetas & Abrigos",
-                "temporada": "OtoÃ±o-Invierno 2025",
+                "temporada": "Otoño-Invierno 2025",
                 "proveedor": "Moda Urbana Bolivia",
                 "imagen_url": "/static/products/chaqueta_bomber_ma1.jpg",
                 "variantes": [
@@ -1266,16 +1447,16 @@ def seed_all():
             },
             {
                 "nombre": "Cazadora Denim Trucker Vintage",
-                "descripcion": "Chaqueta vaquera trucker clÃ¡sica en denim azul grueso 100% algodÃ³n con botones metÃ¡licos grabados.",
+                "descripcion": "Chaqueta vaquera trucker clásica en denim azul grueso 100% algodón con botones metálicos grabados.",
                 "precio_base": Decimal("310.00"),
                 "categoria_nombre": "Chaquetas & Abrigos",
                 "temporada": "Primavera-Verano 2025",
                 "proveedor": "Streetwear Denim Lab",
                 "imagen_url": "/static/products/cazadora_denim_trucker.jpg",
                 "variantes": [
-                    {"talla": "S", "color": "Azul ClÃ¡sico", "sku": "JKT-DNM-BLU-S", "precio_extra": Decimal("0.00")},
-                    {"talla": "M", "color": "Azul ClÃ¡sico", "sku": "JKT-DNM-BLU-M", "precio_extra": Decimal("0.00")},
-                    {"talla": "L", "color": "Azul ClÃ¡sico", "sku": "JKT-DNM-BLU-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "S", "color": "Azul Clásico", "sku": "JKT-DNM-BLU-S", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Azul Clásico", "sku": "JKT-DNM-BLU-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "L", "color": "Azul Clásico", "sku": "JKT-DNM-BLU-L", "precio_extra": Decimal("0.00")},
                     {"talla": "M", "color": "Denim Negro", "sku": "JKT-DNM-BLK-M", "precio_extra": Decimal("0.00")},
                     {"talla": "L", "color": "Denim Negro", "sku": "JKT-DNM-BLK-L", "precio_extra": Decimal("0.00")},
                 ]
@@ -1299,7 +1480,7 @@ def seed_all():
             },
             {
                 "nombre": "Short Deportivo FICTT Athletics",
-                "descripcion": "Short deportivo de secado rÃ¡pido en negro con cintura elÃ¡stica con cordÃ³n y detalles reflectivos.",
+                "descripcion": "Short deportivo de secado rápido en negro con cintura elástica con cordón y detalles reflectivos.",
                 "precio_base": Decimal("115.00"),
                 "categoria_nombre": "Shorts & Bermudas",
                 "temporada": "Primavera-Verano 2025",
@@ -1316,12 +1497,12 @@ def seed_all():
             }
         ]
 
-        # Desactivar cualquier producto previo que no pertenezca a la nueva lÃ­nea masculina
+        # Desactivar únicamente productos obsoletos de UrbanStyle que no pertenezcan a la línea masculina
         active_menswear_names = {p["nombre"] for p in products_data}
-        for existing_prod in db.query(Product).all():
+        for existing_prod in db.query(Product).filter(Product.tenant_id == tenant_urban.id).all():
             if existing_prod.nombre not in active_menswear_names:
                 existing_prod.activo = False
-                print(f"  [-] Desactivado producto obsoleto/no masculino: {existing_prod.nombre}")
+                print(f"  [-] Desactivado producto obsoleto/no masculino de UrbanStyle: {existing_prod.nombre}")
         db.commit()
 
         all_variants = []
@@ -1384,16 +1565,17 @@ def seed_all():
                     db.commit()
                 all_variants.append(variant)
 
-        # 5.5. Sembrar CatÃ¡logo Exclusivo de Moda Express Tarija (Empresa 2)
+        # 5.5. Sembrar Catálogo Exclusivo de Moda Express Tarija (Empresa 2)
         print("\n[5.5/6] Sembrando Productos y Variantes de Moda Express Tarija (Empresa 2)...")
         moda_products = [
             {
                 "nombre": "Camisa Ejecutiva Slim Fit",
-                "descripcion": "Camisa formal 100% algodÃ³n egipcio antiarrugas para oficina y eventos ejecutivos.",
+                "descripcion": "Camisa formal 100% algodón egipcio antiarrugas para oficina y eventos ejecutivos.",
                 "precio_base": Decimal("180.00"),
                 "categoria_id": cat_moda.id,
-                "temporada": "LÃ­nea Ejecutiva 2025",
+                "temporada": "Línea Ejecutiva 2025",
                 "proveedor": "Confecciones del Oriente",
+                "imagen_url": "https://images.unsplash.com/photo-1620012253295-c15c429f66bf?w=600",
                 "variantes": [
                     {"talla": "S", "color": "Blanco Puro", "sku": "CAM-SLM-WHT-S", "precio_extra": Decimal("0.00")},
                     {"talla": "M", "color": "Blanco Puro", "sku": "CAM-SLM-WHT-M", "precio_extra": Decimal("0.00")},
@@ -1403,11 +1585,12 @@ def seed_all():
             },
             {
                 "nombre": "Traje Formal Dos Piezas",
-                "descripcion": "Terno clÃ¡sico formal en corte contemporÃ¡neo de lana frÃ­a con saco estructurado y pantalÃ³n recto.",
+                "descripcion": "Terno clásico formal en corte contemporáneo de lana fría con saco estructurado y pantalón recto.",
                 "precio_base": Decimal("650.00"),
                 "categoria_id": cat_moda.id,
-                "temporada": "LÃ­nea Ejecutiva 2025",
+                "temporada": "Línea Ejecutiva 2025",
                 "proveedor": "Confecciones del Oriente",
+                "imagen_url": "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=600",
                 "variantes": [
                     {"talla": "38R", "color": "Azul Marino", "sku": "TRJ-FRM-NVY-38", "precio_extra": Decimal("0.00")},
                     {"talla": "40R", "color": "Azul Marino", "sku": "TRJ-FRM-NVY-40", "precio_extra": Decimal("0.00")},
@@ -1416,14 +1599,15 @@ def seed_all():
             },
             {
                 "nombre": "Vestido de Fiesta Elegante",
-                "descripcion": "Vestido largo de fiesta en satÃ©n con escote drapeado y caÃ­da fluida para ocasiones de gala.",
+                "descripcion": "Vestido largo de fiesta en satén con escote drapeado y caída fluida para ocasiones de gala.",
                 "precio_base": Decimal("420.00"),
                 "categoria_id": cat_moda.id,
-                "temporada": "ColecciÃ³n Gala 2025",
+                "temporada": "Colección Gala 2025",
                 "proveedor": "Textilera Andina S.A.",
+                "imagen_url": "https://images.unsplash.com/photo-1566174053879-31528523f8ae?w=600",
                 "variantes": [
-                    {"talla": "S", "color": "Rojo CarmÃ­n", "sku": "VES-FST-RED-S", "precio_extra": Decimal("0.00")},
-                    {"talla": "M", "color": "Rojo CarmÃ­n", "sku": "VES-FST-RED-M", "precio_extra": Decimal("0.00")},
+                    {"talla": "S", "color": "Rojo Carmín", "sku": "VES-FST-RED-S", "precio_extra": Decimal("0.00")},
+                    {"talla": "M", "color": "Rojo Carmín", "sku": "VES-FST-RED-M", "precio_extra": Decimal("0.00")},
                     {"talla": "L", "color": "Negro Noche", "sku": "VES-FST-BLK-L", "precio_extra": Decimal("0.00")},
                 ]
             }
@@ -1431,7 +1615,10 @@ def seed_all():
 
         moda_variants = []
         for p_data in moda_products:
-            prod_m = db.query(Product).filter(Product.nombre == p_data["nombre"]).first()
+            prod_m = db.query(Product).filter(
+                Product.nombre == p_data["nombre"],
+                Product.tenant_id == tenant_moda.id
+            ).first()
             if not prod_m:
                 prod_m = Product(
                     tenant_id=tenant_moda.id,
@@ -1441,6 +1628,7 @@ def seed_all():
                     categoria_id=p_data["categoria_id"],
                     temporada=p_data["temporada"],
                     proveedor=p_data["proveedor"],
+                    imagen_url=p_data.get("imagen_url"),
                     activo=True
                 )
                 db.add(prod_m)
@@ -1449,6 +1637,13 @@ def seed_all():
                 print(f"  [OK] Creado producto Moda Express: {prod_m.nombre}")
             else:
                 prod_m.tenant_id = tenant_moda.id
+                prod_m.activo = True
+                prod_m.imagen_url = p_data.get("imagen_url")
+                prod_m.descripcion = p_data["descripcion"]
+                prod_m.precio_base = p_data["precio_base"]
+                prod_m.categoria_id = p_data["categoria_id"]
+                prod_m.temporada = p_data["temporada"]
+                prod_m.proveedor = p_data["proveedor"]
                 db.commit()
 
             for v_data in p_data["variantes"]:
@@ -1513,7 +1708,7 @@ def seed_all():
                     db.commit()
                     db.refresh(inv)
 
-                    # Registrar movimiento de recepciÃ³n inicial
+                    # Registrar movimiento de recepción inicial
                     mov = InventoryMovement(
                         tenant_id=branch.tenant_id,
                         inventario_id=inv.id,
@@ -1573,7 +1768,7 @@ def seed_all():
                 fecha_hora_esperada=utc_now() + timedelta(days=2),
                 fecha_expiracion=utc_now() + timedelta(days=4),
                 total_estimado=Decimal("340.00"),
-                nota="Cliente pasarÃ¡ a recoger en la tarde",
+                nota="Cliente pasará a recoger en la tarde",
                 activo=True
             )
             db.add(res1)
@@ -1621,7 +1816,7 @@ def seed_all():
                 fecha_hora_esperada=utc_now() + timedelta(days=1),
                 fecha_expiracion=utc_now() + timedelta(days=3),
                 total_estimado=Decimal("280.00"),
-                nota="Reserva desde aplicaciÃ³n mÃ³vil",
+                nota="Reserva desde aplicación móvil",
                 activo=True
             )
             db.add(res2)
@@ -1642,7 +1837,7 @@ def seed_all():
             db.commit()
             print("  [OK] Creada Reserva de prueba: RES-2025-0002 (Estado: PENDIENTE)")
 
-        # Sembrar Ventas de prueba con mÃ©todos activos (EFECTIVO y PAYPAL)
+        # Sembrar Ventas de prueba con métodos activos (EFECTIVO y PAYPAL)
         sale1 = db.query(Sale).filter(Sale.numero_recibo == "VTA-2025-0001").first()
         if not sale1 and central_branch and cajero_user and cliente_user and len(all_variants) >= 2:
             v_sale = all_variants[0]
@@ -1714,7 +1909,7 @@ def seed_all():
                 monto_neto=Decimal("243.60"),
                 monto_recibido=Decimal("280.00"),
                 cambio=Decimal("0.00"),
-                nota="Compra digital en App MÃ³vil cobrada con PayPal",
+                nota="Compra digital en App Móvil cobrada con PayPal",
                 created_at=utc_now() - timedelta(hours=6)
             )
             db.add(sale2)
@@ -1768,7 +1963,7 @@ def seed_all():
                 monto_neto=Decimal("304.50"),
                 monto_recibido=Decimal("350.00"),
                 cambio=Decimal("0.00"),
-                nota="Compra digital en App MÃ³vil pagada con tarjeta",
+                nota="Compra digital en App Móvil pagada con tarjeta",
                 created_at=utc_now() - timedelta(days=1, hours=2)
             )
             db.add(sale3)
@@ -1804,7 +1999,7 @@ def seed_all():
                 monto_neto=Decimal("156.60"),
                 monto_recibido=Decimal("180.00"),
                 cambio=Decimal("0.00"),
-                nota="LiquidaciÃ³n de compra en tienda fÃ­sica con QR Simple",
+                nota="Liquidación de compra en tienda física con QR Simple",
                 created_at=utc_now() - timedelta(hours=3)
             )
             db.add(sale4)
@@ -1874,25 +2069,38 @@ def seed_all():
         seed_delivery_rates_and_favorites(
             db=db,
             tenant_urban=tenant_urban,
+            tenant_moda=tenant_moda,
             branches_map=branches_map
+        )
+
+        # 9. Sembrado de Cambios de Prendas (Garantías Retail)
+        seed_product_exchanges(
+            db=db,
+            tenant_urban=tenant_urban,
+            branches_map=branches_map,
+            users_map=users_map
         )
 
         print("\n==================================================")
         print(" [SUCCESS] BASE DE DATOS POBLADA EXITOSAMENTE! ")
         print("==================================================")
         print("Empresas y Credenciales de prueba generadas:")
-        print("[EMPRESA 1] UrbanStyle Bolivia S.R.L. (Plan Profesional / IA Habilitada)")
-        print(" * Admin:     admin@urbanstyle.com     / Password123!")
-        print(" * Cajero:    cajero@urbanstyle.com    / Password123!")
-        print(" * Base:      admin@ficttstore.com     / Password123!")
-        print("[EMPRESA 2] Moda Express Tarija (Plan Basico / Limite 2 Sucursales / Sin IA)")
-        print(" * Admin:     admin@modaexpress.com    / Password123!")
-        print(" * Cajero:    cajero@modaexpress.com   / Password123!")
+        print("[SUPERADMIN] Plataforma SaaS Multitenant:")
+        print(" * SuperAdmin: admin@sistema.com        / Password123!")
+        print("[EMPRESA 1] UrbanStyle Bolivia S.R.L. (Plan Profesional: 499 Bs/mes / IA Habilitada):")
+        print(" * Admin:      admin@urbanstyle.com     / Password123!")
+        print(" * Cajero:     cajero@urbanstyle.com    / Password123!")
+        print(" * Encargado:  encargado@ficttstore.com / Password123!")
+        print(" * Cliente:    cliente@ficttstore.com   / Password123!")
+        print("[EMPRESA 2] Moda Express Tarija (Plan Básico: 199 Bs/mes / Límite 2 Sucursales / Sin IA):")
+        print(" * Admin:      admin@modaexpress.com    / Password123!")
+        print(" * Cajero:     cajero@modaexpress.com   / Password123!")
+        print(" * Cliente:    cliente@modaexpress.com  / Password123!")
         print("==================================================")
 
     except Exception as e:
         db.rollback()
-        print(f"\n[ERROR] FallÃ³ el sembrado de base de datos: {e}")
+        print(f"\n[ERROR] Falló el sembrado de base de datos: {e}")
         raise e
     finally:
         db.close()

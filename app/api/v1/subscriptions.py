@@ -63,7 +63,7 @@ def get_current_subscription_info(
                 max_sucursales=10,
                 permite_reportes_ia=True,
                 permite_offline=True,
-                precio_mensual_bob=350.00
+                precio_mensual_bob=499.00
             )
             db.add(pro_plan)
             db.flush()

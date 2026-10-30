@@ -13,6 +13,10 @@ from app.models.product_variant import ProductVariant
 from app.models.branch import Branch
 from app.models.delivery_rate import DeliveryRate
 from app.models.user import User
+from app.models.sale import Sale
+from app.models.favorite import Favorite
+from app.models.user_wallet import UserWallet
+from app.models.reservation import Reservation, ReservationStatus
 from app.schemas.chatbot import ChatMessage, ChatbotResponse
 
 logger = logging.getLogger("chatbot_service")
@@ -102,15 +106,86 @@ class ChatbotService:
             for r in rates:
                 delivery_info.append(f"- {r.zona_nombre} ({r.ciudad}): {float(r.costo_envio):.2f} Bs ({r.tiempo_estimado_horas} hrs)")
 
-        user_role_context = "Cliente / Visitante"
-        if current_user and current_user.role:
-            user_role_context = f"Empleado con rol {current_user.role.name} ({current_user.full_name})"
+        # 3. Recopilar datos privados y perfil del usuario autenticado (si aplica)
+        user_sales_info = []
+        user_favs_info = []
+        user_wallet_balance = 0.0
+        user_reservations_info = []
+
+        if current_user:
+            user_role_context = f"{current_user.full_name} ({current_user.email}) - Rol: {current_user.role.name if current_user.role else 'Cliente'}"
+            try:
+                # Compras previas del cliente
+                sales = (
+                    db.query(Sale)
+                    .filter(Sale.cliente_id == current_user.id)
+                    .order_by(Sale.created_at.desc())
+                    .limit(5)
+                    .all()
+                )
+                for s in sales:
+                    items_desc = []
+                    for d in s.detalles:
+                        prod_name = d.producto.nombre if d.producto else (d.nombre_producto or "Prenda")
+                        items_desc.append(f"{d.cantidad}x {prod_name} ({float(d.precio_unitario):.2f} Bs.)")
+                    fecha_fmt = s.created_at.strftime("%d/%m/%Y") if s.created_at else ""
+                    user_sales_info.append(
+                        f"- Nota/Recibo #{s.numero_recibo} ({fecha_fmt}) por {float(s.monto_total):.2f} Bs: {', '.join(items_desc) if items_desc else 'Prendas de catálogo'}"
+                    )
+            except Exception as e:
+                logger.warning(f"Error cargando ventas para chatbot: {e}")
+
+            try:
+                # Prendas favoritas guardadas por el cliente
+                favs = (
+                    db.query(Favorite)
+                    .filter(Favorite.user_id == current_user.id)
+                    .limit(8)
+                    .all()
+                )
+                for f in favs:
+                    if f.producto:
+                        user_favs_info.append(f"- {f.producto.nombre} ({float(f.producto.precio_base):.2f} Bs.)")
+            except Exception as e:
+                logger.warning(f"Error cargando favoritos para chatbot: {e}")
+
+            try:
+                # Saldo en Billetera Virtual Prepago
+                wallet = db.query(UserWallet).filter(UserWallet.user_id == current_user.id).first()
+                if wallet:
+                    user_wallet_balance = float(wallet.saldo or 0.0)
+            except Exception as e:
+                logger.warning(f"Error cargando billetera para chatbot: {e}")
+
+            try:
+                # Reservas activas Click & Collect
+                reservas = (
+                    db.query(Reservation)
+                    .filter(
+                        Reservation.usuario_id == current_user.id,
+                        Reservation.estado == ReservationStatus.CONFIRMADA
+                    )
+                    .limit(3)
+                    .all()
+                )
+                for res in reservas:
+                    fecha_exp = res.fecha_limite.strftime("%d/%m/%Y %H:%M") if res.fecha_limite else "48 horas"
+                    user_reservations_info.append(
+                        f"- Reserva #{res.codigo_reserva} (Expira: {fecha_exp})"
+                    )
+            except Exception as e:
+                logger.warning(f"Error cargando reservas para chatbot: {e}")
+        else:
+            user_role_context = "Visitante / Cliente anónimo (No autenticado)"
 
         catalog_text = "\n".join(products_info) if products_info else "Catálogo disponible en tienda."
         branches_text = "\n".join(branches_info) if branches_info else "Sucursales disponibles en red."
         delivery_text = "\n".join(delivery_info) if delivery_info else "Envíos disponibles según zona (15 a 25 Bs)."
+        user_sales_text = "\n".join(user_sales_info) if user_sales_info else "No registra compras previas aún."
+        user_favs_text = "\n".join(user_favs_info) if user_favs_info else "No tiene prendas marcadas como favoritas."
+        user_reservations_text = "\n".join(user_reservations_info) if user_reservations_info else "No tiene reservas activas pendientes de recojo."
 
-        # 3. Construir System Prompt especializado
+        # 4. Construir System Prompt especializado con datos corporativos y privados del cliente
         system_instruction = f"""
 Eres "FICCT Bot", el Asistente Virtual Inteligente oficial de retail para la empresa "{tenant_name}".
 Tu propósito es asesorar a clientes en moda, responder dudas del catálogo, precios, tallas, sucursales, envíos y políticas de tienda.
@@ -132,14 +207,26 @@ DATOS DEL NEGOCIO ({tenant_name}):
 - Métodos de Pago Oficiales Aceptados: Efectivo en caja de tienda física (con cálculo de vuelto) y PayPal Checkout en dólares para compras digitales en la app móvil y web (tipo de cambio oficial 6.96 Bs/USD). No operamos con QR ni transferencias.
 - Sistema Click & Collect (Reservas): El cliente puede apartar prendas desde la web o celular y tiene 48 horas para recogerlas en la sucursal elegida.
 
-Usuario que te contacta: {user_role_context}.
+DATOS PRIVADOS DEL CLIENTE ACTUAL:
+- Identidad: {user_role_context}
+- Saldo Actual en Billetera Prepago: {user_wallet_balance:.2f} Bs.
+- Historial de Compras Recientes:
+{user_sales_text}
+- Prendas Favoritas en su Guardarropa Virtual:
+{user_favs_text}
+- Reservas Activas:
+{user_reservations_text}
 
-DIRECTIVAS CONVERSACIONALES:
+DIRECTIVAS CONVERSACIONALES Y DE ASESORÍA PERSONALIZADA:
 1. Responde de forma amable, empática, fluida y con tono boliviano profesional y cercano.
-2. Da respuestas concisas (máximo 2 a 3 párrafos cortos). Usa viñetas para enumerar opciones si es útil.
-3. Menciona siempre precios en Bolivianos (Bs.) y cita prendas reales de la lista proporcionada.
-4. Si preguntan por horarios o atención, indica que las sucursales abren de Lunes a Sábado de 09:00 a 20:00.
-5. Si el usuario es un empleado, ayúdalo con procesos del sistema (cambios de prenda en /sales, reservas en /reservations, etc.).
+2. Si el cliente pregunta por sus compras previas, historial o notas de venta, léele exactamente sus recibos y prendas compradas con sus montos.
+3. Si el cliente pregunta por su billetera o saldo prepago, indícale su saldo exacto ({user_wallet_balance:.2f} Bs.).
+4. Si el cliente solicita recomendaciones de moda o combinaciones, analiza detenidamente sus compras pasadas y favoritos para proponerle outfits y prendas del catálogo que hagan juego armonioso con su estilo.
+5. Si el usuario no ha iniciado sesión y pregunta por datos personales, indícale que inicie sesión para ver su historial y saldo.
+6. Da respuestas concisas (máximo 2 a 3 párrafos cortos). Usa viñetas para enumerar opciones si es útil.
+7. Menciona siempre precios en Bolivianos (Bs.) y cita prendas reales de la lista proporcionada.
+8. Si preguntan por horarios o atención, indica que las sucursales abren de Lunes a Sábado de 09:00 a 20:00.
+9. Si el usuario es un empleado, ayúdalo con procesos del sistema (cambios de prenda en /sales, reservas en /reservations, etc.).
 """
 
         # 4. Intentar inferencia con Google Gemini
@@ -197,7 +284,17 @@ DIRECTIVAS CONVERSACIONALES:
 
         # 5. Fallback Local Determinista (Si Gemini no respondió o no hay API key)
         if not reply:
-            reply = cls._generate_local_fallback(message, tenant_name, is_moda_express, products_info, branches_info)
+            reply = cls._generate_local_fallback(
+                message=message,
+                tenant_name=tenant_name,
+                is_moda=is_moda_express,
+                products=products_info,
+                branches=branches_info,
+                current_user=current_user,
+                user_sales=user_sales_info,
+                user_favs=user_favs_info,
+                wallet_balance=user_wallet_balance
+            )
 
         # 6. Generar Chips de Sugerencias Rápidas según la marca
         suggested_prompts = (
@@ -230,10 +327,53 @@ DIRECTIVAS CONVERSACIONALES:
         tenant_name: str,
         is_moda: bool,
         products: List[str],
-        branches: List[str]
+        branches: List[str],
+        current_user: Optional[User] = None,
+        user_sales: Optional[List[str]] = None,
+        user_favs: Optional[List[str]] = None,
+        wallet_balance: float = 0.0
     ) -> str:
         """Motor local de respaldo ante fallos de conexión externa."""
         msg = message.lower()
+
+        if any(w in msg for w in ["mis compras", "que compre", "mis pedidos", "historial", "recibo"]):
+            if not current_user:
+                return (
+                    "Para consultar tus compras previas o notas de venta, por favor inicia sesión con tu cuenta. "
+                    "Así podré mostrarte el detalle exacto de tus recibos."
+                )
+            if user_sales:
+                sales_str = "\n".join(user_sales[:3])
+                return (
+                    f"¡Hola, {current_user.full_name}! Estas son tus compras recientes registradas en **{tenant_name}**:\n\n"
+                    f"{sales_str}\n\n"
+                    "Si necesitas realizar un cambio de talla o consultar la garantía, recuerda que tienes 30 días con tu nota de venta."
+                )
+            return (
+                f"¡Hola, {current_user.full_name}! Actualmente no tienes compras registradas en tu historial. "
+                "¡Visita nuestro catálogo para armar tu primer pedido!"
+            )
+
+        if any(w in msg for w in ["saldo", "billetera", "wallet", "cuanta plata tengo", "cuanto tengo"]):
+            if not current_user:
+                return "Para ver tu saldo disponible en la Billetera Prepago, por favor inicia sesión en tu cuenta."
+            return (
+                f"💳 **Billetera Virtual Prepago ({tenant_name})**\n\n"
+                f"Tu saldo actual disponible es de: **{wallet_balance:.2f} Bs.**\n\n"
+                "Puedes usar este saldo para pagar directamente en tienda física o en la App Móvil (incluso en Modo Offline sin conexión a internet)."
+            )
+
+        if any(w in msg for w in ["recomienda", "recomendacion", "que me queda", "combinar", "outfit", "estilo"]):
+            fav_hint = ""
+            if user_favs:
+                fav_hint = f"Tomando en cuenta tus prendas favoritas ({', '.join([f.split('(')[0].replace('-', '').strip() for f in user_favs[:2]])}), "
+            sample = "\n".join(products[:3]) if products else "nuestras poleras y chaquetas en tendencia."
+            return (
+                f"👕 **Recomendación de Moda ({tenant_name})**:\n\n"
+                f"{fav_hint}te sugerimos combinar cortes contemporáneos en tonos neutros (negro, beige, azul índigo) con calzado urbano. "
+                f"Prendas destacadas recomendadas para ti hoy:\n\n{sample}\n\n"
+                "¿Te gustaría que te asesore sobre alguna talla en específico?"
+            )
 
         if any(w in msg for w in ["hola", "buenas", "buenos dias", "buenas tardes", "saludos"]):
             return (

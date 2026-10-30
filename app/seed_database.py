@@ -939,6 +939,24 @@ def seed_all():
                 "tenant_id": tenant_urban.id
             },
             {
+                "email": "superadmin@ficcstore.com",
+                "full_name": "Super Administrador SaaS",
+                "role_id": admin_role.id,
+                "password": get_password_hash("SuperAdmin2026!"),
+                "is_active": True,
+                "is_verified": True,
+                "tenant_id": None
+            },
+            {
+                "email": "cliente@ficcstore.com",
+                "full_name": "Cliente FICCT Store",
+                "role_id": cliente_role.id,
+                "password": get_password_hash("Password123!"),
+                "is_active": True,
+                "is_verified": True,
+                "tenant_id": tenant_urban.id
+            },
+            {
                 "email": "admin@sistema.com",
                 "full_name": "Super Administrador",
                 "role_id": admin_role.id,

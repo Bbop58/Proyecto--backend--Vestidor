@@ -223,12 +223,16 @@ def update_current_tenant_branding(
 
 
 def is_platform_superadmin(user: User) -> bool:
-    """Verifica si el usuario es el Super Administrador global de la plataforma SaaS (admin@sistema.com).
+    """Verifica si el usuario es el Super Administrador global de la plataforma SaaS (admin@sistema.com o superadmin@ficcstore.com).
     Los administradores de inquilinos (ej. admin@modaexpress.com) solo administran su propia empresa."""
     if not user or not user.email:
         return False
     email = user.email.lower().strip()
-    return email == "admin@sistema.com" or email.endswith("@sistema.com")
+    return (
+        email in ["admin@sistema.com", "superadmin@ficcstore.com"]
+        or email.endswith("@sistema.com")
+        or (user.tenant_id is None and user.role and "admin" in user.role.name.lower())
+    )
 
 
 @router.get(

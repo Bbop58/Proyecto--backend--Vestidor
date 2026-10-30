@@ -14,6 +14,9 @@ class WalletResponse(BaseModel):
     saldo_retenido: float
     nonce_secuencia: int
     firma_balance: Optional[str] = None
+    moneda: str = "BOB"
+    user_email: Optional[str] = None
+    user_name: Optional[str] = None
     ultimo_sync_at: datetime
     updated_at: datetime
 
@@ -37,15 +40,35 @@ class WalletTransactionResponse(BaseModel):
 
 
 class PayPalTopupRequest(BaseModel):
-    order_id: str = Field(..., min_length=3, description="Order ID de captura de PayPal")
-    monto_usd: float = Field(..., gt=0, description="Monto recargado en dólares")
+    order_id: Optional[str] = Field(None, description="Order ID de captura de PayPal")
+    monto_bob: Optional[float] = Field(None, gt=0, description="Monto en Bolivianos a recargar")
+    monto_usd: Optional[float] = Field(None, gt=0, description="Monto recargado en dólares")
     monto_bs: Optional[float] = Field(None, gt=0, description="Equivalente en Bolivianos")
 
 
 class AdminCashTopupRequest(BaseModel):
-    cliente_id: uuid.UUID = Field(..., description="ID del cliente al que se abona el efectivo")
-    monto_bs: float = Field(..., gt=0, description="Monto en Bolivianos recibido en caja")
+    user_email: Optional[str] = Field(None, description="Correo electrónico del cliente")
+    cliente_id: Optional[uuid.UUID] = Field(None, description="ID del cliente al que se abona el efectivo")
+    monto: Optional[float] = Field(None, gt=0, description="Monto en Bolivianos recibido en caja")
+    monto_bs: Optional[float] = Field(None, gt=0, description="Monto en Bolivianos recibido en caja")
     notas: Optional[str] = Field(None, max_length=250, description="Observaciones del cajero")
+
+
+class CashTopupReceipt(BaseModel):
+    numero_comprobante: str
+    fecha: str
+    cajero: str
+    monto: float
+    moneda: str
+    metodo: str
+
+
+class AdminTopupCashResponse(BaseModel):
+    success: bool
+    message: str
+    user_email: str
+    nuevo_saldo: float
+    recibo_caja: CashTopupReceipt
 
 
 class OfflineOrderItem(BaseModel):

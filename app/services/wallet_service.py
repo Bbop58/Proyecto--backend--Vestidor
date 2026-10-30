@@ -34,6 +34,12 @@ class WalletService:
         return hmac.new(WALLET_SECRET_KEY.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
     @staticmethod
+    def verify_wallet_integrity(wallet: UserWallet) -> bool:
+        """Verifica si la firma HMAC-SHA256 coincide con el balance y nonce almacenados."""
+        expected = WalletService._compute_signature(wallet.user_id, wallet.saldo_actual, wallet.nonce_secuencia)
+        return hmac.compare_digest(wallet.firma_balance or "", expected)
+
+    @staticmethod
     def get_or_create_wallet(db: Session, user_id: uuid.UUID, tenant_id: uuid.UUID) -> UserWallet:
         wallet = db.query(UserWallet).filter(
             UserWallet.user_id == user_id,

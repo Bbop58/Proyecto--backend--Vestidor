@@ -21,6 +21,7 @@ class UserWallet(Base):
     saldo_retenido = Column(Numeric(10, 2), nullable=False, default=0.00)
     nonce_secuencia = Column(Integer, nullable=False, default=0)
     firma_balance = Column(String(255), nullable=True)
+    moneda = Column(String(10), default="BOB", nullable=False)
 
     ultimo_sync_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -30,6 +31,14 @@ class UserWallet(Base):
     user = relationship("User", backref="wallet", lazy="joined")
     tenant = relationship("Tenant", lazy="joined")
     transacciones = relationship("WalletTransaction", back_populates="wallet", cascade="all, delete-orphan", lazy="selectin")
+
+    @property
+    def user_email(self) -> str:
+        return self.user.email if self.user else ""
+
+    @property
+    def user_name(self) -> str:
+        return self.user.full_name if self.user else ""
 
     __table_args__ = (
         UniqueConstraint("user_id", "tenant_id", name="uq_user_tenant_wallet"),

@@ -34,3 +34,4 @@ class UserWallet(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "tenant_id", name="uq_user_tenant_wallet"),
     )
+

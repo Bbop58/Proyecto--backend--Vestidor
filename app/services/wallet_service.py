@@ -399,3 +399,4 @@ class WalletService:
             "nueva_firma": wallet.firma_balance or "",
             "detalles": detalles_resultado
         }
+

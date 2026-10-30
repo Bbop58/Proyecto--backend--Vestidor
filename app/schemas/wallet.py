@@ -76,3 +76,4 @@ class BatchOfflineSyncResponse(BaseModel):
     nuevo_nonce: int
     nueva_firma: str
     detalles: List[Dict[str, Any]]
+

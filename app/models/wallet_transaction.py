@@ -38,3 +38,4 @@ class WalletTransaction(Base):
     # Relaciones
     wallet = relationship("UserWallet", back_populates="transacciones")
     tenant = relationship("Tenant")
+

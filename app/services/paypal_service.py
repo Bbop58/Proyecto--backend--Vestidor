@@ -9,17 +9,32 @@ from app.config import settings
 
 class PayPalService:
     @staticmethod
-    def _get_auth_header() -> str:
-        credentials = f"{settings.PAYPAL_CLIENT_ID}:{settings.PAYPAL_CLIENT_SECRET}"
+    def _get_base_url(mode: Optional[str] = None) -> str:
+        current_mode = (mode or settings.PAYPAL_MODE or "sandbox").lower()
+        if current_mode == "live":
+            return "https://api-m.paypal.com"
+        return "https://api-m.sandbox.paypal.com"
+
+    @staticmethod
+    def _get_auth_header(client_id: Optional[str] = None, client_secret: Optional[str] = None) -> str:
+        cid = client_id or settings.PAYPAL_CLIENT_ID
+        csec = client_secret or settings.PAYPAL_CLIENT_SECRET
+        credentials = f"{cid}:{csec}"
         encoded = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
         return f"Basic {encoded}"
 
     @classmethod
-    def get_access_token(cls) -> str:
-        """Obtiene un Access Token OAuth2 desde la API de PayPal."""
-        url = f"{settings.PAYPAL_API_BASE_URL}/v1/oauth2/token"
+    def get_access_token(
+        cls,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        mode: Optional[str] = None
+    ) -> str:
+        """Obtiene un Access Token OAuth2 desde la API de PayPal (propio del tenant o global de plataforma)."""
+        base_url = cls._get_base_url(mode)
+        url = f"{base_url}/v1/oauth2/token"
         headers = {
-            "Authorization": cls._get_auth_header(),
+            "Authorization": cls._get_auth_header(client_id, client_secret),
             "Content-Type": "application/x-www-form-urlencoded"
         }
         data = "grant_type=client_credentials".encode("utf-8")
@@ -59,11 +74,16 @@ class PayPalService:
         reserva_id: Optional[str] = None,
         descripcion: str = "Compra en FICCT STORE",
         return_url: Optional[str] = None,
-        cancel_url: Optional[str] = None
+        cancel_url: Optional[str] = None,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        mode: Optional[str] = None,
+        brand_name: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Crea una orden de pago en PayPal REST API v2."""
-        token = cls.get_access_token()
-        url = f"{settings.PAYPAL_API_BASE_URL}/v2/checkout/orders"
+        """Crea una orden de pago en PayPal REST API v2 en la cuenta correspondiente."""
+        token = cls.get_access_token(client_id=client_id, client_secret=client_secret, mode=mode)
+        base_url = cls._get_base_url(mode)
+        url = f"{base_url}/v2/checkout/orders"
         monto_usd = cls.convert_bob_to_usd(monto_bob)
 
         # Construir ítems si fueron proporcionados
@@ -100,7 +120,7 @@ class PayPalService:
             "intent": "CAPTURE",
             "purchase_units": [purchase_unit],
             "application_context": {
-                "brand_name": "FICCT STORE",
+                "brand_name": brand_name or "FICCT STORE",
                 "landing_page": "NO_PREFERENCE",
                 "user_action": "PAY_NOW",
                 "return_url": final_return_url,
@@ -148,10 +168,17 @@ class PayPalService:
             )
 
     @classmethod
-    def capture_order(cls, order_id: str) -> Dict[str, Any]:
+    def capture_order(
+        cls,
+        order_id: str,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        mode: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Captura los fondos de una orden aprobada en PayPal REST API v2."""
-        token = cls.get_access_token()
-        url = f"{settings.PAYPAL_API_BASE_URL}/v2/checkout/orders/{order_id}/capture"
+        token = cls.get_access_token(client_id=client_id, client_secret=client_secret, mode=mode)
+        base_url = cls._get_base_url(mode)
+        url = f"{base_url}/v2/checkout/orders/{order_id}/capture"
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -200,10 +227,17 @@ class PayPalService:
             )
 
     @classmethod
-    def get_order_details(cls, order_id: str) -> Dict[str, Any]:
+    def get_order_details(
+        cls,
+        order_id: str,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        mode: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Consulta el estado y detalle de una orden en PayPal."""
-        token = cls.get_access_token()
-        url = f"{settings.PAYPAL_API_BASE_URL}/v2/checkout/orders/{order_id}"
+        token = cls.get_access_token(client_id=client_id, client_secret=client_secret, mode=mode)
+        base_url = cls._get_base_url(mode)
+        url = f"{base_url}/v2/checkout/orders/{order_id}"
 
         headers = {
             "Authorization": f"Bearer {token}",

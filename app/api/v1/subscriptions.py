@@ -210,6 +210,12 @@ def update_current_tenant_branding(
         tenant.telefono = request.telefono.strip() or None
     if request.email_contacto is not None:
         tenant.email_contacto = request.email_contacto.strip() or None
+    if request.paypal_client_id is not None:
+        tenant.paypal_client_id = request.paypal_client_id.strip() or None
+    if request.paypal_client_secret is not None:
+        tenant.paypal_client_secret = request.paypal_client_secret.strip() or None
+    if request.paypal_mode is not None:
+        tenant.paypal_mode = request.paypal_mode.strip() or "sandbox"
 
     db.commit()
     db.refresh(tenant)

@@ -32,6 +32,11 @@ class TenantInfo(BaseModel):
     eslogan: Optional[str] = None
     telefono: Optional[str] = None
     email_contacto: Optional[str] = None
+    paypal_client_id: Optional[str] = None
+    paypal_client_secret: Optional[str] = None
+    paypal_mode: Optional[str] = "sandbox"
+    paypal_client_id: Optional[str] = None
+    paypal_mode: Optional[str] = "sandbox"
     activo: bool
     plan_codigo: Optional[str] = None
     plan_nombre: Optional[str] = None
@@ -66,6 +71,9 @@ class TenantBrandingUpdateRequest(BaseModel):
     eslogan: Optional[str] = None
     telefono: Optional[str] = None
     email_contacto: Optional[str] = None
+    paypal_client_id: Optional[str] = None
+    paypal_client_secret: Optional[str] = None
+    paypal_mode: Optional[str] = "sandbox"
 
 
 class TenantOverviewItem(BaseModel):
@@ -115,6 +123,9 @@ class TenantCreateRequest(BaseModel):
     eslogan: Optional[str] = None
     telefono: Optional[str] = None
     email_contacto: Optional[str] = None
+    paypal_client_id: Optional[str] = None
+    paypal_client_secret: Optional[str] = None
+    paypal_mode: Optional[str] = "sandbox"
     admin_email: Optional[str] = None
     admin_full_name: Optional[str] = None
     admin_password: Optional[str] = "Password123!"

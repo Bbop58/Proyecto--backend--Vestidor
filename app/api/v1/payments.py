@@ -1,5 +1,5 @@
 import uuid
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -7,6 +7,8 @@ from app.database import get_db
 from app.config import settings
 from app.api.deps import get_current_user
 from app.models.user import User
+from app.models.tenant import Tenant
+from app.models.branch import Branch
 from app.models.sale import PaymentMethod
 from app.schemas.sale import PresencialSaleCreate, PaymentInfo, SaleItemCreate, SaleResponse
 from app.schemas.paypal import (
@@ -22,17 +24,48 @@ from app.services.audit_service import AuditService
 router = APIRouter(prefix="/payments", tags=["Pagos y Pasarelas"])
 
 
-@router.get(
-    "/paypal/config",
-    summary="Obtener configuración pública de PayPal Sandbox"
-)
-def get_paypal_config():
-    """Retorna la configuración necesaria para el SDK de PayPal en el cliente."""
+def _resolve_tenant_paypal(db: Session, sucursal_id: Optional[uuid.UUID] = None, user: Optional[User] = None, tenant_id: Optional[uuid.UUID] = None) -> Dict[str, Any]:
+    tenant = None
+    if tenant_id:
+        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant and sucursal_id:
+        branch = db.query(Branch).filter(Branch.id == sucursal_id).first()
+        if branch and branch.tenant_id:
+            tenant = db.query(Tenant).filter(Tenant.id == branch.tenant_id).first()
+    if not tenant and user and user.tenant_id:
+        tenant = db.query(Tenant).filter(Tenant.id == user.tenant_id).first()
+
+    if tenant and tenant.paypal_client_id and tenant.paypal_client_secret:
+        return {
+            "client_id": tenant.paypal_client_id,
+            "client_secret": tenant.paypal_client_secret,
+            "mode": tenant.paypal_mode or "sandbox",
+            "brand_name": tenant.nombre
+        }
     return {
         "client_id": settings.PAYPAL_CLIENT_ID,
+        "client_secret": settings.PAYPAL_CLIENT_SECRET,
         "mode": settings.PAYPAL_MODE,
+        "brand_name": tenant.nombre if tenant else "FICCT STORE"
+    }
+
+
+@router.get(
+    "/paypal/config",
+    summary="Obtener configuración pública de PayPal Sandbox (por Tenant o global)"
+)
+def get_paypal_config(
+    tenant_id: Optional[uuid.UUID] = None,
+    db: Session = Depends(get_db)
+):
+    """Retorna la configuración necesaria para el SDK de PayPal en el cliente."""
+    creds = _resolve_tenant_paypal(db=db, tenant_id=tenant_id)
+    return {
+        "client_id": creds["client_id"],
+        "mode": creds["mode"],
         "exchange_rate": settings.PAYPAL_EXCHANGE_RATE,
-        "currency": "USD"
+        "currency": "USD",
+        "brand_name": creds["brand_name"]
     }
 
 
@@ -256,17 +289,23 @@ def paypal_cancel_page():
 )
 def create_paypal_order(
     data: PayPalCreateOrderRequest,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Genera una orden de cobro en la API de PayPal v2 y devuelve el order_id."""
+    """Genera una orden de cobro en la API de PayPal v2 y devuelve el order_id en la cuenta del tenant."""
+    creds = _resolve_tenant_paypal(db=db, sucursal_id=data.sucursal_id, user=current_user)
     order_data = PayPalService.create_order(
         monto_bob=data.monto_bob,
         items=data.items,
         sucursal_id=str(data.sucursal_id) if data.sucursal_id else None,
         reserva_id=str(data.reserva_id) if data.reserva_id else None,
-        descripcion=data.descripcion or "Compra en FICCT STORE",
+        descripcion=data.descripcion or f"Compra en {creds['brand_name']}",
         return_url=data.return_url,
-        cancel_url=data.cancel_url
+        cancel_url=data.cancel_url,
+        client_id=creds["client_id"],
+        client_secret=creds["client_secret"],
+        mode=creds["mode"],
+        brand_name=creds["brand_name"]
     )
     return PayPalCreateOrderResponse(**order_data)
 
@@ -286,8 +325,14 @@ def capture_paypal_order(
     Si la captura es exitosa, registra la venta en la BD, descuenta el stock
     y emite el recibo de venta oficial.
     """
-    # 1. Capturar orden en PayPal REST API
-    capture_res = PayPalService.capture_order(data.order_id)
+    # 1. Capturar orden en PayPal REST API usando credenciales del Tenant o Global
+    creds = _resolve_tenant_paypal(db=db, sucursal_id=data.sucursal_id, user=current_user)
+    capture_res = PayPalService.capture_order(
+        data.order_id,
+        client_id=creds["client_id"],
+        client_secret=creds["client_secret"],
+        mode=creds["mode"]
+    )
     
     if capture_res.get("status") != "COMPLETED":
         raise HTTPException(

@@ -170,7 +170,7 @@ DIRECTIVAS CONVERSACIONALES:
                     )
                 )
 
-                candidate_models = ["gemini-1.5-flash", "gemini-flash-latest", "gemini-2.5-flash"]
+                candidate_models = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
                 last_err = None
 
                 for model_name in candidate_models:

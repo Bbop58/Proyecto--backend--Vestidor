@@ -189,3 +189,15 @@ def cancel_sale(
         user=current_user
     )
     return res
+
+
+@router.get(
+    "/{venta_id}/nota-venta",
+    summary="Obtener la Nota de Venta Oficial formateada para impresión térmica y reporte A4"
+)
+def get_sale_receipt_note(
+    venta_id: uuid.UUID,
+    db: Session = Depends(get_db)
+):
+    from app.services.receipt_service import ReceiptService
+    return ReceiptService.get_sale_receipt(db, venta_id)

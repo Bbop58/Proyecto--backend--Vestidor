@@ -99,3 +99,15 @@ def get_exchange_by_id(
     db: Session = Depends(get_db)
 ):
     return ExchangeService.get_exchange_by_id(db, cambio_id=id)
+
+
+@router.get(
+    "/{id}/nota-devolucion",
+    summary="Obtener la Nota Oficial de Cambio y Devolución con formato retail para impresión"
+)
+def get_exchange_receipt_note(
+    id: uuid.UUID,
+    db: Session = Depends(get_db)
+):
+    from app.services.receipt_service import ReceiptService
+    return ReceiptService.get_exchange_receipt(db, id)

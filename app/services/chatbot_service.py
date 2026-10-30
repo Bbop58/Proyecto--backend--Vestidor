@@ -125,10 +125,11 @@ DATOS DEL NEGOCIO ({tenant_name}):
 - Tarifas de Delivery:
 {delivery_text}
 - Políticas de Garantía y Devolución:
-  * Plazo de cambio de prendas: Hasta 15 días posteriores a la compra con recibo o número de venta.
+  * Plazo de cambio de prendas: Hasta 30 días posteriores a la compra con recibo o nota de venta.
   * Cambios de talla sin costo adicional (si es el mismo precio).
-  * Si la nueva talla tiene sobreprecio, solo se abona la diferencia en mostrador.
-- Métodos de Pago Aceptados: Efectivo en caja (con cálculo de vuelto), QR Simple interoperable, Tarjetas Visa/Mastercard y PayPal Sandbox en dólares (tipo de cambio oficial 6.96 Bs/USD).
+  * Si la nueva prenda tiene mayor precio, se abona la diferencia en efectivo o PayPal.
+  * Si la prenda es de menor valor, la diferencia se abona como saldo a favor en la Billetera Virtual del cliente.
+- Métodos de Pago Oficiales Aceptados: Efectivo en caja de tienda física (con cálculo de vuelto) y PayPal Checkout en dólares para compras digitales en la app móvil y web (tipo de cambio oficial 6.96 Bs/USD). No operamos con QR ni transferencias.
 - Sistema Click & Collect (Reservas): El cliente puede apartar prendas desde la web o celular y tiene 48 horas para recogerlas en la sucursal elegida.
 
 Usuario que te contacta: {user_role_context}.
@@ -257,13 +258,12 @@ DIRECTIVAS CONVERSACIONALES:
                 "solo abonas la diferencia en caja."
             )
 
-        if any(w in msg for w in ["pago", "pagar", "qr", "paypal", "tarjeta", "efectivo"]):
+        if any(w in msg for w in ["pago", "pagar", "paypal", "efectivo", "metodo"]):
             return (
-                "Aceptamos 4 métodos de pago tanto en tiendas como digitalmente:\n"
-                "1. **Efectivo** en mostrador con cálculo automático de vuelto.\n"
-                "2. **QR Simple** interoperable con cualquier banco nacional.\n"
-                "3. **Tarjetas de débito y crédito** Visa / Mastercard.\n"
-                "4. **PayPal Sandbox** en dólares estadounidenses (tipo de cambio oficial 6.96 Bs/USD)."
+                "Nuestros métodos de pago oficiales autorizados son:\n"
+                "1. **Efectivo** en caja de cualquiera de nuestras sucursales físicas (con cálculo automático de vuelto).\n"
+                "2. **PayPal Checkout** para compras digitales desde la App Móvil o Tienda Web (en dólares al tipo de cambio 6.96 Bs/USD).\n"
+                "*(Nota: Por políticas de seguridad de la tienda, no operamos con cobros QR ni tarjetas en mostrador)*."
             )
 
         if any(w in msg for w in ["reserva", "click and collect", "apartar", "recojo"]):

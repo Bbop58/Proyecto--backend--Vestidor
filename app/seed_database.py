@@ -238,20 +238,14 @@ def seed_historical_sales_and_reservations(
                 cajero = b_cfg["cajero"] if is_presencial else None
 
                 if is_presencial:
-                    metodo_pago = random.choice([PaymentMethod.EFECTIVO, PaymentMethod.EFECTIVO, PaymentMethod.QR, PaymentMethod.TARJETA])
+                    metodo_pago = PaymentMethod.EFECTIVO
+                    ref_pago = None
                 else:
-                    metodo_pago = random.choice([PaymentMethod.PAYPAL, PaymentMethod.TARJETA, PaymentMethod.QR])
+                    metodo_pago = PaymentMethod.PAYPAL
+                    ref_pago = f"PAYPAL_CAPTURE_{month:02d}{month_seq:04d}E"
 
                 cliente = random.choice(urban_customers) if random.random() < 0.65 else None
                 receipt_no = f"VTA-2026{month:02d}-{month_seq:04d}-{b_cfg['code']}"
-
-                ref_pago = None
-                if metodo_pago == PaymentMethod.QR:
-                    ref_pago = f"QR_BNB_PAGO_{month:02d}_{month_seq:04d}"
-                elif metodo_pago == PaymentMethod.TARJETA:
-                    ref_pago = f"STRIPE_AUTH_POS_{month:02d}_{month_seq:04d}"
-                elif metodo_pago == PaymentMethod.PAYPAL:
-                    ref_pago = f"PAYPAL_SANDBOX_{month:02d}{month_seq:04d}E"
 
                 num_items = random.choices([1, 2, 3], weights=[0.55, 0.35, 0.10])[0]
                 selected_variants = []
@@ -356,13 +350,14 @@ def seed_historical_sales_and_reservations(
                 sale_type = SaleType.PRESENCIAL if is_presencial else SaleType.DIGITAL
                 cajero = b_cfg["cajero"] if is_presencial else None
 
-                metodo_pago = random.choice([PaymentMethod.EFECTIVO, PaymentMethod.EFECTIVO, PaymentMethod.QR, PaymentMethod.TARJETA]) if is_presencial else random.choice([PaymentMethod.QR, PaymentMethod.TARJETA])
+                if is_presencial:
+                    metodo_pago = PaymentMethod.EFECTIVO
+                    ref_pago = None
+                else:
+                    metodo_pago = PaymentMethod.PAYPAL
+                    ref_pago = f"PAYPAL_MODA_{month:02d}_{month_seq:04d}"
                 cliente = random.choice(moda_customers) if random.random() < 0.60 else None
                 receipt_no = f"VTA-MODA-{month:02d}-{month_seq:04d}-{b_cfg['code']}"
-
-                ref_pago = f"QR_BNB_MODA_{month:02d}_{month_seq:04d}" if metodo_pago == PaymentMethod.QR else None
-                if metodo_pago == PaymentMethod.TARJETA:
-                    ref_pago = f"STRIPE_MODA_{month:02d}_{month_seq:04d}"
 
                 var = random.choice(moda_variants)
                 qty = 1
@@ -1992,14 +1987,14 @@ def seed_all():
                 sucursal_id=equipetrol_branch.id,
                 cliente_id=cliente_user.id,
                 cajero_id=cajero_user.id,
-                metodo_pago=PaymentMethod.QR,
-                referencia_pago="QR_SIMPLE_PAGO_BNB_4881",
+                metodo_pago=PaymentMethod.EFECTIVO,
+                referencia_pago=None,
                 monto_total=Decimal("180.00"),
                 impuesto_iva=Decimal("23.40"),
                 monto_neto=Decimal("156.60"),
-                monto_recibido=Decimal("180.00"),
-                cambio=Decimal("0.00"),
-                nota="Liquidación de compra en tienda física con QR Simple",
+                monto_recibido=Decimal("200.00"),
+                cambio=Decimal("20.00"),
+                nota="Liquidación de compra en tienda física en Efectivo",
                 created_at=utc_now() - timedelta(hours=3)
             )
             db.add(sale4)
@@ -2015,7 +2010,7 @@ def seed_all():
             )
             db.add(det_sale4)
             db.commit()
-            print("  [OK] Creada Venta de prueba: VTA-2025-0004 (Presencial / QR / 180.00 Bs.)")
+            print("  [OK] Creada Venta de prueba: VTA-2025-0004 (Presencial / Efectivo / 180.00 Bs.)")
 
         # Ventas de Moda Express (Empresa 2)
         sale_m1 = db.query(Sale).filter(Sale.numero_recibo == "VTA-MODA-0001").first()

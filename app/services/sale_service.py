@@ -222,6 +222,22 @@ class SaleService:
 
         db.commit()
         db.refresh(venta)
+
+        # Disparar notificación push interna si hay cliente asignado
+        if venta.cliente_id:
+            try:
+                from app.services.notification_service import NotificationService
+                NotificationService.create(
+                    db=db,
+                    user_id=venta.cliente_id,
+                    title="¡Compra Presencial Exitosa!",
+                    message=f"Tu compra #{venta.numero_recibo} por Bs {float(venta.monto_total):.2f} ha sido procesada con éxito en {venta.sucursal.nombre if venta.sucursal else 'tienda'}.",
+                    type="VENTA",
+                    reference_id=str(venta.id)
+                )
+            except Exception as notif_err:
+                logger.warning(f"Aviso: no se pudo emitir notificación de venta presencial: {notif_err}")
+
         return SaleService._format_sale_response(venta)
 
     @staticmethod
@@ -305,6 +321,22 @@ class SaleService:
         venta.monto_neto = neto
         db.commit()
         db.refresh(venta)
+
+        # Disparar notificación push interna si hay cliente asignado
+        if venta.cliente_id:
+            try:
+                from app.services.notification_service import NotificationService
+                NotificationService.create(
+                    db=db,
+                    user_id=venta.cliente_id,
+                    title="¡Compra Presencial Exitosa!",
+                    message=f"Tu compra #{venta.numero_recibo} por Bs {float(venta.monto_total):.2f} ha sido procesada con éxito en {venta.sucursal.nombre if venta.sucursal else 'tienda'}.",
+                    type="VENTA",
+                    reference_id=str(venta.id)
+                )
+            except Exception as notif_err:
+                logger.warning(f"Aviso: no se pudo emitir notificación de venta presencial: {notif_err}")
+
         return SaleService._format_sale_response(venta)
 
     @staticmethod
@@ -389,6 +421,22 @@ class SaleService:
         venta.motivo_cancelacion = motivo
         db.commit()
         db.refresh(venta)
+
+        # Disparar notificación push interna si hay cliente asignado
+        if venta.cliente_id:
+            try:
+                from app.services.notification_service import NotificationService
+                NotificationService.create(
+                    db=db,
+                    user_id=venta.cliente_id,
+                    title="¡Compra Presencial Exitosa!",
+                    message=f"Tu compra #{venta.numero_recibo} por Bs {float(venta.monto_total):.2f} ha sido procesada con éxito en {venta.sucursal.nombre if venta.sucursal else 'tienda'}.",
+                    type="VENTA",
+                    reference_id=str(venta.id)
+                )
+            except Exception as notif_err:
+                logger.warning(f"Aviso: no se pudo emitir notificación de venta presencial: {notif_err}")
+
         return SaleService._format_sale_response(venta)
 
     @staticmethod
@@ -406,6 +454,7 @@ class SaleService:
         ticket_promedio = (ingresos_totales / total_ventas) if total_ventas > 0 else 0.0
 
         ventas_efectivo = sum(float(v.monto_total) for v in ventas if v.metodo_pago == PaymentMethod.EFECTIVO)
+        ventas_paypal = sum(float(v.monto_total) for v in ventas if v.metodo_pago == PaymentMethod.PAYPAL)
         ventas_tarjeta = sum(float(v.monto_total) for v in ventas if v.metodo_pago == PaymentMethod.TARJETA)
         ventas_qr = sum(float(v.monto_total) for v in ventas if v.metodo_pago == PaymentMethod.QR)
 
@@ -417,6 +466,7 @@ class SaleService:
             "ingresos_totales": round(ingresos_totales, 2),
             "ticket_promedio": round(ticket_promedio, 2),
             "ventas_efectivo": round(ventas_efectivo, 2),
+            "ventas_paypal": round(ventas_paypal, 2),
             "ventas_tarjeta": round(ventas_tarjeta, 2),
             "ventas_qr": round(ventas_qr, 2),
             "total_iva": round(total_iva, 2),

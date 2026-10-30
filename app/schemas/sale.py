@@ -89,8 +89,9 @@ class SalesSummaryReport(BaseModel):
     ganancia_neta: float = 0.0
     ticket_promedio: float
     ventas_efectivo: float
-    ventas_tarjeta: float
-    ventas_qr: float
+    ventas_paypal: float = 0.0
+    ventas_tarjeta: float = 0.0
+    ventas_qr: float = 0.0
 
 
 class TopProductReport(BaseModel):

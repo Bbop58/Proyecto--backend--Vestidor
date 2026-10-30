@@ -420,6 +420,21 @@ class ExchangeService:
         db.commit()
         db.refresh(cambio)
 
+        # Disparar notificación push interna al cliente
+        if cambio.cliente_id:
+            try:
+                from app.services.notification_service import NotificationService
+                NotificationService.create(
+                    db=db,
+                    user_id=cambio.cliente_id,
+                    title="¡Nota de Cambio Procesada!",
+                    message=f"Tu cambio de prenda #{cambio.numero_cambio} correspondiente al recibo {venta.numero_recibo} ha sido registrado exitosamente.",
+                    type="CAMBIO_PRENDA",
+                    reference_id=str(cambio.id)
+                )
+            except Exception as notif_err:
+                logger.warning(f"Aviso: no se pudo emitir notificación de cambio: {notif_err}")
+
         return ExchangeService._format_exchange_response(cambio)
 
     @staticmethod

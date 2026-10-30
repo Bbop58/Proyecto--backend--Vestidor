@@ -25,6 +25,7 @@ from app.api.v1.favorites import router as favorites_router
 from app.api.v1.deliveries import router as deliveries_router
 from app.api.v1.recommendations import router as recommendations_router
 from app.api.v1.voice_search import router as voice_search_router
+from app.api.v1.chatbot import router as chatbot_router
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(auth_router)
@@ -53,6 +54,7 @@ api_v1_router.include_router(favorites_router)
 api_v1_router.include_router(deliveries_router)
 api_v1_router.include_router(recommendations_router)
 api_v1_router.include_router(voice_search_router)
+api_v1_router.include_router(chatbot_router)
 
 
 

@@ -609,24 +609,33 @@ def seed_delivery_rates_and_favorites(db, tenant_urban, tenant_moda, branches_ma
         print(f"  [+] Ya existen {existing_rates} tarifas de delivery registradas.")
 
     # 2. Favorites
-    existing_favs = db.query(Favorite).count()
-    if existing_favs == 0:
-        clients = db.query(User).filter(User.tenant_id == tenant_urban.id).limit(5).all()
-        products = db.query(Product).filter(Product.tenant_id == tenant_urban.id, Product.activo == True).limit(5).all()
-        fav_count = 0
-        for client in clients:
-            for prod in products[:2]:
+    client_demo_emails = [
+        "cliente@ficcstore.com",
+        "cliente@ficttstore.com",
+        "sofia.cliente@ficttstore.com",
+        "cliente@modaexpress.com"
+    ]
+    fav_count = 0
+    for c_email in client_demo_emails:
+        c_user = db.query(User).filter(User.email == c_email).first()
+        if not c_user or not c_user.tenant_id:
+            continue
+        c_prods = db.query(Product).filter(Product.tenant_id == c_user.tenant_id, Product.activo == True).limit(2).all()
+        for prod in c_prods:
+            exists = db.query(Favorite).filter(Favorite.user_id == c_user.id, Favorite.product_id == prod.id).first()
+            if not exists:
                 fav = Favorite(
-                    user_id=client.id,
+                    user_id=c_user.id,
                     product_id=prod.id,
-                    tenant_id=tenant_urban.id
+                    tenant_id=c_user.tenant_id
                 )
                 db.add(fav)
                 fav_count += 1
+    if fav_count > 0:
         db.commit()
-        print(f"  [OK] Sembrados {fav_count} favoritos iniciales para clientes.")
+        print(f"  [OK] Sembrados {fav_count} favoritos iniciales para clientes de prueba.")
     else:
-        print(f"  [+] Ya existen {existing_favs} favoritos registrados.")
+        print("  [+] Favoritos para clientes de prueba ya registrados.")
 
     # 3. Cupones de Descuento
     from app.models.coupon import Coupon

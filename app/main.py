@@ -77,6 +77,28 @@ def on_startup():
                 ALTER TABLE cambios_producto ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
                 ALTER TABLE favoritos ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
                 ALTER TABLE tarifas_delivery ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+
+                -- Ofertas y Descuentos
+                ALTER TABLE productos ADD COLUMN IF NOT EXISTS precio_oferta NUMERIC(10, 2);
+                ALTER TABLE productos ADD COLUMN IF NOT EXISTS en_oferta BOOLEAN DEFAULT FALSE;
+                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS monto_subtotal NUMERIC(10, 2) DEFAULT 0.0;
+                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS descuento NUMERIC(10, 2) DEFAULT 0.0;
+                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS codigo_cupon VARCHAR(50);
+
+                CREATE TABLE IF NOT EXISTS cupones_descuento (
+                    id UUID PRIMARY KEY,
+                    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    codigo VARCHAR(50) NOT NULL,
+                    descripcion VARCHAR(200),
+                    porcentaje_descuento NUMERIC(5, 2) NOT NULL DEFAULT 10.00,
+                    monto_minimo NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+                    fecha_vencimiento TIMESTAMP WITH TIME ZONE,
+                    activo BOOLEAN NOT NULL DEFAULT TRUE,
+                    usos_actuales INTEGER NOT NULL DEFAULT 0,
+                    max_usos INTEGER,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
             """))
     except Exception as e:
         pass

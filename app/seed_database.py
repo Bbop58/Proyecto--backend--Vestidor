@@ -628,6 +628,50 @@ def seed_delivery_rates_and_favorites(db, tenant_urban, tenant_moda, branches_ma
     else:
         print(f"  [+] Ya existen {existing_favs} favoritos registrados.")
 
+    # 3. Cupones de Descuento
+    from app.models.coupon import Coupon
+    existing_coupons = db.query(Coupon).count()
+    if existing_coupons == 0:
+        coupons_to_seed = [
+            Coupon(
+                tenant_id=tenant_urban.id,
+                codigo="PROMO10",
+                descripcion="Descuento de Temporada 10% OFF",
+                porcentaje_descuento=Decimal("10.00"),
+                monto_minimo=Decimal("50.00"),
+                activo=True
+            ),
+            Coupon(
+                tenant_id=tenant_urban.id,
+                codigo="FICC2026",
+                descripcion="Especial Estudiantes FICCT 15% OFF",
+                porcentaje_descuento=Decimal("15.00"),
+                monto_minimo=Decimal("80.00"),
+                activo=True
+            ),
+            Coupon(
+                tenant_id=tenant_moda.id,
+                codigo="TARIJA10",
+                descripcion="Descuento Apertura Moda Express 10% OFF",
+                porcentaje_descuento=Decimal("10.00"),
+                monto_minimo=Decimal("50.00"),
+                activo=True
+            ),
+        ]
+        for c in coupons_to_seed:
+            db.add(c)
+        db.commit()
+        print(f"  [OK] Sembrados {len(coupons_to_seed)} cupones promocionales.")
+
+    # 4. Asignar ofertas en productos
+    products_urban = db.query(Product).filter(Product.tenant_id == tenant_urban.id).limit(4).all()
+    for p in products_urban:
+        if not p.en_oferta:
+            p.en_oferta = True
+            p.precio_oferta = Decimal(str(round(float(p.precio_base) * 0.85, 2)))
+    db.commit()
+    print("  [OK] Asignadas ofertas y precios especiales en catálogo.")
+
 
 
 

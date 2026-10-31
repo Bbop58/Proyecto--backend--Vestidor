@@ -29,6 +29,7 @@ from app.models.favorite import Favorite
 from app.models.delivery_rate import DeliveryRate
 from app.models.user_wallet import UserWallet
 from app.models.wallet_transaction import WalletTransaction
+from app.models.coupon import Coupon
 
 __all__ = [
     "Base",
@@ -36,6 +37,7 @@ __all__ = [
     "SubscriptionPlan",
     "Subscription",
     "SyncOperation",
+    "Coupon",
     "User",
     "TokenBlacklist",
     "Role",

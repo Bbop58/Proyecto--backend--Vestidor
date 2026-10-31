@@ -29,6 +29,7 @@ from app.api.v1.chatbot import router as chatbot_router
 from app.api.v1.wallet import router as wallet_router
 from app.api.v1.backup import router as backup_router
 from app.api.v1.custom_reports import router as custom_reports_router
+from app.api.v1.coupons import router as coupons_router
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(auth_router)
@@ -61,6 +62,7 @@ api_v1_router.include_router(chatbot_router)
 api_v1_router.include_router(wallet_router)
 api_v1_router.include_router(backup_router)
 api_v1_router.include_router(custom_reports_router)
+api_v1_router.include_router(coupons_router)
 
 
 

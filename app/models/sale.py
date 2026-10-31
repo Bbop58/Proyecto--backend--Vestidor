@@ -47,6 +47,9 @@ class Sale(Base):
     metodo_pago = Column(Enum(PaymentMethod, name="payment_method"), nullable=False, default=PaymentMethod.EFECTIVO)
     referencia_pago = Column(String(100), nullable=True)
     
+    monto_subtotal = Column(Numeric(10, 2), nullable=True, default=0.0)
+    descuento = Column(Numeric(10, 2), nullable=False, default=0.0)
+    codigo_cupon = Column(String(50), nullable=True)
     monto_total = Column(Numeric(10, 2), nullable=False, default=0.0)
     impuesto_iva = Column(Numeric(10, 2), nullable=False, default=0.0)
     monto_neto = Column(Numeric(10, 2), nullable=False, default=0.0)

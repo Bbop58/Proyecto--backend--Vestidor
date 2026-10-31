@@ -11,6 +11,8 @@ class ProductBase(BaseModel):
     nombre: str = Field(..., min_length=2, max_length=100, description="Nombre del producto")
     descripcion: Optional[str] = Field(None, description="Descripción detallada")
     precio_base: Decimal = Field(..., gt=0, description="Precio base en moneda local")
+    precio_oferta: Optional[Decimal] = Field(None, gt=0, description="Precio rebajado en oferta")
+    en_oferta: bool = Field(False, description="Indica si el producto tiene precio especial activo")
     categoria_id: uuid.UUID = Field(..., description="ID de la categoría a la que pertenece")
     temporada: Optional[str] = Field(None, max_length=50, description="Temporada")
     proveedor: Optional[str] = Field(None, max_length=100, description="Proveedor")
@@ -26,6 +28,8 @@ class ProductUpdate(BaseModel):
     nombre: Optional[str] = Field(None, min_length=2, max_length=100)
     descripcion: Optional[str] = None
     precio_base: Optional[Decimal] = Field(None, gt=0)
+    precio_oferta: Optional[Decimal] = Field(None, gt=0)
+    en_oferta: Optional[bool] = None
     categoria_id: Optional[uuid.UUID] = None
     temporada: Optional[str] = Field(None, max_length=50)
     proveedor: Optional[str] = Field(None, max_length=100)

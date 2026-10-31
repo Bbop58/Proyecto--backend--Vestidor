@@ -18,6 +18,8 @@ class Product(Base):
     nombre = Column(String(100), index=True, nullable=False)
     descripcion = Column(Text, nullable=True)
     precio_base = Column(Numeric(10, 2), nullable=False)
+    precio_oferta = Column(Numeric(10, 2), nullable=True)
+    en_oferta = Column(Boolean, default=False, nullable=False)
     categoria_id = Column(UUID(as_uuid=True), ForeignKey("categorias.id", ondelete="RESTRICT"), nullable=False)
     temporada = Column(String(50), nullable=True, index=True)
     proveedor = Column(String(100), nullable=True, index=True)

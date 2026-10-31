@@ -504,8 +504,8 @@ def seed_delivery_rates_and_favorites(db, tenant_urban, tenant_moda, branches_ma
     print("\n[8/8] Sembrando Tarifas de Delivery y Favoritos de Clientes...")
     
     # 1. Delivery Rates
-    existing_rates = db.query(DeliveryRate).count()
-    if existing_rates == 0:
+    urban_rates_count = db.query(DeliveryRate).filter(DeliveryRate.tenant_id == tenant_urban.id).count()
+    if urban_rates_count == 0:
         rates_to_create = []
         for branch_name, branch in branches_map.items():
             if not branch or branch.tenant_id != tenant_urban.id:
@@ -576,11 +576,18 @@ def seed_delivery_rates_and_favorites(db, tenant_urban, tenant_moda, branches_ma
                 )
         
 
-        # Tarifas de Delivery para Moda Express (Tarija)
+        for r in rates_to_create:
+            db.add(r)
+        db.commit()
+        print(f"  [OK] Sembradas {len(rates_to_create)} tarifas de delivery para UrbanStyle.")
+
+    moda_rates_count = db.query(DeliveryRate).filter(DeliveryRate.tenant_id == tenant_moda.id).count()
+    if moda_rates_count == 0:
+        moda_rates_to_create = []
         for branch_name, branch in branches_map.items():
             if not branch or branch.tenant_id != tenant_moda.id:
                 continue
-            rates_to_create.extend([
+            moda_rates_to_create.extend([
                 DeliveryRate(
                     branch_id=branch.id,
                     tenant_id=tenant_moda.id,
@@ -600,13 +607,10 @@ def seed_delivery_rates_and_favorites(db, tenant_urban, tenant_moda, branches_ma
                     activo=True
                 ),
             ])
-
-        for r in rates_to_create:
+        for r in moda_rates_to_create:
             db.add(r)
         db.commit()
-        print(f"  [OK] Sembradas {len(rates_to_create)} tarifas de delivery.")
-    else:
-        print(f"  [+] Ya existen {existing_rates} tarifas de delivery registradas.")
+        print(f"  [OK] Sembradas {len(moda_rates_to_create)} tarifas de delivery para Moda Express.")
 
     # 2. Favorites
     client_demo_emails = [

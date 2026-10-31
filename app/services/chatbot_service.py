@@ -153,7 +153,11 @@ class ChatbotService:
                 for s in sales:
                     items_desc = []
                     for d in s.detalles:
-                        prod_name = d.producto.nombre if d.producto else (d.nombre_producto or "Prenda")
+                        prod_name = (
+                            d.variante.producto.nombre
+                            if (d.variante and d.variante.producto)
+                            else "Prenda de colección"
+                        )
                         items_desc.append(f"{d.cantidad}x {prod_name} ({float(d.precio_unitario):.2f} Bs.)")
                     fecha_fmt = s.created_at.strftime("%d/%m/%Y") if s.created_at else ""
                     user_sales_info.append(

@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, case
 
 from app.models.branch import Branch
 from app.models.user import User
@@ -442,35 +442,42 @@ class SaleService:
     @staticmethod
     def get_summary_report(
         db: Session,
-        sucursal_id: Optional[uuid.UUID] = None
+        sucursal_id: Optional[uuid.UUID] = None,
+        tenant_id: Optional[uuid.UUID] = None
     ) -> dict:
-        q = db.query(Sale).filter(Sale.estado == SaleStatus.COMPLETADA)
+        q = db.query(
+            func.count(Sale.id).label("total_ventas"),
+            func.coalesce(func.sum(Sale.monto_total), 0).label("ingresos_totales"),
+            func.coalesce(func.sum(case((Sale.metodo_pago == PaymentMethod.EFECTIVO, Sale.monto_total), else_=0)), 0).label("ventas_efectivo"),
+            func.coalesce(func.sum(case((Sale.metodo_pago == PaymentMethod.QR, Sale.monto_total), else_=0)), 0).label("ventas_qr"),
+            func.coalesce(func.sum(case((Sale.metodo_pago == PaymentMethod.TARJETA, Sale.monto_total), else_=0)), 0).label("ventas_tarjeta"),
+            func.coalesce(func.sum(case((Sale.metodo_pago == PaymentMethod.PAYPAL, Sale.monto_total), else_=0)), 0).label("ventas_paypal"),
+            func.coalesce(func.sum(Sale.impuesto_iva), 0).label("total_iva"),
+            func.coalesce(func.sum(Sale.monto_neto), 0).label("ganancia_neta"),
+        ).filter(Sale.estado == SaleStatus.COMPLETADA)
+
         if sucursal_id:
             q = q.filter(Sale.sucursal_id == sucursal_id)
+        if tenant_id:
+            q = q.filter(Sale.tenant_id == tenant_id)
 
-        ventas = q.all()
-        total_ventas = len(ventas)
-        ingresos_totales = sum(float(v.monto_total) for v in ventas)
+        row = q.first()
+        m = row._mapping if row else {}
+
+        total_ventas = int(m.get("total_ventas") or 0)
+        ingresos_totales = float(m.get("ingresos_totales") or 0.0)
         ticket_promedio = (ingresos_totales / total_ventas) if total_ventas > 0 else 0.0
-
-        ventas_efectivo = sum(float(v.monto_total) for v in ventas if v.metodo_pago == PaymentMethod.EFECTIVO)
-        ventas_paypal = sum(float(v.monto_total) for v in ventas if v.metodo_pago == PaymentMethod.PAYPAL)
-        ventas_tarjeta = sum(float(v.monto_total) for v in ventas if v.metodo_pago == PaymentMethod.TARJETA)
-        ventas_qr = sum(float(v.monto_total) for v in ventas if v.metodo_pago == PaymentMethod.QR)
-
-        total_iva = sum(float(getattr(v, "impuesto_iva", 0) or round(float(v.monto_total) * 0.13, 2)) for v in ventas)
-        ganancia_neta = sum(float(getattr(v, "monto_neto", 0) or round(float(v.monto_total) - round(float(v.monto_total) * 0.13, 2), 2)) for v in ventas)
 
         return {
             "total_ventas": total_ventas,
             "ingresos_totales": round(ingresos_totales, 2),
             "ticket_promedio": round(ticket_promedio, 2),
-            "ventas_efectivo": round(ventas_efectivo, 2),
-            "ventas_paypal": round(ventas_paypal, 2),
-            "ventas_tarjeta": round(ventas_tarjeta, 2),
-            "ventas_qr": round(ventas_qr, 2),
-            "total_iva": round(total_iva, 2),
-            "ganancia_neta": round(ganancia_neta, 2),
+            "ventas_efectivo": round(float(m.get("ventas_efectivo") or 0.0), 2),
+            "ventas_paypal": round(float(m.get("ventas_paypal") or 0.0), 2),
+            "ventas_tarjeta": round(float(m.get("ventas_tarjeta") or 0.0), 2),
+            "ventas_qr": round(float(m.get("ventas_qr") or 0.0), 2),
+            "total_iva": round(float(m.get("total_iva") or (ingresos_totales * 0.13)), 2),
+            "ganancia_neta": round(float(m.get("ganancia_neta") or (ingresos_totales * 0.87)), 2),
         }
 
     @staticmethod

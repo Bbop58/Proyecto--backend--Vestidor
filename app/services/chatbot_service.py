@@ -18,6 +18,7 @@ from app.models.favorite import Favorite
 from app.models.user_wallet import UserWallet
 from app.models.reservation import Reservation, ReservationStatus
 from app.schemas.chatbot import ChatMessage, ChatbotResponse
+from app.services.sale_service import SaleService
 
 logger = logging.getLogger("chatbot_service")
 
@@ -45,7 +46,7 @@ class ChatbotService:
     ) -> ChatbotResponse:
         """
         Procesa un mensaje conversacional con IA para la tienda activa.
-        Inyecta el catálogo, sucursales y políticas de la empresa en el System Prompt.
+        Inyecta el catálogo, sucursales y métricas comerciales según el rol del usuario.
         """
         # 1. Determinar el Tenant activo
         tenant = None
@@ -76,7 +77,16 @@ class ChatbotService:
         tenant_slug_val = tenant.slug if tenant else "urbanstyle"
         is_moda_express = "moda" in tenant_slug_val.lower()
 
-        # 2. Recopilar datos reales de la BD para este tenant (optimizado con variantes ya cargadas)
+        # 2. Identificar si el usuario tiene rol administrativo / operativo
+        is_staff_user = False
+        user_role_name = "Cliente"
+        if current_user and current_user.role:
+            user_role_name = current_user.role.name or "Cliente"
+            role_lower = user_role_name.lower()
+            if any(r in role_lower for r in ["admin", "superadmin", "administrador", "gerente", "cajero", "encargado"]):
+                is_staff_user = True
+
+        # 3. Recopilar datos de catálogo y sucursales
         products_info = []
         if tenant:
             products = (
@@ -86,11 +96,11 @@ class ChatbotService:
                 .all()
             )
             for p in products:
-                # p.variantes ya tiene lazy="joined" en el modelo, usamos p.variantes directamente evitando N+1 queries
                 tallas = list(set([v.talla for v in p.variantes if v.activo and v.talla]))
                 colores = list(set([v.color for v in p.variantes if v.activo and v.color]))
+                precio_str = f"{float(p.precio_oferta):.2f} Bs. (Oferta)" if p.en_oferta and p.precio_oferta else f"{float(p.precio_base):.2f} Bs."
                 products_info.append(
-                    f"- {p.nombre}: {float(p.precio_base):.2f} Bs. "
+                    f"- {p.nombre}: {precio_str}. "
                     f"Tallas: {', '.join(tallas) or 'Única'}. Colores: {', '.join(colores) or 'Varios'}."
                 )
 
@@ -106,16 +116,32 @@ class ChatbotService:
             for r in rates:
                 delivery_info.append(f"- {r.zona_nombre} ({r.ciudad}): {float(r.costo_envio):.2f} Bs ({r.tiempo_estimado_horas} hrs)")
 
-        # 3. Recopilar datos privados y perfil del usuario autenticado (si aplica)
+        # 4. Datos comerciales para Administradores / Cajeros
+        business_metrics = {}
+        top_products_data = []
+        top_products_text_list = []
+
+        if is_staff_user:
+            try:
+                business_metrics = SaleService.get_summary_report(db)
+                top_products_data = SaleService.get_top_products(db, limit=5)
+                for idx, tp in enumerate(top_products_data, start=1):
+                    top_products_text_list.append(
+                        f"  #{idx} {tp.get('producto_nombre', 'Prenda')} ({tp.get('talla', '')}/{tp.get('color', '')}): "
+                        f"{tp.get('unidades_vendidas', 0)} unidades vendidas (Bs. {tp.get('ingresos_generados', 0.0):,.2f})"
+                    )
+            except Exception as e:
+                logger.warning(f"Error cargando métricas de negocio para chatbot: {e}")
+
+        # 5. Datos privados del cliente autenticado
         user_sales_info = []
         user_favs_info = []
         user_wallet_balance = 0.0
         user_reservations_info = []
 
         if current_user:
-            user_role_context = f"{current_user.full_name} ({current_user.email}) - Rol: {current_user.role.name if current_user.role else 'Cliente'}"
+            user_role_context = f"{current_user.full_name} ({current_user.email}) - Rol: {user_role_name}"
             try:
-                # Compras previas del cliente
                 sales = (
                     db.query(Sale)
                     .filter(Sale.cliente_id == current_user.id)
@@ -136,7 +162,6 @@ class ChatbotService:
                 logger.warning(f"Error cargando ventas para chatbot: {e}")
 
             try:
-                # Prendas favoritas guardadas por el cliente
                 favs = (
                     db.query(Favorite)
                     .filter(Favorite.user_id == current_user.id)
@@ -150,7 +175,6 @@ class ChatbotService:
                 logger.warning(f"Error cargando favoritos para chatbot: {e}")
 
             try:
-                # Saldo en Billetera Virtual Prepago
                 wallet = db.query(UserWallet).filter(UserWallet.user_id == current_user.id).first()
                 if wallet:
                     user_wallet_balance = float(wallet.saldo or 0.0)
@@ -158,21 +182,18 @@ class ChatbotService:
                 logger.warning(f"Error cargando billetera para chatbot: {e}")
 
             try:
-                # Reservas activas Click & Collect
                 reservas = (
                     db.query(Reservation)
                     .filter(
-                        Reservation.usuario_id == current_user.id,
-                        Reservation.estado == ReservationStatus.CONFIRMADA
+                        Reservation.cliente_id == current_user.id,
+                        Reservation.estado.in_([ReservationStatus.PENDIENTE, ReservationStatus.PREPARADA])
                     )
                     .limit(3)
                     .all()
                 )
                 for res in reservas:
                     fecha_exp = res.fecha_limite.strftime("%d/%m/%Y %H:%M") if res.fecha_limite else "48 horas"
-                    user_reservations_info.append(
-                        f"- Reserva #{res.codigo_reserva} (Expira: {fecha_exp})"
-                    )
+                    user_reservations_info.append(f"- Reserva #{res.codigo_reserva} (Expira: {fecha_exp})")
             except Exception as e:
                 logger.warning(f"Error cargando reservas para chatbot: {e}")
         else:
@@ -184,9 +205,54 @@ class ChatbotService:
         user_sales_text = "\n".join(user_sales_info) if user_sales_info else "No registra compras previas aún."
         user_favs_text = "\n".join(user_favs_info) if user_favs_info else "No tiene prendas marcadas como favoritas."
         user_reservations_text = "\n".join(user_reservations_info) if user_reservations_info else "No tiene reservas activas pendientes de recojo."
+        top_prods_str = "\n".join(top_products_text_list) if top_products_text_list else "Sin datos consolidados de ventas."
 
-        # 4. Construir System Prompt especializado con datos corporativos y privados del cliente
-        system_instruction = f"""
+        # 6. Construir System Prompt especializado según ROL
+        if is_staff_user:
+            tot_ventas = business_metrics.get("total_ventas", 0)
+            tot_ingresos = business_metrics.get("ingresos_totales", 0.0)
+            ticket_prom = business_metrics.get("ticket_promedio", 0.0)
+            v_efectivo = business_metrics.get("ventas_efectivo", 0.0)
+            v_qr = business_metrics.get("ventas_qr", 0.0)
+            v_tarjeta = business_metrics.get("ventas_tarjeta", 0.0)
+            v_paypal = business_metrics.get("ventas_paypal", 0.0)
+            ganancia_neta = business_metrics.get("ganancia_neta", 0.0)
+            total_iva = business_metrics.get("total_iva", 0.0)
+
+            system_instruction = f"""
+Eres "FICCT Bot", el Asistente Ejecutivo Inteligente y Asesor Oficial de Operaciones para la empresa "{tenant_name}".
+Estás interactuando directamente con {current_user.full_name} ({current_user.email}), quien es {user_role_name.upper()} con plenos privilegios administrativos de la empresa.
+
+AUTORIZACIÓN Y ACCESO A DATOS:
+- El usuario es ADMINISTRADOR AUTORIZADO. TIENE ACCESO TOTAL Y OFICIAL a todos los datos comerciales, financieros, de facturación, inventario, ventas y reportes de la empresa.
+- REGLA ESTRICTA: NUNCA le digas que tu acceso a las ventas globales o finanzas está restringido por seguridad. Tienes acceso completo a todas las métricas que te proporcionamos a continuación y DEBES responder a cualquier consulta sobre ventas, ingresos o inventario de inmediato.
+
+MÉTRICAS Y ESTADÍSTICAS DEL NEGOCIO EN TIEMPO REAL ({tenant_name}):
+- Facturación Total Acumulada: Bs. {tot_ingresos:,.2f}
+- Total de Ventas/Transacciones Realizadas: {tot_ventas} ventas completadas
+- Ticket Promedio: Bs. {ticket_prom:,.2f}
+- Ganancia Neta Comercial: Bs. {ganancia_neta:,.2f} (IVA 13% estimado: Bs. {total_iva:,.2f})
+- Desglose Oficial por Medio de Cobro:
+  * Cobros en Efectivo en mostrador: Bs. {v_efectivo:,.2f}
+  * Cobros mediante Pago QR: Bs. {v_qr:,.2f}
+  * Cobros mediante Tarjeta de Débito/Crédito: Bs. {v_tarjeta:,.2f}
+  * Cobros vía Pasarela Digital PayPal: Bs. {v_paypal:,.2f}
+- Top 5 Prendas Más Vendidas y Rentables:
+{top_prods_str}
+- Sucursales Activas de la Red:
+{branches_text}
+- Muestrario de Prendas en Catálogo:
+{catalog_text}
+
+DIRECTIVAS PARA CONSULTAS ADMINISTRATIVAS:
+1. Si el administrador pregunta por ventas, facturación, total vendido o ingresos, dale las cifras exactas de inmediato (ej. "Actualmente registramos una Facturación Total de Bs. {tot_ingresos:,.2f} en {tot_ventas} ventas completadas").
+2. Si pregunta por medios de pago o distribución de caja, desglosa los cobros en efectivo, QR, tarjeta y PayPal.
+3. Si pregunta por productos estrella, más vendidos o rotación, enumera el ranking con sus cantidades e ingresos.
+4. Si pregunta por catálogo, inventario, precios o sucursales, respóndele con precisión ejecutiva.
+5. Mantén un tono ejecutivo, ágil, formal y conciso. Usa viñetas y negrita para destacar las cifras monetarias.
+"""
+        else:
+            system_instruction = f"""
 Eres "FICCT Bot", el Asistente Virtual Inteligente oficial de retail para la empresa "{tenant_name}".
 Tu propósito es asesorar a clientes en moda, responder dudas del catálogo, precios, tallas, sucursales, envíos y políticas de tienda.
 
@@ -204,8 +270,8 @@ DATOS DEL NEGOCIO ({tenant_name}):
   * Cambios de talla sin costo adicional (si es el mismo precio).
   * Si la nueva prenda tiene mayor precio, se abona la diferencia en efectivo o PayPal.
   * Si la prenda es de menor valor, la diferencia se abona como saldo a favor en la Billetera Virtual del cliente.
-- Métodos de Pago Oficiales Aceptados: Efectivo en caja de tienda física (con cálculo de vuelto) y PayPal Checkout en dólares para compras digitales en la app móvil y web (tipo de cambio oficial 6.96 Bs/USD). No operamos con QR ni transferencias.
-- Sistema Click & Collect (Reservas): El cliente puede apartar prendas desde la web o celular y tiene 48 horas para recogerlas en la sucursal elegida.
+- Métodos de Pago Oficiales: Efectivo en caja de tienda física, Pago QR, Tarjeta y PayPal Checkout en dólares para compras digitales.
+- Sistema Click & Collect (Reservas): El cliente puede apartar prendas desde la web o celular y tiene 48 horas para recogerlas en sucursal.
 
 DATOS PRIVADOS DEL CLIENTE ACTUAL:
 - Identidad: {user_role_context}
@@ -217,29 +283,24 @@ DATOS PRIVADOS DEL CLIENTE ACTUAL:
 - Reservas Activas:
 {user_reservations_text}
 
-DIRECTIVAS CONVERSACIONALES Y DE ASESORÍA PERSONALIZADA:
+DIRECTIVAS CONVERSACIONALES:
 1. Responde de forma amable, empática, fluida y con tono boliviano profesional y cercano.
-2. Si el cliente pregunta por sus compras previas, historial o notas de venta, léele exactamente sus recibos y prendas compradas con sus montos.
-3. Si el cliente pregunta por su billetera o saldo prepago, indícale su saldo exacto ({user_wallet_balance:.2f} Bs.).
-4. Si el cliente solicita recomendaciones de moda o combinaciones, analiza detenidamente sus compras pasadas y favoritos para proponerle outfits y prendas del catálogo que hagan juego armonioso con su estilo.
-5. Si el usuario no ha iniciado sesión y pregunta por datos personales, indícale que inicie sesión para ver su historial y saldo.
-6. Da respuestas concisas (máximo 2 a 3 párrafos cortos). Usa viñetas para enumerar opciones si es útil.
-7. Menciona siempre precios en Bolivianos (Bs.) y cita prendas reales de la lista proporcionada.
-8. Si preguntan por horarios o atención, indica que las sucursales abren de Lunes a Sábado de 09:00 a 20:00.
-9. Si el usuario es un empleado, ayúdalo con procesos del sistema (cambios de prenda en /sales, reservas en /reservations, etc.).
+2. Si el cliente pregunta por sus compras previas, léele exactamente sus recibos y prendas compradas.
+3. Si el cliente pregunta por su billetera prepago, indícale su saldo exacto ({user_wallet_balance:.2f} Bs.).
+4. Si solicita recomendaciones de moda, analiza sus compras pasadas y favoritos para proponerle outfits.
+5. Da respuestas concisas (máximo 2 a 3 párrafos cortos) con viñetas.
 """
 
-        # 4. Intentar inferencia con Google Gemini
+        # 7. Inferencia con Google Gemini (Ultra-rápida con gemini-flash-lite-latest y timeout 10s)
         api_key = cls.get_api_key()
         reply = None
 
         if api_key:
             try:
-                client = genai.Client(api_key=api_key)
+                client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=10000))
 
-                # Convertir historial al formato de Gemini
                 contents = []
-                for h in history[-6:]:  # Últimas 6 interacciones para no saturar tokens
+                for h in history[-4:]:  # Últimas 4 interacciones para no inflar latencia
                     contents.append(
                         types.Content(
                             role="user" if h.role == "user" else "model",
@@ -247,7 +308,6 @@ DIRECTIVAS CONVERSACIONALES Y DE ASESORÍA PERSONALIZADA:
                         )
                     )
 
-                # Agregar mensaje actual
                 contents.append(
                     types.Content(
                         role="user",
@@ -255,9 +315,7 @@ DIRECTIVAS CONVERSACIONALES Y DE ASESORÍA PERSONALIZADA:
                     )
                 )
 
-                # Priorizamos gemini-3.1-flash-lite y 3.5-flash-lite para máxima velocidad (<1s) y evitar 503 por alta demanda en 3.8-flash
-                candidate_models = ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"]
-                last_err = None
+                candidate_models = ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"]
 
                 for model_name in candidate_models:
                     try:
@@ -266,8 +324,8 @@ DIRECTIVAS CONVERSACIONALES Y DE ASESORÍA PERSONALIZADA:
                             contents=contents,
                             config=types.GenerateContentConfig(
                                 system_instruction=system_instruction,
-                                temperature=0.7,
-                                max_output_tokens=600,
+                                temperature=0.3,
+                                max_output_tokens=350,
                                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                             )
                         )
@@ -275,14 +333,13 @@ DIRECTIVAS CONVERSACIONALES Y DE ASESORÍA PERSONALIZADA:
                             reply = response.text.strip()
                             break
                     except Exception as err:
-                        last_err = err
                         logger.warning(f"Fallo modelo {model_name} en chatbot: {err}")
                         continue
 
             except Exception as e:
                 logger.error(f"Error general en Chatbot Gemini: {e}", exc_info=True)
 
-        # 5. Fallback Local Determinista (Si Gemini no respondió o no hay API key)
+        # 8. Fallback Local Determinista Inmediato (< 5 ms) si Gemini no respondió o falló
         if not reply:
             reply = cls._generate_local_fallback(
                 message=message,
@@ -293,25 +350,34 @@ DIRECTIVAS CONVERSACIONALES Y DE ASESORÍA PERSONALIZADA:
                 current_user=current_user,
                 user_sales=user_sales_info,
                 user_favs=user_favs_info,
-                wallet_balance=user_wallet_balance
+                wallet_balance=user_wallet_balance,
+                is_staff_user=is_staff_user,
+                business_metrics=business_metrics,
+                top_products=top_products_data
             )
 
-        # 6. Generar Chips de Sugerencias Rápidas según la marca
-        suggested_prompts = (
-            [
+        # 9. Generar Chips de Sugerencias Rápidas según rol y marca
+        if is_staff_user:
+            suggested_prompts = [
+                "¿Cuánto es el total de ventas?",
+                "¿Cuáles son los productos más vendidos?",
+                "Desglose de cobros por medio de pago",
+                "Estado de las sucursales"
+            ]
+        elif is_moda_express:
+            suggested_prompts = [
                 "¿Qué ternos o vestidos tienen?",
                 "¿Dónde queda la sucursal de Tarija?",
                 "¿Cómo funciona el cambio de prendas?",
                 "¿Cuáles son los métodos de pago?"
             ]
-            if is_moda_express
-            else [
+        else:
+            suggested_prompts = [
                 "¿Qué poleras y chaquetas tienen?",
                 "¿Cómo reservo para recoger en tienda?",
                 "¿Cuáles son las tarifas de delivery?",
                 "¿Cómo solicito un cambio de talla?"
             ]
-        )
 
         return ChatbotResponse(
             reply=reply,
@@ -331,10 +397,45 @@ DIRECTIVAS CONVERSACIONALES Y DE ASESORÍA PERSONALIZADA:
         current_user: Optional[User] = None,
         user_sales: Optional[List[str]] = None,
         user_favs: Optional[List[str]] = None,
-        wallet_balance: float = 0.0
+        wallet_balance: float = 0.0,
+        is_staff_user: bool = False,
+        business_metrics: Optional[dict] = None,
+        top_products: Optional[List[dict]] = None
     ) -> str:
-        """Motor local de respaldo ante fallos de conexión externa."""
+        """Motor local de respaldo ultra-rápido (< 5 ms) ante fallos de conexión externa."""
         msg = message.lower()
+
+        # Si el usuario es administrador o staff
+        if is_staff_user and any(w in msg for w in ["venta", "vendido", "vendimos", "facturac", "ingreso", "caja", "cuanto es el total", "total de ventas", "cuanto tenemos"]):
+            b = business_metrics or {}
+            ingresos = b.get("ingresos_totales", 0.0)
+            total_v = b.get("total_ventas", 0)
+            ticket = b.get("ticket_promedio", 0.0)
+            efectivo = b.get("ventas_efectivo", 0.0)
+            qr = b.get("ventas_qr", 0.0)
+            tarjeta = b.get("ventas_tarjeta", 0.0)
+            paypal = b.get("ventas_paypal", 0.0)
+            return (
+                f"📊 **Informe Ejecutivo de Ventas — {tenant_name}**\n\n"
+                f"- **Facturación Total Acumulada:** **Bs. {ingresos:,.2f}**\n"
+                f"- **Ventas Registradas:** **{total_v} transacciones completadas**\n"
+                f"- **Ticket Promedio:** **Bs. {ticket:,.2f}**\n\n"
+                f"💳 **Desglose de Cobros por Medio de Pago:**\n"
+                f"• Efectivo en mostrador: Bs. {efectivo:,.2f}\n"
+                f"• Cobros por QR: Bs. {qr:,.2f}\n"
+                f"• Tarjetas Débito/Crédito: Bs. {tarjeta:,.2f}\n"
+                f"• Pasarela Digital PayPal: Bs. {paypal:,.2f}\n\n"
+                f"¿Deseas consultar el ranking de productos más vendidos o consultar una sucursal en específico?"
+            )
+
+        if is_staff_user and any(w in msg for w in ["top", "mas vendido", "rotacion", "mas vendidas", "mejores productos"]):
+            if top_products:
+                top_lines = [
+                    f"#{i} **{tp.get('producto_nombre', 'Prenda')}** ({tp.get('talla', '')}/{tp.get('color', '')}): "
+                    f"{tp.get('unidades_vendidas', 0)} unidades (Bs. {tp.get('ingresos_generados', 0.0):,.2f})"
+                    for i, tp in enumerate(top_products, 1)
+                ]
+                return f"🏆 **Top Prendas Más Vendidas — {tenant_name}**\n\n" + "\n".join(top_lines)
 
         if any(w in msg for w in ["mis compras", "que compre", "mis pedidos", "historial", "recibo"]):
             if not current_user:
@@ -370,12 +471,19 @@ DIRECTIVAS CONVERSACIONALES Y DE ASESORÍA PERSONALIZADA:
             sample = "\n".join(products[:3]) if products else "nuestras poleras y chaquetas en tendencia."
             return (
                 f"👕 **Recomendación de Moda ({tenant_name})**:\n\n"
-                f"{fav_hint}te sugerimos combinar cortes contemporáneos en tonos neutros (negro, beige, azul índigo) con calzado urbano. "
+                f"{fav_hint}te sugerimos combinar cortes contemporáneos en tonos neutros con calzado urbano. "
                 f"Prendas destacadas recomendadas para ti hoy:\n\n{sample}\n\n"
                 "¿Te gustaría que te asesore sobre alguna talla en específico?"
             )
 
         if any(w in msg for w in ["hola", "buenas", "buenos dias", "buenas tardes", "saludos"]):
+            if is_staff_user:
+                return (
+                    f"¡Hola, {current_user.full_name if current_user else 'Administrador'}! "
+                    f"Soy tu Asistente Ejecutivo con IA para **{tenant_name}**. "
+                    "Estoy listo para brindarte métricas de ventas, facturación, productos más vendidos, stock en sucursales o políticas de tienda. "
+                    "¿Qué deseas consultar?"
+                )
             return (
                 f"¡Hola! Bienvenido a **{tenant_name}**. Soy tu asistente virtual de retail. "
                 "Puedo ayudarte a buscar prendas, verificar tallas, consultar nuestras sucursales o explicarte "
@@ -392,18 +500,19 @@ DIRECTIVAS CONVERSACIONALES Y DE ASESORÍA PERSONALIZADA:
 
         if any(w in msg for w in ["cambio", "devolucion", "garantia", "talla no me quedo"]):
             return (
-                "Nuestra **Política de Garantía y Cambios** te permite cambiar tu prenda hasta en **15 días** "
-                "posteriores a la compra presentando tu recibo en cualquier sucursal. "
+                "Nuestra **Política de Garantía y Cambios** te permite cambiar tu prenda hasta en **30 días** "
+                "posteriores a la compra presentando tu recibo o nota de venta en cualquier sucursal. "
                 "El cambio por otra talla del mismo producto no tiene recargo; si eliges una prenda de mayor precio, "
                 "solo abonas la diferencia en caja."
             )
 
-        if any(w in msg for w in ["pago", "pagar", "paypal", "efectivo", "metodo"]):
+        if any(w in msg for w in ["pago", "pagar", "paypal", "efectivo", "metodo", "qr"]):
             return (
                 "Nuestros métodos de pago oficiales autorizados son:\n"
                 "1. **Efectivo** en caja de cualquiera de nuestras sucursales físicas (con cálculo automático de vuelto).\n"
-                "2. **PayPal Checkout** para compras digitales desde la App Móvil o Tienda Web (en dólares al tipo de cambio 6.96 Bs/USD).\n"
-                "*(Nota: Por políticas de seguridad de la tienda, no operamos con cobros QR ni tarjetas en mostrador)*."
+                "2. **Pago QR y Tarjetas** en mostrador.\n"
+                "3. **Billetera Móvil Prepago** para compras rápidas tanto online como offline.\n"
+                "4. **PayPal Checkout** para compras digitales desde la App Móvil o Tienda Web (en dólares al tipo de cambio 6.96 Bs/USD)."
             )
 
         if any(w in msg for w in ["reserva", "click and collect", "apartar", "recojo"]):
@@ -413,7 +522,6 @@ DIRECTIVAS CONVERSACIONALES Y DE ASESORÍA PERSONALIZADA:
                 "y tienes hasta **48 horas** para retirarla y pagarla en caja."
             )
 
-        # Respuesta genérica con productos
         sample_prods = "\n".join(products[:3]) if products else "Variedad en prendas casuales y formales."
         return (
             f"En **{tenant_name}** disponemos de las mejores prendas de la temporada:\n\n"

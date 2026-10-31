@@ -137,7 +137,7 @@ class WalletService:
             NotificationService.create(
                 db=db,
                 user_id=user_id,
-                title="¡Fondos Acreditados a tu Billetera! 💳",
+                title="Fondos Acreditados a tu Billetera",
                 message=f"Se han acreditado Bs. {monto_credito:.2f} (${monto_usd:.2f} USD) a tu saldo prepago. Nuevo saldo: Bs. {saldo_pos:.2f}.",
                 type="BILLETERA",
                 reference_id=str(tx.id)

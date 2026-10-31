@@ -28,8 +28,8 @@ class UserWallet(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relaciones
-    user = relationship("User", backref="wallet", lazy="joined")
-    tenant = relationship("Tenant", lazy="joined")
+    user = relationship("User", backref="wallet", lazy="selectin")
+    tenant = relationship("Tenant", lazy="selectin")
     transacciones = relationship("WalletTransaction", back_populates="wallet", cascade="all, delete-orphan", lazy="selectin")
 
     @property

@@ -9,8 +9,10 @@ from app.schemas.category import CategoryCreate, CategoryUpdate
 
 class CategoryService:
     @staticmethod
-    def get_all(db: Session, activa_only: bool = False) -> List[Category]:
+    def get_all(db: Session, activa_only: bool = False, tenant_id: Optional[uuid.UUID] = None) -> List[Category]:
         query = db.query(Category)
+        if tenant_id:
+            query = query.filter(Category.tenant_id == tenant_id)
         if activa_only:
             query = query.filter(Category.activa == True)
         return query.order_by(Category.nombre.asc()).all()
@@ -20,13 +22,16 @@ class CategoryService:
         return db.query(Category).filter(Category.id == category_id).first()
 
     @staticmethod
-    def get_by_name(db: Session, nombre: str) -> Optional[Category]:
-        return db.query(Category).filter(Category.nombre.ilike(nombre.strip())).first()
+    def get_by_name(db: Session, nombre: str, tenant_id: Optional[uuid.UUID] = None) -> Optional[Category]:
+        query = db.query(Category).filter(Category.nombre.ilike(nombre.strip()))
+        if tenant_id:
+            query = query.filter(Category.tenant_id == tenant_id)
+        return query.first()
 
     @staticmethod
-    def create(db: Session, category_in: CategoryCreate) -> Category:
+    def create(db: Session, category_in: CategoryCreate, tenant_id: Optional[uuid.UUID] = None) -> Category:
         nombre = category_in.nombre.strip()
-        existing = CategoryService.get_by_name(db, nombre)
+        existing = CategoryService.get_by_name(db, nombre, tenant_id=tenant_id)
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -34,6 +39,7 @@ class CategoryService:
             )
 
         category = Category(
+            tenant_id=tenant_id,
             nombre=nombre,
             descripcion=category_in.descripcion.strip() if category_in.descripcion else None,
             activa=category_in.activa

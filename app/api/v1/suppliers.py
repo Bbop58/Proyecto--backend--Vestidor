@@ -3,7 +3,8 @@ from typing import List
 from fastapi import APIRouter, Depends, status, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.api.deps import require_permission
+from app.api.deps import require_permission, get_current_user
+from app.models.user import User
 from app.schemas.supplier import SupplierCreate, SupplierUpdate, SupplierResponse
 from app.services.supplier_service import SupplierService
 
@@ -18,9 +19,10 @@ router = APIRouter(prefix="/proveedores", tags=["Proveedores"])
 )
 def list_suppliers(
     activo_only: bool = Query(False, description="Filtrar solo proveedores activos"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    return SupplierService.get_all(db, activo_only=activo_only)
+    return SupplierService.get_all(db, activo_only=activo_only, tenant_id=current_user.tenant_id)
 
 
 @router.post(
@@ -32,9 +34,10 @@ def list_suppliers(
 )
 def create_supplier(
     supplier_in: SupplierCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    return SupplierService.create(db, supplier_in)
+    return SupplierService.create(db, supplier_in, tenant_id=current_user.tenant_id)
 
 
 @router.get(

@@ -9,8 +9,10 @@ from app.schemas.supplier import SupplierCreate, SupplierUpdate
 
 class SupplierService:
     @staticmethod
-    def get_all(db: Session, activo_only: bool = False) -> List[Supplier]:
+    def get_all(db: Session, activo_only: bool = False, tenant_id: Optional[uuid.UUID] = None) -> List[Supplier]:
         query = db.query(Supplier)
+        if tenant_id:
+            query = query.filter(Supplier.tenant_id == tenant_id)
         if activo_only:
             query = query.filter(Supplier.activo == True)
         return query.order_by(Supplier.nombre.asc()).all()
@@ -20,13 +22,16 @@ class SupplierService:
         return db.query(Supplier).filter(Supplier.id == supplier_id).first()
 
     @staticmethod
-    def get_by_name(db: Session, nombre: str) -> Optional[Supplier]:
-        return db.query(Supplier).filter(Supplier.nombre.ilike(nombre.strip())).first()
+    def get_by_name(db: Session, nombre: str, tenant_id: Optional[uuid.UUID] = None) -> Optional[Supplier]:
+        query = db.query(Supplier).filter(Supplier.nombre.ilike(nombre.strip()))
+        if tenant_id:
+            query = query.filter(Supplier.tenant_id == tenant_id)
+        return query.first()
 
     @staticmethod
-    def create(db: Session, supplier_in: SupplierCreate) -> Supplier:
+    def create(db: Session, supplier_in: SupplierCreate, tenant_id: Optional[uuid.UUID] = None) -> Supplier:
         nombre = supplier_in.nombre.strip()
-        existing = SupplierService.get_by_name(db, nombre)
+        existing = SupplierService.get_by_name(db, nombre, tenant_id=tenant_id)
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -34,6 +39,7 @@ class SupplierService:
             )
 
         supplier = Supplier(
+            tenant_id=tenant_id,
             nombre=nombre,
             contacto=supplier_in.contacto.strip() if supplier_in.contacto else None,
             telefono=supplier_in.telefono.strip() if supplier_in.telefono else None,

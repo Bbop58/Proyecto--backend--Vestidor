@@ -25,8 +25,11 @@ class UserService:
         return db.query(User).filter(User.email == email.lower().strip()).first()
 
     @staticmethod
-    def get_all(db: Session) -> List[User]:
-        return db.query(User).all()
+    def get_all(db: Session, tenant_id: Optional[uuid.UUID] = None) -> List[User]:
+        query = db.query(User)
+        if tenant_id:
+            query = query.filter(User.tenant_id == tenant_id)
+        return query.all()
 
     @staticmethod
     def create(db: Session, user_in: UserCreate) -> User:

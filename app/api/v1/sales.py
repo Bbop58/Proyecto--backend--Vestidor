@@ -31,9 +31,10 @@ router = APIRouter(prefix="/ventas", tags=["Ventas"])
 )
 def get_summary_report(
     sucursal_id: Optional[uuid.UUID] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
 ):
-    return SaleService.get_summary_report(db, sucursal_id=sucursal_id)
+    return SaleService.get_summary_report(db, sucursal_id=sucursal_id, tenant_id=current_user.tenant_id)
 
 
 @router.get(
@@ -45,9 +46,10 @@ def get_summary_report(
 def get_top_products(
     sucursal_id: Optional[uuid.UUID] = Query(None),
     limit: int = Query(10, ge=1, le=50),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
 ):
-    return SaleService.get_top_products(db, sucursal_id=sucursal_id, limit=limit)
+    return SaleService.get_top_products(db, sucursal_id=sucursal_id, limit=limit, tenant_id=current_user.tenant_id)
 
 
 # ─────────────────────────── REGISTRO DE VENTAS ────────────────────────────

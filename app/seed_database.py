@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import os
 import uuid
 import random
@@ -2146,6 +2146,20 @@ def seed_all():
             branches_map=branches_map,
             users_map=users_map
         )
+
+        # 10. Garantizar Integridad de Aislamiento Multi-Tenant (Backfill de seguridad)
+        from sqlalchemy import text
+        db.execute(text("""
+            UPDATE inventario SET tenant_id = s.tenant_id FROM sucursales s WHERE inventario.sucursal_id = s.id AND inventario.tenant_id IS NULL;
+            UPDATE movimientos_inventario SET tenant_id = i.tenant_id FROM inventario i WHERE movimientos_inventario.inventario_id = i.id AND movimientos_inventario.tenant_id IS NULL;
+            UPDATE reservas SET tenant_id = s.tenant_id FROM sucursales s WHERE reservas.sucursal_id = s.id AND reservas.tenant_id IS NULL;
+            UPDATE ventas SET tenant_id = s.tenant_id FROM sucursales s WHERE ventas.sucursal_id = s.id AND ventas.tenant_id IS NULL;
+            UPDATE productos SET tenant_id = :urban_id WHERE tenant_id IS NULL;
+            UPDATE categorias SET tenant_id = :urban_id WHERE tenant_id IS NULL;
+            UPDATE temporadas SET tenant_id = :urban_id WHERE tenant_id IS NULL;
+            UPDATE users SET tenant_id = :urban_id WHERE tenant_id IS NULL AND email != 'superadmin@ficcstore.com';
+        """), {"urban_id": tenant_urban.id})
+        db.commit()
 
         print("\n==================================================")
         print(" [SUCCESS] BASE DE DATOS POBLADA EXITOSAMENTE! ")

@@ -29,8 +29,11 @@ def build_user_response(user: User, db: Session) -> UserResponse:
     dependencies=[Depends(require_permission("users.list"))],
     summary="Listar usuarios"
 )
-def list_users(db: Session = Depends(get_db)):
-    users = UserService.get_all(db)
+def list_users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    users = UserService.get_all(db, tenant_id=current_user.tenant_id)
     return [build_user_response(u, db) for u in users]
 
 

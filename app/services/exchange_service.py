@@ -83,9 +83,12 @@ class ExchangeService:
         }
 
     @staticmethod
-    def verify_receipt(db: Session, numero_recibo: str) -> VerifyReceiptResponse:
+    def verify_receipt(db: Session, numero_recibo: str, tenant_id: Optional[uuid.UUID] = None) -> VerifyReceiptResponse:
         recibo_limpio = numero_recibo.strip().upper()
-        venta = db.query(Sale).filter(Sale.numero_recibo.ilike(recibo_limpio)).first()
+        q = db.query(Sale).filter(Sale.numero_recibo.ilike(recibo_limpio))
+        if tenant_id:
+            q = q.filter(Sale.tenant_id == tenant_id)
+        venta = q.first()
 
         if not venta:
             return VerifyReceiptResponse(
@@ -442,9 +445,13 @@ class ExchangeService:
         db: Session,
         sucursal_id: Optional[uuid.UUID] = None,
         fecha_inicio: Optional[date] = None,
-        fecha_fin: Optional[date] = None
+        fecha_fin: Optional[date] = None,
+        tenant_id: Optional[uuid.UUID] = None
     ) -> List[dict]:
         query = db.query(ProductExchange)
+
+        if tenant_id:
+            query = query.filter(ProductExchange.tenant_id == tenant_id)
 
         if sucursal_id:
             query = query.filter(ProductExchange.sucursal_id == sucursal_id)
@@ -459,8 +466,11 @@ class ExchangeService:
         return [ExchangeService._format_exchange_response(c) for c in cambios]
 
     @staticmethod
-    def get_exchange_by_id(db: Session, cambio_id: uuid.UUID) -> dict:
-        cambio = db.query(ProductExchange).filter(ProductExchange.id == cambio_id).first()
+    def get_exchange_by_id(db: Session, cambio_id: uuid.UUID, tenant_id: Optional[uuid.UUID] = None) -> dict:
+        q = db.query(ProductExchange).filter(ProductExchange.id == cambio_id)
+        if tenant_id:
+            q = q.filter(ProductExchange.tenant_id == tenant_id)
+        cambio = q.first()
         if not cambio:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comprobante de cambio no encontrado.")
         return ExchangeService._format_exchange_response(cambio)

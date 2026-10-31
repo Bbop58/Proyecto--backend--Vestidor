@@ -65,7 +65,8 @@ def get_reservations(
     cliente_id: Optional[uuid.UUID] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
 ):
     return ReservationService.get_reservations(
         db,
@@ -73,7 +74,8 @@ def get_reservations(
         estado=estado,
         cliente_id=cliente_id,
         limit=limit,
-        offset=offset
+        offset=offset,
+        tenant_id=current_user.tenant_id
     )
 
 

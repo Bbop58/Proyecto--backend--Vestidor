@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -220,9 +220,12 @@ class ReservationService:
         estado: Optional[ReservationStatus] = None,
         cliente_id: Optional[uuid.UUID] = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
+        tenant_id: Optional[uuid.UUID] = None
     ) -> List[dict]:
         q = db.query(Reservation)
+        if tenant_id:
+            q = q.filter(Reservation.tenant_id == tenant_id)
         if sucursal_id:
             q = q.filter(Reservation.sucursal_id == sucursal_id)
         if estado:

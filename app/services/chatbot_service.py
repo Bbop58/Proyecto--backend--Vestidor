@@ -123,8 +123,9 @@ class ChatbotService:
 
         if is_staff_user:
             try:
-                business_metrics = SaleService.get_summary_report(db)
-                top_products_data = SaleService.get_top_products(db, limit=5)
+                chatbot_tenant_id = tenant.id if tenant else None
+                business_metrics = SaleService.get_summary_report(db, tenant_id=chatbot_tenant_id)
+                top_products_data = SaleService.get_top_products(db, limit=5, tenant_id=chatbot_tenant_id)
                 for idx, tp in enumerate(top_products_data, start=1):
                     top_products_text_list.append(
                         f"  #{idx} {tp.get('producto_nombre', 'Prenda')} ({tp.get('talla', '')}/{tp.get('color', '')}): "

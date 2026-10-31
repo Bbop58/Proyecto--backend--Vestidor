@@ -3,7 +3,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, status, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.api.deps import require_permission
+from app.api.deps import require_permission, get_current_user
+from app.models.user import User
 from app.schemas.season import SeasonCreate, SeasonUpdate, SeasonResponse
 from app.services.season_service import SeasonService
 
@@ -19,9 +20,10 @@ router = APIRouter(prefix="/temporadas", tags=["Temporadas"])
 def list_seasons(
     año: Optional[int] = Query(None, description="Filtrar por año"),
     activa_only: bool = Query(False, description="Filtrar solo temporadas activas"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    return SeasonService.get_all(db, año=año, activa_only=activa_only)
+    return SeasonService.get_all(db, año=año, activa_only=activa_only, tenant_id=current_user.tenant_id)
 
 
 @router.post(
@@ -33,9 +35,10 @@ def list_seasons(
 )
 def create_season(
     season_in: SeasonCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    return SeasonService.create(db, season_in)
+    return SeasonService.create(db, season_in, tenant_id=current_user.tenant_id)
 
 
 @router.get(

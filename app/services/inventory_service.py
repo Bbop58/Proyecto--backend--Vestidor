@@ -230,10 +230,13 @@ class InventoryService:
         fecha_desde=None,
         fecha_hasta=None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
+        tenant_id: Optional[uuid.UUID] = None
     ) -> List[InventoryMovement]:
         q = db.query(InventoryMovement)
 
+        if tenant_id:
+            q = q.filter(InventoryMovement.tenant_id == tenant_id)
         if sucursal_id:
             q = q.join(Inventory).filter(Inventory.sucursal_id == sucursal_id)
         if tipo:
@@ -250,9 +253,12 @@ class InventoryService:
     @staticmethod
     def get_alerts(
         db: Session,
-        sucursal_id: Optional[uuid.UUID] = None
+        sucursal_id: Optional[uuid.UUID] = None,
+        tenant_id: Optional[uuid.UUID] = None
     ) -> List[dict]:
         q = db.query(Inventory).filter(Inventory.activo == True)
+        if tenant_id:
+            q = q.filter(Inventory.tenant_id == tenant_id)
         if sucursal_id:
             q = q.filter(Inventory.sucursal_id == sucursal_id)
 

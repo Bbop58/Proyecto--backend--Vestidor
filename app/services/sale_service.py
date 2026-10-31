@@ -484,7 +484,8 @@ class SaleService:
     def get_top_products(
         db: Session,
         sucursal_id: Optional[uuid.UUID] = None,
-        limit: int = 10
+        limit: int = 10,
+        tenant_id: Optional[uuid.UUID] = None
     ) -> List[dict]:
         q = (
             db.query(
@@ -495,6 +496,8 @@ class SaleService:
             .join(Sale, SaleDetail.venta_id == Sale.id)
             .filter(Sale.estado == SaleStatus.COMPLETADA)
         )
+        if tenant_id:
+            q = q.filter(Sale.tenant_id == tenant_id)
         if sucursal_id:
             q = q.filter(Sale.sucursal_id == sucursal_id)
 

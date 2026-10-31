@@ -26,9 +26,10 @@ router = APIRouter(prefix="/cambios", tags=["Cambios de Prendas"])
 )
 def verify_receipt(
     numero_recibo: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    return ExchangeService.verify_receipt(db, numero_recibo=numero_recibo)
+    return ExchangeService.verify_receipt(db, numero_recibo=numero_recibo, tenant_id=current_user.tenant_id)
 
 
 @router.post(
@@ -78,13 +79,15 @@ def list_exchanges(
     sucursal_id: Optional[uuid.UUID] = Query(None),
     fecha_inicio: Optional[date] = Query(None),
     fecha_fin: Optional[date] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     return ExchangeService.list_exchanges(
         db,
         sucursal_id=sucursal_id,
         fecha_inicio=fecha_inicio,
-        fecha_fin=fecha_fin
+        fecha_fin=fecha_fin,
+        tenant_id=current_user.tenant_id
     )
 
 
@@ -96,9 +99,10 @@ def list_exchanges(
 )
 def get_exchange_by_id(
     id: uuid.UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    return ExchangeService.get_exchange_by_id(db, cambio_id=id)
+    return ExchangeService.get_exchange_by_id(db, cambio_id=id, tenant_id=current_user.tenant_id)
 
 
 @router.get(

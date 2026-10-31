@@ -9,8 +9,10 @@ from app.schemas.season import SeasonCreate, SeasonUpdate
 
 class SeasonService:
     @staticmethod
-    def get_all(db: Session, año: Optional[int] = None, activa_only: bool = False) -> List[Season]:
+    def get_all(db: Session, año: Optional[int] = None, activa_only: bool = False, tenant_id: Optional[uuid.UUID] = None) -> List[Season]:
         query = db.query(Season)
+        if tenant_id:
+            query = query.filter(Season.tenant_id == tenant_id)
         if año is not None:
             query = query.filter(Season.año == año)
         if activa_only:
@@ -22,27 +24,34 @@ class SeasonService:
         return db.query(Season).filter(Season.id == season_id).first()
 
     @staticmethod
-    def get_by_name(db: Session, nombre: str) -> Optional[Season]:
-        return db.query(Season).filter(Season.nombre.ilike(nombre.strip())).first()
+    def get_by_name(db: Session, nombre: str, tenant_id: Optional[uuid.UUID] = None) -> Optional[Season]:
+        query = db.query(Season).filter(Season.nombre.ilike(nombre.strip()))
+        if tenant_id:
+            query = query.filter(Season.tenant_id == tenant_id)
+        return query.first()
 
     @staticmethod
-    def create(db: Session, season_in: SeasonCreate) -> Season:
+    def create(db: Session, season_in: SeasonCreate, tenant_id: Optional[uuid.UUID] = None) -> Season:
         nombre = season_in.nombre.strip()
-        existing = SeasonService.get_by_name(db, nombre)
+        existing = SeasonService.get_by_name(db, nombre, tenant_id=tenant_id)
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Ya existe una temporada con el nombre '{nombre}'"
             )
 
-        # Si se crea como activa, desactivar las otras del mismo año
+        # Si se crea como activa, desactivar las otras del mismo año para el tenant
         if season_in.activa:
-            db.query(Season).filter(
+            q_update = db.query(Season).filter(
                 Season.año == season_in.año,
                 Season.activa == True
-            ).update({"activa": False})
+            )
+            if tenant_id:
+                q_update = q_update.filter(Season.tenant_id == tenant_id)
+            q_update.update({"activa": False})
 
         season = Season(
+            tenant_id=tenant_id,
             nombre=nombre,
             año=season_in.año,
             fecha_inicio=season_in.fecha_inicio,

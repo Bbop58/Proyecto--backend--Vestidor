@@ -26,6 +26,10 @@ class VoiceReportQueryResponse(BaseModel):
     filas: List[Dict[str, Any]]
     total_filas: int
     tiempo_ms: float
+    resumen_hablado: Optional[str] = Field(
+        default=None,
+        description="Resumen ejecutivo en lenguaje natural optimizado para síntesis de voz (Audio Briefing)"
+    )
 
 
 class VoiceReportExcelExportRequest(BaseModel):

@@ -394,6 +394,109 @@ Respond strictly with a JSON object in this exact format:
         return val
 
     @classmethod
+    def _build_speech_summary(
+        cls,
+        question: str,
+        interpretation: str,
+        columns: List[str],
+        rows: List[Dict[str, Any]]
+    ) -> str:
+        """
+        Genera un resumen narrativo de alto nivel (Audio Briefing) optimizado
+        para ser locutado por síntesis de voz (TTS).
+        Sintetiza totales, elementos líderes y hallazgos clave sin tecnicismos.
+        """
+        if not rows:
+            return "Reporte generado exitosamente. No se encontraron registros para los criterios solicitados."
+
+        total_rows = len(rows)
+        # Identificar columnas cuantitativas clave
+        money_col = None
+        qty_col = None
+        label_col = None
+
+        for col in columns:
+            col_l = col.lower()
+            if not money_col and any(w in col_l for w in ["total_recaudado", "total_ventas", "total_ingresos", "monto_total", "ingresos", "monto_neto", "total_neto", "bs"]):
+                money_col = col
+            elif not qty_col and any(w in col_l for w in ["unidades", "cantidad", "total_ventas", "pedidos", "stock", "existencia"]):
+                qty_col = col
+            elif not label_col and any(w in col_l for w in ["producto", "sucursal", "nombre", "categoria", "cliente", "periodo"]):
+                label_col = col
+
+        # Si aún no tenemos label_col, tomar la primera columna
+        if not label_col and columns:
+            label_col = columns[0]
+
+        summary_parts = []
+
+        # 1. Apertura con cantidad de elementos
+        entity_name = "registros"
+        if label_col:
+            lbl = label_col.lower()
+            if "sucursal" in lbl:
+                entity_name = "sucursales"
+            elif "producto" in lbl or "prenda" in lbl:
+                entity_name = "productos"
+            elif "cliente" in lbl:
+                entity_name = "clientes"
+            elif "categoria" in lbl:
+                entity_name = "categorías"
+            elif "semana" in lbl or "periodo" in lbl:
+                entity_name = "períodos semanales"
+
+        summary_parts.append(f"Reporte generado exitosamente con {total_rows} {entity_name}.")
+
+        # 2. Métricas acumuladas si existen
+        total_money = 0.0
+        total_qty = 0
+        if money_col:
+            for r in rows:
+                val = r.get(money_col)
+                if isinstance(val, (int, float)):
+                    total_money += float(val)
+            if total_money > 0:
+                summary_parts.append(f"La facturación acumulada suma {total_money:,.2f} Bolivianos.")
+
+        if qty_col and qty_col != money_col:
+            for r in rows:
+                val = r.get(qty_col)
+                if isinstance(val, (int, float)):
+                    total_qty += int(val)
+            if total_qty > 0 and ("unidades" in qty_col.lower() or "cantidad" in qty_col.lower()):
+                summary_parts.append(f"Se registraron {total_qty:,} unidades en total.")
+
+        # 3. Elementos líderes o destacados
+        if label_col and total_rows > 0:
+            top_1 = rows[0]
+            top_1_name = str(top_1.get(label_col, ''))
+            top_1_val = ""
+            if money_col and top_1.get(money_col) is not None:
+                top_1_val = f" con {float(top_1.get(money_col, 0)):,.2f} Bolivianos"
+            elif qty_col and top_1.get(qty_col) is not None:
+                top_1_val = f" con {top_1.get(qty_col)} unidades"
+
+            if top_1_name:
+                if total_rows > 1:
+                    top_2 = rows[1]
+                    top_2_name = str(top_2.get(label_col, ''))
+                    top_2_val = ""
+                    if money_col and top_2.get(money_col) is not None:
+                        top_2_val = f" ({float(top_2.get(money_col, 0)):,.2f} Bolivianos)"
+                    elif qty_col and top_2.get(qty_col) is not None:
+                        top_2_val = f" ({top_2.get(qty_col)} unidades)"
+
+                    summary_parts.append(f"El puesto principal lo lidera {top_1_name}{top_1_val}, seguido por {top_2_name}{top_2_val}.")
+                else:
+                    summary_parts.append(f"El registro destacado es {top_1_name}{top_1_val}.")
+
+        resumen = " ".join(summary_parts)
+        # Limpieza de caracteres para que la voz fluya perfectamente
+        resumen = resumen.replace("Bs.", "Bolivianos").replace("Bs", "Bolivianos")
+        resumen = re.sub(r"[\*#_`]", "", resumen)
+        return resumen
+
+    @classmethod
     def execute_voice_report(
         cls,
         db: Session,
@@ -406,6 +509,7 @@ Respond strictly with a JSON object in this exact format:
         2. Validación estricta de seguridad.
         3. SET TRANSACTION READ ONLY + statement_timeout = 5000.
         4. Serialización de filas y columnas.
+        5. Generación de resumen narrativo hablado (Audio Briefing).
         """
         start_time = time.time()
 
@@ -422,7 +526,6 @@ Respond strictly with a JSON object in this exact format:
 
         raw_sql, interpretation = cls._generate_sql_with_gemini(question, limit=limit)
         validated_sql = cls._validate_sql_security(raw_sql)
-
 
         if not re.search(r"\bLIMIT\s+\d+\b", validated_sql, re.IGNORECASE):
             validated_sql = f"{validated_sql} LIMIT {limit}"
@@ -445,6 +548,7 @@ Respond strictly with a JSON object in this exact format:
                     rows.append(row_dict)
 
             elapsed_ms = round((time.time() - start_time) * 1000, 2)
+            speech_summary = cls._build_speech_summary(question, interpretation, columns, rows)
             logger.info(f"Reporte de voz ejecutado con éxito: {len(rows)} filas en {elapsed_ms}ms")
 
             return VoiceReportQueryResponse(
@@ -454,7 +558,8 @@ Respond strictly with a JSON object in this exact format:
                 columnas=columns,
                 filas=rows,
                 total_filas=len(rows),
-                tiempo_ms=elapsed_ms
+                tiempo_ms=elapsed_ms,
+                resumen_hablado=speech_summary
             )
 
         except HTTPException:

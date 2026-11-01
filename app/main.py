@@ -155,6 +155,14 @@ def on_startup():
                     CONSTRAINT uq_user_tenant_wallet UNIQUE (user_id, tenant_id)
                 );
 
+                ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS saldo_actual NUMERIC(10, 2) DEFAULT 0.00;
+                ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS saldo_retenido NUMERIC(10, 2) DEFAULT 0.00;
+                ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS nonce_secuencia INTEGER DEFAULT 0;
+                ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS firma_balance VARCHAR(255);
+                ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS moneda VARCHAR(10) DEFAULT 'BOB';
+                ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS ultimo_sync_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+                ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+
                 CREATE TABLE IF NOT EXISTS wallet_transactions (
                     id UUID PRIMARY KEY,
                     wallet_id UUID NOT NULL REFERENCES user_wallets(id) ON DELETE CASCADE,

@@ -96,3 +96,46 @@ class CustomerSegmentationResponse(BaseModel):
     puntos_muestra: List[CustomerDataPoint]
     metricas: UnsupervisedModelMetrics
     resumen_ejecutivo: str
+
+
+# ── Optimizador Predictivo de Ofertas y Liquidaciones (Smart Markdown) ──
+
+class MarkdownRecommendation(BaseModel):
+    producto_id: str
+    producto_nombre: str
+    categoria: str
+    imagen_url: Optional[str] = None
+    stock_total: int
+    precio_base: float
+    precio_oferta_actual: Optional[float] = None
+    en_oferta_actualmente: bool
+    dias_inventario_proyectado: int
+    caida_demanda_pct: float
+    descuento_sugerido_pct: float
+    precio_oferta_sugerido: float
+    ahorro_estimado_bs: float
+    fecha_inicio_sugerida: str
+    fecha_fin_sugerida: str
+    diagnostico_ia: str
+    nivel_urgencia: str  # "ALTO", "MEDIO", "MODERADO"
+    estado: str  # "SUGERIDA", "ACTIVA", "PROGRAMADA"
+
+
+class ApplyMarkdownRequest(BaseModel):
+    descuento_pct: Optional[float] = Field(default=None, ge=5.0, le=75.0)
+    precio_oferta: Optional[float] = Field(default=None, gt=0.0)
+    fecha_inicio: Optional[str] = None  # Formato YYYY-MM-DD
+    fecha_fin: Optional[str] = None
+    motivo: Optional[str] = None
+
+
+class ApplyMarkdownResponse(BaseModel):
+    success: bool
+    mensaje: str
+    producto_id: str
+    producto_nombre: str
+    precio_base: float
+    precio_oferta: float
+    descuento_pct: float
+    fecha_inicio: Optional[str] = None
+    fecha_fin: Optional[str] = None

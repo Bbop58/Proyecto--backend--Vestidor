@@ -1,4 +1,5 @@
 import uuid
+import logging
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -9,7 +10,9 @@ from app.api.deps import get_current_user
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.branch import Branch
-from app.models.sale import PaymentMethod
+from app.models.sale import Sale, PaymentMethod
+
+logger = logging.getLogger(__name__)
 from app.schemas.sale import PresencialSaleCreate, PaymentInfo, SaleItemCreate, SaleResponse
 from app.schemas.paypal import (
     PayPalCreateOrderRequest,
@@ -325,6 +328,20 @@ def capture_paypal_order(
     Si la captura es exitosa, registra la venta en la BD, descuenta el stock
     y emite el recibo de venta oficial.
     """
+    # 0. Idempotencia local: si esta orden de PayPal ya fue registrada en una venta previa, retornarla de inmediato
+    existing_sale = db.query(Sale).filter(
+        Sale.referencia_pago.like(f"%{data.order_id}%")
+    ).first()
+    if existing_sale:
+        logger.info(f"Venta con PayPal #{data.order_id} ya registrada previamente (#{existing_sale.numero_recibo}). Retornando de forma idempotente.")
+        return PayPalCaptureOrderResponse(
+            venta=SaleResponse(**SaleService._format_sale_response(existing_sale)),
+            paypal_order_id=data.order_id,
+            paypal_capture_id=data.order_id,
+            paypal_status="COMPLETED",
+            monto_usd=round(float(existing_sale.monto_total) / 6.96, 2)
+        )
+
     # 1. Capturar orden en PayPal REST API usando credenciales del Tenant o Global
     creds = _resolve_tenant_paypal(db=db, sucursal_id=data.sucursal_id, user=current_user)
     capture_res = PayPalService.capture_order(

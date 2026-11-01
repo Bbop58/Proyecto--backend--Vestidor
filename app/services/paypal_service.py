@@ -1,10 +1,13 @@
 import json
 import base64
+import logging
 import urllib.request
 import urllib.error
 from typing import Dict, Any, Tuple, Optional
 from fastapi import HTTPException, status
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class PayPalService:
@@ -216,6 +219,41 @@ class PayPalService:
                 }
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8")
+            
+            # Idempotencia / Resiliencia: La orden ya fue capturada previamente en PayPal
+            if "ORDER_ALREADY_CAPTURED" in err_body or "ORDER_COMPLETED_DONE" in err_body:
+                logger.info(f"Orden PayPal #{order_id} ya fue capturada. Verificando estado final...")
+                try:
+                    details = cls.get_order_details(order_id, client_id=client_id, client_secret=client_secret, mode=mode)
+                    if details.get("status") == "COMPLETED":
+                        purchase_units = details.get("purchase_units", [])
+                        capture_id = None
+                        amount_usd = 0.0
+                        if purchase_units:
+                            payments = purchase_units[0].get("payments", {})
+                            captures = payments.get("captures", [])
+                            if captures:
+                                capture_id = captures[0].get("id")
+                            if purchase_units[0].get("amount"):
+                                amount_usd = float(purchase_units[0]["amount"].get("value", 0.0))
+                        
+                        return {
+                            "order_id": details.get("id"),
+                            "capture_id": capture_id or details.get("id"),
+                            "status": "COMPLETED",
+                            "monto_usd": amount_usd,
+                            "raw_response": details
+                        }
+                except Exception as inner_e:
+                    logger.warning(f"Error consultando detalles tras ORDER_ALREADY_CAPTURED: {inner_e}")
+
+            # Pagador no ha completado la aprobación en la web de PayPal
+            if "ORDER_NOT_APPROVED" in err_body:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="El pago aún no ha sido autorizado en PayPal. Completa el inicio de sesión y confirma la compra en la ventana de PayPal antes de presionar este botón."
+                )
+
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Error de PayPal al capturar la orden ({e.code}): {err_body}"

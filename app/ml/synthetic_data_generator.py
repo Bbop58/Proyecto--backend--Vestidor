@@ -8,7 +8,7 @@ CATEGORIAS_MODA = [
     "Poleras y Camisas",
     "Pantalones y Jeans",
     "Chaquetas y Abrigos",
-    "Vestidos y Faldas",
+    "Trajes y Blazers",
     "Calzados y Accesorios"
 ]
 
@@ -75,7 +75,7 @@ class SyntheticDataGenerator:
                         "Poleras y Camisas": 120.0,
                         "Pantalones y Jeans": 240.0,
                         "Chaquetas y Abrigos": 380.0,
-                        "Vestidos y Faldas": 210.0,
+                        "Trajes y Blazers": 450.0,
                         "Calzados y Accesorios": 180.0
                     }.get(categoria, 150.0)
 
@@ -85,8 +85,8 @@ class SyntheticDataGenerator:
                         cat_season_boost = 1.75
                     elif categoria == "Poleras y Camisas" and temporada == "Verano":
                         cat_season_boost = 1.50
-                    elif categoria == "Vestidos y Faldas" and temporada in ["Primavera", "Verano"]:
-                        cat_season_boost = 1.40
+                    elif categoria == "Trajes y Blazers" and es_fin_de_ano:
+                        cat_season_boost = 1.60
 
                     # Crecimiento orgánico semanal moderado
                     trend = 1.0 + (week * 0.003)

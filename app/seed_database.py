@@ -1278,7 +1278,7 @@ def seed_all():
         if not cat_moda:
             cat_moda = Category(
                 nombre="Moda Formal y Ejecutiva",
-                descripcion="Prendas de vestir formales, trajes ejecutivos y vestidos elegantes",
+                descripcion="Prendas de vestir formales masculinas, trajes ejecutivos, ternos y blazers elegantes",
                 activa=True,
                 tenant_id=tenant_moda.id
             )
@@ -1668,17 +1668,17 @@ def seed_all():
                 ]
             },
             {
-                "nombre": "Vestido de Fiesta Elegante",
-                "descripcion": "Vestido largo de fiesta en satén con escote drapeado y caída fluida para ocasiones de gala.",
-                "precio_base": Decimal("420.00"),
+                "nombre": "Smoking de Gala Black Tie",
+                "descripcion": "Smoking formal para hombre con solapa chal de satén y corte entallado, ideal para eventos de gala, bodas y etiqueta rigurosa.",
+                "precio_base": Decimal("450.00"),
                 "categoria_id": cat_moda.id,
                 "temporada": "Colección Gala 2025",
                 "proveedor": "Textilera Andina S.A.",
-                "imagen_url": "https://images.unsplash.com/photo-1566174053879-31528523f8ae?w=600",
+                "imagen_url": "https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=600",
                 "variantes": [
-                    {"talla": "S", "color": "Rojo Carmín", "sku": "VES-FST-RED-S", "precio_extra": Decimal("0.00")},
-                    {"talla": "M", "color": "Rojo Carmín", "sku": "VES-FST-RED-M", "precio_extra": Decimal("0.00")},
-                    {"talla": "L", "color": "Negro Noche", "sku": "VES-FST-BLK-L", "precio_extra": Decimal("0.00")},
+                    {"talla": "38R", "color": "Negro Clásico", "sku": "SMK-GLA-BLK-38", "precio_extra": Decimal("0.00")},
+                    {"talla": "40R", "color": "Negro Clásico", "sku": "SMK-GLA-BLK-40", "precio_extra": Decimal("0.00")},
+                    {"talla": "42R", "color": "Azul Noche", "sku": "SMK-GLA-NVY-42", "precio_extra": Decimal("25.00")},
                 ]
             }
         ]

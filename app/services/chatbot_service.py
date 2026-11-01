@@ -262,7 +262,7 @@ Eres "FICCT Bot", el Asistente Virtual Inteligente oficial de retail para la emp
 Tu propósito es asesorar a clientes en moda, responder dudas del catálogo, precios, tallas, sucursales, envíos y políticas de tienda.
 
 DATOS DEL NEGOCIO ({tenant_name}):
-- Enfoque de Marca: {"Moda ejecutiva, formal, ternos de gala y vestidos" if is_moda_express else "Moda masculina contemporánea, streetwear, poleras oversize, camisas y chaquetas denim"}.
+- Enfoque de Marca: {"Moda masculina ejecutiva, formal, trajes de gala y blazers" if is_moda_express else "Moda masculina contemporánea, streetwear, poleras oversize, camisas y chaquetas denim"}.
 - Moneda Oficial: Bolivianos (BOB - Bs.).
 - Catálogo Actual de Productos:
 {catalog_text}
@@ -371,7 +371,7 @@ DIRECTIVAS CONVERSACIONALES:
             ]
         elif is_moda_express:
             suggested_prompts = [
-                "¿Qué ternos o vestidos tienen?",
+                "¿Qué ternos o trajes de gala tienen?",
                 "¿Dónde queda la sucursal de Tarija?",
                 "¿Cómo funciona el cambio de prendas?",
                 "¿Cuáles son los métodos de pago?"

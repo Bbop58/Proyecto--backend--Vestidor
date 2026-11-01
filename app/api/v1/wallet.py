@@ -43,7 +43,7 @@ def get_my_wallet(
         tenant_id = first_tenant.id if first_tenant else uuid.uuid4()
 
     wallet = WalletService.get_or_create_wallet(db, current_user.id, tenant_id)
-    return wallet
+    return WalletResponse.model_validate(wallet)
 
 
 @router.get(
@@ -63,7 +63,8 @@ def get_my_wallet_history(
         tenant_id = first_tenant.id if first_tenant else uuid.uuid4()
 
     wallet = WalletService.get_or_create_wallet(db, current_user.id, tenant_id)
-    return WalletService.get_wallet_history(db, wallet.id, limit=limit)
+    history = WalletService.get_wallet_history(db, wallet.id, limit=limit)
+    return [WalletTransactionResponse.model_validate(t) for t in history]
 
 
 @router.post(
@@ -178,7 +179,8 @@ def list_client_wallets(
     q = db.query(UserWallet)
     if current_user.tenant_id:
         q = q.filter(UserWallet.tenant_id == current_user.tenant_id)
-    return q.order_by(UserWallet.saldo_actual.desc()).limit(limit).all()
+    wallets = q.order_by(UserWallet.saldo_actual.desc()).limit(limit).all()
+    return [WalletResponse.model_validate(w) for w in wallets]
 
 
 @router.post(

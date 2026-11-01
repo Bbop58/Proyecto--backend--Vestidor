@@ -41,6 +41,15 @@ os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {str(exc)}", "path": str(request.url)}
+    )
+
+
 @app.on_event("startup")
 def on_startup():
     Base.metadata.create_all(bind=engine)
@@ -130,9 +139,41 @@ def on_startup():
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS user_wallets (
+                    id UUID PRIMARY KEY,
+                    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    saldo_actual NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+                    saldo_retenido NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+                    nonce_secuencia INTEGER NOT NULL DEFAULT 0,
+                    firma_balance VARCHAR(255),
+                    moneda VARCHAR(10) NOT NULL DEFAULT 'BOB',
+                    ultimo_sync_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT uq_user_tenant_wallet UNIQUE (user_id, tenant_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS wallet_transactions (
+                    id UUID PRIMARY KEY,
+                    wallet_id UUID NOT NULL REFERENCES user_wallets(id) ON DELETE CASCADE,
+                    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    tipo VARCHAR(50) NOT NULL,
+                    monto NUMERIC(10, 2) NOT NULL,
+                    saldo_anterior NUMERIC(10, 2) NOT NULL,
+                    saldo_posterior NUMERIC(10, 2) NOT NULL,
+                    referencia_externa VARCHAR(150),
+                    client_operation_id UUID,
+                    origen VARCHAR(30) NOT NULL DEFAULT 'MOBILE',
+                    estado_sync VARCHAR(30) NOT NULL DEFAULT 'CONCILIADO',
+                    notas TEXT,
+                    metadatos JSONB,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
             """))
     except Exception as e:
-        pass
+        print(f"[STARTUP MIGRATION ERROR]: {e}")
 
     import threading
     def auto_seed():

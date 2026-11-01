@@ -81,9 +81,40 @@ def on_startup():
                 -- Ofertas y Descuentos
                 ALTER TABLE productos ADD COLUMN IF NOT EXISTS precio_oferta NUMERIC(10, 2);
                 ALTER TABLE productos ADD COLUMN IF NOT EXISTS en_oferta BOOLEAN DEFAULT FALSE;
+                ALTER TABLE productos ADD COLUMN IF NOT EXISTS fecha_inicio_oferta TIMESTAMPTZ;
+                ALTER TABLE productos ADD COLUMN IF NOT EXISTS fecha_fin_oferta TIMESTAMPTZ;
+                ALTER TABLE productos ADD COLUMN IF NOT EXISTS motivo_oferta VARCHAR(250);
                 ALTER TABLE ventas ADD COLUMN IF NOT EXISTS monto_subtotal NUMERIC(10, 2) DEFAULT 0.0;
                 ALTER TABLE ventas ADD COLUMN IF NOT EXISTS descuento NUMERIC(10, 2) DEFAULT 0.0;
                 ALTER TABLE ventas ADD COLUMN IF NOT EXISTS codigo_cupon VARCHAR(50);
+
+                -- Homogeneización 100% Masculina y Fix de Imágenes
+                UPDATE productos 
+                SET nombre = 'Smoking de Gala Black Tie',
+                    descripcion = 'Smoking formal para hombre con solapa chal de satén y corte entallado, ideal para eventos de gala, bodas y etiqueta rigurosa.',
+                    precio_base = 450.00,
+                    imagen_url = 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=600'
+                WHERE nombre = 'Vestido de Fiesta Elegante';
+
+                UPDATE productos
+                SET imagen_url = 'https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?w=600'
+                WHERE nombre = 'Camisa Ejecutiva Slim Fit';
+
+                UPDATE variantes_producto
+                SET talla = '38R', color = 'Negro Clásico', sku = 'SMK-GLA-BLK-38', precio_extra = 0.0
+                WHERE sku = 'VES-FST-RED-S';
+
+                UPDATE variantes_producto
+                SET talla = '40R', color = 'Negro Clásico', sku = 'SMK-GLA-BLK-40', precio_extra = 0.0
+                WHERE sku = 'VES-FST-RED-M';
+
+                UPDATE variantes_producto
+                SET talla = '42R', color = 'Azul Noche', sku = 'SMK-GLA-NVY-42', precio_extra = 25.0
+                WHERE sku = 'VES-FST-BLK-L';
+
+                UPDATE categorias
+                SET descripcion = 'Prendas de vestir formales masculinas, trajes ejecutivos, ternos y blazers elegantes'
+                WHERE nombre = 'Moda Formal y Ejecutiva';
 
                 CREATE TABLE IF NOT EXISTS cupones_descuento (
                     id UUID PRIMARY KEY,

@@ -1645,7 +1645,7 @@ def seed_all():
                 "categoria_id": cat_moda.id,
                 "temporada": "Línea Ejecutiva 2025",
                 "proveedor": "Confecciones del Oriente",
-                "imagen_url": "https://images.unsplash.com/photo-1620012253295-c15c429f66bf?w=600",
+                "imagen_url": "https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?w=600",
                 "variantes": [
                     {"talla": "S", "color": "Blanco Puro", "sku": "CAM-SLM-WHT-S", "precio_extra": Decimal("0.00")},
                     {"talla": "M", "color": "Blanco Puro", "sku": "CAM-SLM-WHT-M", "precio_extra": Decimal("0.00")},

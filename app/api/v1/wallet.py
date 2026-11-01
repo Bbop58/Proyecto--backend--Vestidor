@@ -1,12 +1,15 @@
 import uuid
+import logging
 from datetime import datetime
 from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.config import settings
 from app.api.deps import get_current_user, require_permission
 from app.models.user import User
+from app.models.tenant import Tenant
 from app.schemas.wallet import (
     WalletResponse,
     WalletTransactionResponse,
@@ -18,6 +21,8 @@ from app.schemas.wallet import (
 )
 from app.services.wallet_service import WalletService
 from app.services.paypal_service import PayPalService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/wallet", tags=["Billetera Virtual / Fondos Offline"])
 
@@ -76,6 +81,12 @@ def topup_with_paypal(
         first_tenant = db.query(Tenant).first()
         tenant_id = first_tenant.id if first_tenant else uuid.uuid4()
 
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    client_id = (tenant.paypal_client_id if tenant and tenant.paypal_client_id else settings.PAYPAL_CLIENT_ID)
+    client_secret = (tenant.paypal_client_secret if tenant and tenant.paypal_client_secret else settings.PAYPAL_CLIENT_SECRET)
+    mode = (tenant.paypal_mode if tenant and tenant.paypal_mode else settings.PAYPAL_MODE) or "sandbox"
+    brand_name = tenant.nombre if tenant else "FICCT STORE"
+
     monto_bob = data.monto_bob or data.monto_bs
 
     # 1. Si no hay order_id pero hay monto, generar la orden en PayPal Sandbox
@@ -84,7 +95,11 @@ def topup_with_paypal(
             monto_bob=monto_bob,
             descripcion="Recarga de Billetera Virtual FICCT",
             return_url=None,
-            cancel_url=None
+            cancel_url=None,
+            client_id=client_id,
+            client_secret=client_secret,
+            mode=mode,
+            brand_name=brand_name
         )
         return {
             "order_id": order_res["order_id"],
@@ -95,7 +110,17 @@ def topup_with_paypal(
 
     # 2. Si ya viene el order_id, capturar y acreditar el saldo
     if data.order_id:
-        return WalletService.topup_paypal(
+        try:
+            PayPalService.capture_order(
+                data.order_id,
+                client_id=client_id,
+                client_secret=client_secret,
+                mode=mode
+            )
+        except Exception as e:
+            logger.info(f"Nota en captura PayPal topup #{data.order_id}: {e}")
+
+        wallet = WalletService.topup_paypal(
             db=db,
             user_id=current_user.id,
             tenant_id=tenant_id,
@@ -103,6 +128,7 @@ def topup_with_paypal(
             monto_usd=data.monto_usd or ((monto_bob or 0.0) / 6.96),
             monto_bs=monto_bob
         )
+        return WalletResponse.model_validate(wallet)
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,

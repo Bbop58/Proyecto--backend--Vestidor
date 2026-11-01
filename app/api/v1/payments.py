@@ -200,8 +200,22 @@ def paypal_return_page():
             </div>
         </div>
 
-        <button class="btn-action" onclick="window.close();">Cerrar Ventana</button>
+        <button class="btn-action" onclick="closeWindow();">Volver a la App / Cerrar Ventana</button>
+        <p style="font-size: 11px; color: #94a3b8; margin-top: 12px; margin-bottom: 0;">
+            Si la pestaña no se cierra automáticamente por políticas de tu navegador, simplemente pulsa 'Atrás' o cambia a la <strong>App FICCT STORE</strong>.
+        </p>
     </div>
+    <script>
+        function closeWindow() {
+            window.close();
+            if (window.history.length > 1) {
+                window.history.back();
+            }
+            setTimeout(function() {
+                try { window.location.href = "about:blank"; } catch(e) {}
+            }, 300);
+        }
+    </script>
 </body>
 </html>"""
     return HTMLResponse(content=html_content, status_code=200)
@@ -277,8 +291,22 @@ def paypal_cancel_page():
         <div class="icon-circle">✕</div>
         <h1>Operación Cancelada</h1>
         <p>No se realizó ningún cargo en tu cuenta de PayPal. Puedes cerrar esta ventana y regresar a la app FICCT STORE para intentar nuevamente.</p>
-        <button class="btn-action" onclick="window.close();">Cerrar Ventana</button>
+        <button class="btn-action" onclick="closeWindow();">Volver a la App / Cerrar Ventana</button>
+        <p style="font-size: 11px; color: #94a3b8; margin-top: 12px; margin-bottom: 0;">
+            Si la pestaña no se cierra automáticamente por políticas de tu navegador, simplemente pulsa 'Atrás' o cambia a la <strong>App FICCT STORE</strong>.
+        </p>
     </div>
+    <script>
+        function closeWindow() {
+            window.close();
+            if (window.history.length > 1) {
+                window.history.back();
+            }
+            setTimeout(function() {
+                try { window.location.href = "about:blank"; } catch(e) {}
+            }, 300);
+        }
+    </script>
 </body>
 </html>"""
     return HTMLResponse(content=html_content, status_code=200)

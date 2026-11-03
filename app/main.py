@@ -52,6 +52,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.on_event("startup")
 def on_startup():
+    if not settings.RUN_STARTUP_MIGRATIONS:
+        return
     Base.metadata.create_all(bind=engine)
     try:
         from sqlalchemy import text
@@ -190,7 +192,8 @@ def on_startup():
             seed_all()
         except Exception as e:
             print(f"[AUTO-SEED] Aviso: {e}")
-    threading.Thread(target=auto_seed, daemon=True).start()
+    if settings.RUN_DEMO_SEED:
+        threading.Thread(target=auto_seed, daemon=True).start()
 
 
 

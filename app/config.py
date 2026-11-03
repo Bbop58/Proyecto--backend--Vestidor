@@ -12,6 +12,9 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
+    RUN_STARTUP_MIGRATIONS: bool = False
+    RUN_DEMO_SEED: bool = False
+
     PROJECT_NAME: str = "Sistema de Autenticacion"
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = "supersecretkey-change-this-in-production-long-random-string"

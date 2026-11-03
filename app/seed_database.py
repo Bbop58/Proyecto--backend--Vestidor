@@ -1,9 +1,10 @@
 import sys
 import os
 import uuid
-import random
+from random import Random
 from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal
+from sqlalchemy.orm import lazyload
 
 # Add backend directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -50,14 +51,9 @@ def seed_historical_sales_and_reservations(
 ):
     print("\n[7/7] Sembrando Historial Equitativo por Sucursal y Mes (Enero - Octubre 2026)...")
 
-    existing_sales_count = db.query(Sale).count()
-    if existing_sales_count >= 100:
-        print(f"  [+] Ya existen {existing_sales_count} ventas en base de datos. Se conserva el historial.")
-        return
+    random = Random(42)
 
-    random.seed(42)
-
-    cliente_role = db.query(Role).filter(Role.name == "cliente").first()
+    cliente_role = db.query(Role).options(lazyload("*")).filter(Role.name == "cliente").first()
     if not cliente_role:
         return
 
@@ -109,7 +105,7 @@ def seed_historical_sales_and_reservations(
 
     urban_customers = []
     for full_name, email in urban_customer_names:
-        u = db.query(User).filter(User.email == email).first()
+        u = db.query(User).options(lazyload("*")).filter(User.email == email).first()
         if not u:
             u = User(
                 email=email,
@@ -122,6 +118,8 @@ def seed_historical_sales_and_reservations(
             )
             db.add(u)
             db.flush()
+        if u.tenant_id != tenant_urban.id:
+            raise ValueError("Historical demo customer tenant conflict")
         urban_customers.append(u)
 
     # Clientes para Moda Express (8 clientes)
@@ -138,7 +136,7 @@ def seed_historical_sales_and_reservations(
 
     moda_customers = []
     for full_name, email in moda_customer_names:
-        u = db.query(User).filter(User.email == email).first()
+        u = db.query(User).options(lazyload("*")).filter(User.email == email).first()
         if not u:
             u = User(
                 email=email,
@@ -151,17 +149,23 @@ def seed_historical_sales_and_reservations(
             )
             db.add(u)
             db.flush()
+        if u.tenant_id != tenant_moda.id:
+            raise ValueError("Historical demo customer tenant conflict")
         moda_customers.append(u)
 
-    db.commit()
+    db.flush()
     print(f"  [OK] Clientes registrados: {len(urban_customers)} UrbanStyle y {len(moda_customers)} Moda Express.")
 
     # 2. Refuerzo de Stock Inicial en Inventario
     print("  -> Reforzando stock inicial y registrando reabastecimiento en kardex...")
     inv_map = {}
-    for inv in db.query(Inventory).all():
+    for inv in db.query(Inventory).options(lazyload("*")).filter(Inventory.tenant_id.in_([tenant_urban.id, tenant_moda.id])).all():
         inv_map[(inv.sucursal_id, inv.variante_id)] = inv
-        if inv.stock_actual < 300:
+        stocked = db.query(InventoryMovement.id).filter_by(
+            inventario_id=inv.id, referencia="REABASTECIMIENTO-ANUAL-2026").first()
+        initial = db.query(InventoryMovement.id).filter_by(
+            inventario_id=inv.id, referencia="RECEPCION-INICIAL-2025").first()
+        if initial and not stocked and inv.stock_actual < 300:
             diff = 350 - inv.stock_actual
             inv.stock_actual = 350
             mov_ref = InventoryMovement(
@@ -173,11 +177,11 @@ def seed_historical_sales_and_reservations(
                 stock_despues=350,
                 referencia="REABASTECIMIENTO-ANUAL-2026",
                 nota="Carga de inventario de seguridad y reposición anual",
-                usuario_id=admin_user.id if admin_user else None,
-                created_at=datetime(2026, 1, 10, 9, 0, tzinfo=timezone.utc)
+                usuario_id=None,  # Automated demo replenishment, no human actor.
+                created_at=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
             )
             db.add(mov_ref)
-    db.commit()
+    db.flush()
 
     # 3. Agrupar variantes por categoría para estacionalidad
     variants_by_cat = {}
@@ -206,7 +210,7 @@ def seed_historical_sales_and_reservations(
 
     for month in range(1, 11):
         month_seq = 1
-        
+
         # Ponderación estacional para UrbanStyle
         if month in [1, 2]:
             cat_weights = [("Shorts & Bermudas", 0.40), ("Poleras & Remeras", 0.40), ("Camisas & Sobrecamisas", 0.15), ("Pantalones & Jeans", 0.05)]
@@ -271,14 +275,16 @@ def seed_historical_sales_and_reservations(
                 monto_neto = monto_total - impuesto_iva
 
                 if metodo_pago == PaymentMethod.EFECTIVO:
-                    tot_int = int(monto_total)
-                    opts = [b for b in bill_denominations if b >= tot_int]
+                    opts = [b for b in bill_denominations if Decimal(b) >= monto_total]
                     monto_recibido = Decimal(opts[0]) if opts else monto_total
                     cambio = monto_recibido - monto_total
                 else:
                     monto_recibido = monto_total
                     cambio = Decimal("0.00")
 
+                if db.query(Sale.id).filter_by(numero_recibo=receipt_no).first():
+                    month_seq += 1
+                    continue
                 new_sale = Sale(
                     tenant_id=tenant_urban.id,
                     numero_recibo=receipt_no,
@@ -289,6 +295,7 @@ def seed_historical_sales_and_reservations(
                     cajero_id=cajero.id if cajero else None,
                     metodo_pago=metodo_pago,
                     referencia_pago=ref_pago,
+                    monto_subtotal=monto_total,
                     monto_total=monto_total,
                     impuesto_iva=impuesto_iva,
                     monto_neto=monto_neto,
@@ -325,7 +332,7 @@ def seed_historical_sales_and_reservations(
                             stock_despues=inv.stock_actual,
                             referencia=receipt_no,
                             nota=f"Venta en {branch.nombre}",
-                            usuario_id=cajero.id if cajero else (admin_user.id if admin_user else None),
+                            usuario_id=cajero.id if cajero else None,
                             created_at=sale_date
                         )
                         db.add(mov)
@@ -369,14 +376,16 @@ def seed_historical_sales_and_reservations(
                 monto_neto = monto_total - impuesto_iva
 
                 if metodo_pago == PaymentMethod.EFECTIVO:
-                    tot_int = int(monto_total)
-                    opts = [b for b in bill_denominations if b >= tot_int]
+                    opts = [b for b in bill_denominations if Decimal(b) >= monto_total]
                     monto_recibido = Decimal(opts[0]) if opts else monto_total
                     cambio = monto_recibido - monto_total
                 else:
                     monto_recibido = monto_total
                     cambio = Decimal("0.00")
 
+                if db.query(Sale.id).filter_by(numero_recibo=receipt_no).first():
+                    month_seq += 1
+                    continue
                 new_sale = Sale(
                     tenant_id=tenant_moda.id,
                     numero_recibo=receipt_no,
@@ -387,6 +396,7 @@ def seed_historical_sales_and_reservations(
                     cajero_id=cajero.id if cajero else None,
                     metodo_pago=metodo_pago,
                     referencia_pago=ref_pago,
+                    monto_subtotal=monto_total,
                     monto_total=monto_total,
                     impuesto_iva=impuesto_iva,
                     monto_neto=monto_neto,
@@ -462,6 +472,10 @@ def seed_historical_sales_and_reservations(
                 r_qty = 1
                 r_price = r_var.producto.precio_base + r_var.precio_extra
 
+                if db.query(Reservation.id).filter_by(codigo=res_code).first():
+                    continue
+                if exp_date < utc_now() and estado_res in (ReservationStatus.PENDIENTE, ReservationStatus.PREPARADA):
+                    estado_res = ReservationStatus.EXPIRADA
                 res = Reservation(
                     tenant_id=tenant.id,
                     codigo=res_code,
@@ -494,7 +508,7 @@ def seed_historical_sales_and_reservations(
 
                 total_reservations_created += 1
 
-        db.commit()
+        db.flush()
         print(f"    -> Mes {month:02d}/2026 completado ({month_seq - 1} ventas sembradas).")
 
     print(f"  [SUCCESS] Sembrado histórico completado: {total_sales_created} ventas y {total_reservations_created} reservas generadas en 10 meses.")
@@ -502,115 +516,113 @@ def seed_historical_sales_and_reservations(
 
 def seed_delivery_rates_and_favorites(db, tenant_urban, tenant_moda, branches_map):
     print("\n[8/8] Sembrando Tarifas de Delivery y Favoritos de Clientes...")
-    
+
     # 1. Delivery Rates
-    urban_rates_count = db.query(DeliveryRate).filter(DeliveryRate.tenant_id == tenant_urban.id).count()
-    if urban_rates_count == 0:
-        rates_to_create = []
-        for branch_name, branch in branches_map.items():
-            if not branch or branch.tenant_id != tenant_urban.id:
-                continue
-            city = branch.ciudad or "Santa Cruz"
-            if "Santa Cruz" in city:
-                rates_to_create.extend([
-                    DeliveryRate(
-                        branch_id=branch.id,
-                        tenant_id=tenant_urban.id,
-                        zona_nombre="Zona Central y 1er Anillo",
-                        ciudad=city,
-                        costo_envio=Decimal("15.00"),
-                        tiempo_estimado_horas=24,
-                        activo=True
-                    ),
-                    DeliveryRate(
-                        branch_id=branch.id,
-                        tenant_id=tenant_urban.id,
-                        zona_nombre="Equipetrol y Urbarí",
-                        ciudad=city,
-                        costo_envio=Decimal("20.00"),
-                        tiempo_estimado_horas=24,
-                        activo=True
-                    ),
-                    DeliveryRate(
-                        branch_id=branch.id,
-                        tenant_id=tenant_urban.id,
-                        zona_nombre="Plan 3000 y Villa 1ro de Mayo",
-                        ciudad=city,
-                        costo_envio=Decimal("25.00"),
-                        tiempo_estimado_horas=48,
-                        activo=True
-                    ),
-                ])
-            elif "La Paz" in city:
-                rates_to_create.extend([
-                    DeliveryRate(
-                        branch_id=branch.id,
-                        tenant_id=tenant_urban.id,
-                        zona_nombre="Centro / Miraflores / Sopocachi",
-                        ciudad=city,
-                        costo_envio=Decimal("15.00"),
-                        tiempo_estimado_horas=24,
-                        activo=True
-                    ),
-                    DeliveryRate(
-                        branch_id=branch.id,
-                        tenant_id=tenant_urban.id,
-                        zona_nombre="Zona Sur / Calacoto / San Miguel",
-                        ciudad=city,
-                        costo_envio=Decimal("20.00"),
-                        tiempo_estimado_horas=24,
-                        activo=True
-                    ),
-                ])
-            else:
-                rates_to_create.append(
-                    DeliveryRate(
-                        branch_id=branch.id,
-                        tenant_id=tenant_urban.id,
-                        zona_nombre=f"Radio Urbano {city}",
-                        ciudad=city,
-                        costo_envio=Decimal("18.00"),
-                        tiempo_estimado_horas=24,
-                        activo=True
-                    )
-                )
-        
-
-        for r in rates_to_create:
-            db.add(r)
-        db.commit()
-        print(f"  [OK] Sembradas {len(rates_to_create)} tarifas de delivery para UrbanStyle.")
-
-    moda_rates_count = db.query(DeliveryRate).filter(DeliveryRate.tenant_id == tenant_moda.id).count()
-    if moda_rates_count == 0:
-        moda_rates_to_create = []
-        for branch_name, branch in branches_map.items():
-            if not branch or branch.tenant_id != tenant_moda.id:
-                continue
-            moda_rates_to_create.extend([
+    rates_to_create = []
+    for branch_name, branch in branches_map.items():
+        if not branch or branch.tenant_id != tenant_urban.id:
+            continue
+        city = branch.ciudad or "Santa Cruz"
+        if "Santa Cruz" in city:
+            rates_to_create.extend([
                 DeliveryRate(
                     branch_id=branch.id,
-                    tenant_id=tenant_moda.id,
-                    zona_nombre=f"Radio Urbano - {branch.nombre}",
-                    ciudad="Tarija",
-                    costo_envio=Decimal("10.00"),
+                    tenant_id=tenant_urban.id,
+                    zona_nombre="Zona Central y 1er Anillo",
+                    ciudad=city,
+                    costo_envio=Decimal("15.00"),
                     tiempo_estimado_horas=24,
                     activo=True
                 ),
                 DeliveryRate(
                     branch_id=branch.id,
-                    tenant_id=tenant_moda.id,
-                    zona_nombre="Zonas Aledañas y Periferia Tarija",
-                    ciudad="Tarija",
-                    costo_envio=Decimal("18.00"),
+                    tenant_id=tenant_urban.id,
+                    zona_nombre="Equipetrol y Urbarí",
+                    ciudad=city,
+                    costo_envio=Decimal("20.00"),
+                    tiempo_estimado_horas=24,
+                    activo=True
+                ),
+                DeliveryRate(
+                    branch_id=branch.id,
+                    tenant_id=tenant_urban.id,
+                    zona_nombre="Plan 3000 y Villa 1ro de Mayo",
+                    ciudad=city,
+                    costo_envio=Decimal("25.00"),
                     tiempo_estimado_horas=48,
                     activo=True
                 ),
             ])
-        for r in moda_rates_to_create:
+        elif "La Paz" in city:
+            rates_to_create.extend([
+                DeliveryRate(
+                    branch_id=branch.id,
+                    tenant_id=tenant_urban.id,
+                    zona_nombre="Centro / Miraflores / Sopocachi",
+                    ciudad=city,
+                    costo_envio=Decimal("15.00"),
+                    tiempo_estimado_horas=24,
+                    activo=True
+                ),
+                DeliveryRate(
+                    branch_id=branch.id,
+                    tenant_id=tenant_urban.id,
+                    zona_nombre="Zona Sur / Calacoto / San Miguel",
+                    ciudad=city,
+                    costo_envio=Decimal("20.00"),
+                    tiempo_estimado_horas=24,
+                    activo=True
+                ),
+            ])
+        else:
+            rates_to_create.append(
+                DeliveryRate(
+                    branch_id=branch.id,
+                    tenant_id=tenant_urban.id,
+                    zona_nombre=f"Radio Urbano {city}",
+                    ciudad=city,
+                    costo_envio=Decimal("18.00"),
+                    tiempo_estimado_horas=24,
+                    activo=True
+                )
+            )
+
+
+    for r in rates_to_create:
+        if not db.query(DeliveryRate.id).filter_by(tenant_id=r.tenant_id, branch_id=r.branch_id, zona_nombre=r.zona_nombre).first():
             db.add(r)
-        db.commit()
-        print(f"  [OK] Sembradas {len(moda_rates_to_create)} tarifas de delivery para Moda Express.")
+    db.flush()
+    print(f"  [OK] Sembradas {len(rates_to_create)} tarifas de delivery para UrbanStyle.")
+
+    moda_rates_to_create = []
+    for branch_name, branch in branches_map.items():
+        if not branch or branch.tenant_id != tenant_moda.id:
+            continue
+        moda_rates_to_create.extend([
+            DeliveryRate(
+                branch_id=branch.id,
+                tenant_id=tenant_moda.id,
+                zona_nombre=f"Radio Urbano - {branch.nombre}",
+                ciudad="Tarija",
+                costo_envio=Decimal("10.00"),
+                tiempo_estimado_horas=24,
+                activo=True
+            ),
+            DeliveryRate(
+                branch_id=branch.id,
+                tenant_id=tenant_moda.id,
+                zona_nombre="Zonas Aledañas y Periferia Tarija",
+                ciudad="Tarija",
+                costo_envio=Decimal("18.00"),
+                tiempo_estimado_horas=48,
+                activo=True
+            ),
+        ])
+    for r in moda_rates_to_create:
+        if not db.query(DeliveryRate.id).filter_by(tenant_id=r.tenant_id, branch_id=r.branch_id, zona_nombre=r.zona_nombre).first():
+            db.add(r)
+    db.flush()
+    print(f"  [OK] Sembradas {len(moda_rates_to_create)} tarifas de delivery para Moda Express.")
 
     # 2. Favorites
     client_demo_emails = [
@@ -621,12 +633,12 @@ def seed_delivery_rates_and_favorites(db, tenant_urban, tenant_moda, branches_ma
     ]
     fav_count = 0
     for c_email in client_demo_emails:
-        c_user = db.query(User).filter(User.email == c_email).first()
+        c_user = db.query(User).options(lazyload("*")).filter(User.email == c_email).first()
         if not c_user or not c_user.tenant_id:
             continue
-        c_prods = db.query(Product).filter(Product.tenant_id == c_user.tenant_id, Product.activo == True).limit(2).all()
+        c_prods = db.query(Product).options(lazyload("*")).filter(Product.tenant_id == c_user.tenant_id).order_by(Product.nombre).limit(2).all()
         for prod in c_prods:
-            exists = db.query(Favorite).filter(Favorite.user_id == c_user.id, Favorite.product_id == prod.id).first()
+            exists = db.query(Favorite).options(lazyload("*")).filter(Favorite.user_id == c_user.id, Favorite.product_id == prod.id).first()
             if not exists:
                 fav = Favorite(
                     user_id=c_user.id,
@@ -636,70 +648,56 @@ def seed_delivery_rates_and_favorites(db, tenant_urban, tenant_moda, branches_ma
                 db.add(fav)
                 fav_count += 1
     if fav_count > 0:
-        db.commit()
+        db.flush()
         print(f"  [OK] Sembrados {fav_count} favoritos iniciales para clientes de prueba.")
     else:
         print("  [+] Favoritos para clientes de prueba ya registrados.")
 
     # 3. Cupones de Descuento
     from app.models.coupon import Coupon
-    existing_coupons = db.query(Coupon).count()
-    if existing_coupons == 0:
-        coupons_to_seed = [
-            Coupon(
-                tenant_id=tenant_urban.id,
-                codigo="PROMO10",
-                descripcion="Descuento de Temporada 10% OFF",
-                porcentaje_descuento=Decimal("10.00"),
-                monto_minimo=Decimal("50.00"),
-                activo=True
-            ),
-            Coupon(
-                tenant_id=tenant_urban.id,
-                codigo="FICC2026",
-                descripcion="Especial Estudiantes FICCT 15% OFF",
-                porcentaje_descuento=Decimal("15.00"),
-                monto_minimo=Decimal("80.00"),
-                activo=True
-            ),
-            Coupon(
-                tenant_id=tenant_moda.id,
-                codigo="TARIJA10",
-                descripcion="Descuento Apertura Moda Express 10% OFF",
-                porcentaje_descuento=Decimal("10.00"),
-                monto_minimo=Decimal("50.00"),
-                activo=True
-            ),
-        ]
-        for c in coupons_to_seed:
+    coupons_to_seed = [
+        Coupon(
+            tenant_id=tenant_urban.id,
+            codigo="PROMO10",
+            descripcion="Descuento de Temporada 10% OFF",
+            porcentaje_descuento=Decimal("10.00"),
+            monto_minimo=Decimal("50.00"),
+            activo=True
+        ),
+        Coupon(
+            tenant_id=tenant_urban.id,
+            codigo="FICC2026",
+            descripcion="Especial Estudiantes FICCT 15% OFF",
+            porcentaje_descuento=Decimal("15.00"),
+            monto_minimo=Decimal("80.00"),
+            activo=True
+        ),
+        Coupon(
+            tenant_id=tenant_moda.id,
+            codigo="TARIJA10",
+            descripcion="Descuento Apertura Moda Express 10% OFF",
+            porcentaje_descuento=Decimal("10.00"),
+            monto_minimo=Decimal("50.00"),
+            activo=True
+        ),
+    ]
+    for c in coupons_to_seed:
+        if not db.query(Coupon.id).filter_by(tenant_id=c.tenant_id, codigo=c.codigo).first():
             db.add(c)
-        db.commit()
-        print(f"  [OK] Sembrados {len(coupons_to_seed)} cupones promocionales.")
-
-    # 4. Asignar ofertas en productos
-    products_urban = db.query(Product).filter(Product.tenant_id == tenant_urban.id).limit(4).all()
-    for p in products_urban:
-        if not p.en_oferta:
-            p.en_oferta = True
-            p.precio_oferta = Decimal(str(round(float(p.precio_base) * 0.85, 2)))
-    db.commit()
-    print("  [OK] Asignadas ofertas y precios especiales en catálogo.")
-
-
+    db.flush()
+    print(f"  [OK] Sembrados {len(coupons_to_seed)} cupones promocionales.")
 
 
 def seed_product_exchanges(db, tenant_urban, branches_map, users_map):
     print("\n[9/9] Sembrando Registro de Cambios de Prendas (Garantías Retail)...")
-    existing_exchanges = db.query(ProductExchange).count()
-    if existing_exchanges > 0:
-        print(f"  [+] Ya existen {existing_exchanges} cambios de prenda registrados.")
+    if db.query(ProductExchange.id).filter_by(numero_cambio="CAM-20261015-0001").first():
         return
 
     central_branch = branches_map.get("Sucursal Central")
     cajero = users_map.get("cajero@urbanstyle.com") or users_map.get("cajero@ficttstore.com")
     cliente = users_map.get("cliente@ficttstore.com")
 
-    sale = db.query(Sale).filter(
+    sale = db.query(Sale).options(lazyload("*")).filter(
         Sale.tenant_id == tenant_urban.id,
         Sale.sucursal_id == central_branch.id,
         Sale.estado == SaleStatus.COMPLETADA
@@ -712,7 +710,7 @@ def seed_product_exchanges(db, tenant_urban, branches_map, users_map):
     det_devuelto = sale.detalles[0]
     var_devuelta = det_devuelto.variante
 
-    var_entregada = db.query(ProductVariant).filter(
+    var_entregada = db.query(ProductVariant).options(lazyload("*")).filter(
         ProductVariant.producto_id == var_devuelta.producto_id,
         ProductVariant.id != var_devuelta.id,
         ProductVariant.activo == True
@@ -735,8 +733,8 @@ def seed_product_exchanges(db, tenant_urban, branches_map, users_map):
         sucursal_id=central_branch.id,
         cajero_id=cajero.id,
         cliente_id=sale.cliente_id or (cliente.id if cliente else None),
-        fecha_cambio=datetime(2026, 10, 15, 15, 30, tzinfo=timezone.utc),
-        dias_transcurridos=3,
+        fecha_cambio=sale.created_at + timedelta(days=1),
+        dias_transcurridos=1,
         monto_total_devuelto=precio_dev,
         monto_total_entregado=precio_ent,
         diferencia=diff,
@@ -760,7 +758,7 @@ def seed_product_exchanges(db, tenant_urban, branches_map, users_map):
     )
     db.add(det_cambio)
 
-    inv_dev = db.query(Inventory).filter(
+    inv_dev = db.query(Inventory).options(lazyload("*")).filter(
         Inventory.sucursal_id == central_branch.id,
         Inventory.variante_id == var_devuelta.id
     ).first()
@@ -777,11 +775,11 @@ def seed_product_exchanges(db, tenant_urban, branches_map, users_map):
             referencia=numero_cambio,
             nota="Reingreso por cambio de prenda: Talla devuelta",
             usuario_id=cajero.id,
-            created_at=datetime(2026, 10, 15, 15, 30, tzinfo=timezone.utc)
+            created_at=sale.created_at + timedelta(days=1)
         )
         db.add(mov_in)
 
-    inv_ent = db.query(Inventory).filter(
+    inv_ent = db.query(Inventory).options(lazyload("*")).filter(
         Inventory.sucursal_id == central_branch.id,
         Inventory.variante_id == var_entregada.id
     ).first()
@@ -798,11 +796,11 @@ def seed_product_exchanges(db, tenant_urban, branches_map, users_map):
             referencia=numero_cambio,
             nota="Salida por entrega de prenda en cambio de talla",
             usuario_id=cajero.id,
-            created_at=datetime(2026, 10, 15, 15, 30, tzinfo=timezone.utc)
+            created_at=sale.created_at + timedelta(days=1)
         )
         db.add(mov_out)
 
-    db.commit()
+    db.flush()
     print(f"  [OK] Sembrado cambio de prenda de prueba: {numero_cambio} (Diferencia: {diff} Bs.)")
 
 
@@ -810,61 +808,13 @@ def seed_all():
     print("==================================================")
     print("Iniciando Sembrado Completo de la Base de Datos...")
     print("==================================================")
-    
-    # 0. Crear tablas si no existen y sincronizar columnas
-    print("\n[0/6] Creando esquema de tablas en la base de datos...")
-    Base.metadata.create_all(bind=engine)
-
-    from sqlalchemy import text
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("""
-                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS impuesto_iva NUMERIC(10, 2) DEFAULT 0.0 NOT NULL;
-                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS monto_neto NUMERIC(10, 2) DEFAULT 0.0 NOT NULL;
-                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS costo_envio NUMERIC(10, 2) DEFAULT 0.0;
-                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS direccion_envio VARCHAR(300);
-                UPDATE ventas 
-                SET impuesto_iva = ROUND(monto_total * 0.13, 2),
-                    monto_neto = ROUND(monto_total - ROUND(monto_total * 0.13, 2), 2)
-                WHERE (monto_neto = 0 OR monto_neto IS NULL) AND monto_total > 0;
-                
-                -- Multitenancy columns
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL;
-                ALTER TABLE sucursales ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE productos ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE categorias ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE temporadas ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE inventario ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE ventas ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE reservas ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE movimientos_inventario ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE cambios_producto ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE favoritos ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-                ALTER TABLE tarifas_delivery ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
-
-                -- Limpieza y corrección de encoding en registros preexistentes
-                UPDATE subscription_plans SET nombre = 'Plan Básico', descripcion = 'Máximo 2 sucursales, Operación Offline, Sin Reportes IA', precio_mensual_bob = 199.00 WHERE codigo = 'BASICO';
-                UPDATE subscription_plans SET nombre = 'Plan Profesional', descripcion = 'Hasta 10 sucursales, Reportes con IA e Inteligencia Artificial', precio_mensual_bob = 499.00 WHERE codigo = 'PROFESIONAL';
-                UPDATE categorias SET descripcion = 'Poleras oversized, boxy fit, remeras básicas y urbanas para hombre' WHERE nombre = 'Poleras & Remeras';
-                UPDATE categorias SET descripcion = 'Camisas de lino, franela leñadora, sobrecamisas y estilo resort' WHERE nombre = 'Camisas & Sobrecamisas';
-                UPDATE categorias SET descripcion = 'Pantalones cargo tácticos, jeans baggy 90s y pantalones chino stretch' WHERE nombre = 'Pantalones & Jeans';
-                UPDATE productos SET activo = true WHERE tenant_id IN (SELECT id FROM tenants WHERE slug = 'modaexpress');
-            """))
-        print("  [OK] Columnas de impuestos, multitenant y envíos verificadas y migradas.")
-    except Exception as e:
-        print(f"  [WARN] No se requirió migración manual o aviso: {e}")
-
-    # 1. Sembrar roles, permisos y temporadas
-    print("\n[1/6] Sembrando Roles, Permisos y Temporadas base...")
-    seed_permissions()
 
     db = SessionLocal()
     try:
+        seed_permissions(db, include_seasons=False)
         # 1.5. Sembrar Planes de Suscripción y Empresas Multitenant
         print("\n[1.5/6] Sembrando Planes de Suscripción y Empresas Multitenant...")
-        plan_pro = db.query(SubscriptionPlan).filter(SubscriptionPlan.codigo == "PROFESIONAL").first()
+        plan_pro = db.query(SubscriptionPlan).options(lazyload("*")).filter(SubscriptionPlan.codigo == "PROFESIONAL").first()
         if not plan_pro:
             plan_pro = SubscriptionPlan(
                 codigo="PROFESIONAL",
@@ -878,16 +828,8 @@ def seed_all():
             )
             db.add(plan_pro)
             db.flush()
-        else:
-            plan_pro.nombre = "Plan Profesional"
-            plan_pro.descripcion = "Hasta 10 sucursales, Reportes con IA e Inteligencia Artificial"
-            plan_pro.max_sucursales = 10
-            plan_pro.permite_reportes_ia = True
-            plan_pro.permite_offline = True
-            plan_pro.precio_mensual_bob = 499.00
-            plan_pro.activo = True
 
-        plan_basico = db.query(SubscriptionPlan).filter(SubscriptionPlan.codigo == "BASICO").first()
+        plan_basico = db.query(SubscriptionPlan).options(lazyload("*")).filter(SubscriptionPlan.codigo == "BASICO").first()
         if not plan_basico:
             plan_basico = SubscriptionPlan(
                 codigo="BASICO",
@@ -901,18 +843,10 @@ def seed_all():
             )
             db.add(plan_basico)
             db.flush()
-        else:
-            plan_basico.nombre = "Plan Básico"
-            plan_basico.descripcion = "Máximo 2 sucursales, Operación Offline, Sin Reportes IA"
-            plan_basico.max_sucursales = 2
-            plan_basico.permite_reportes_ia = False
-            plan_basico.permite_offline = True
-            plan_basico.precio_mensual_bob = 199.00
-            plan_basico.activo = True
-        db.commit()
+        db.flush()
 
         # Empresa 1: UrbanStyle Bolivia S.R.L. (Plan Profesional)
-        tenant_urban = db.query(Tenant).filter(Tenant.slug == "urbanstyle").first()
+        tenant_urban = db.query(Tenant).options(lazyload("*")).filter(Tenant.slug == "urbanstyle").first()
         if not tenant_urban:
             tenant_urban = Tenant(
                 nombre="UrbanStyle Bolivia S.R.L.",
@@ -939,16 +873,11 @@ def seed_all():
                 notas="Suscripción Anual Profesional"
             )
             db.add(sub_urban)
-            db.commit()
+            db.flush()
             print("  [OK] Creada Empresa 1: UrbanStyle Bolivia S.R.L. (Plan Profesional)")
-        else:
-            tenant_urban.color_primario = "#4f46e5"
-            tenant_urban.color_secundario = "#818cf8"
-            tenant_urban.eslogan = "Streetwear & Urban Culture"
-            db.commit()
 
         # Empresa 2: Moda Express Tarija (Plan Básico)
-        tenant_moda = db.query(Tenant).filter(Tenant.slug == "modaexpress").first()
+        tenant_moda = db.query(Tenant).options(lazyload("*")).filter(Tenant.slug == "modaexpress").first()
         if not tenant_moda:
             tenant_moda = Tenant(
                 nombre="Moda Express Tarija",
@@ -975,15 +904,25 @@ def seed_all():
                 notas="Suscripción Anual Básica"
             )
             db.add(sub_moda)
-            db.commit()
+            db.flush()
             print("  [OK] Creada Empresa 2: Moda Express Tarija (Plan Básico)")
+
+        from app.seed_permissions import SEASONS_SEED
+        for data in SEASONS_SEED:
+            if not db.query(Season.id).filter_by(nombre=data["nombre"], tenant_id=tenant_urban.id).first():
+                db.add(Season(**data, tenant_id=tenant_urban.id))
+        for tenant, plan in ((tenant_urban, plan_pro), (tenant_moda, plan_basico)):
+            if not db.query(Subscription.id).filter_by(tenant_id=tenant.id).first():
+                db.add(Subscription(tenant_id=tenant.id, plan_id=plan.id, estado="ACTIVA",
+                    fecha_inicio=date.today(), fecha_vencimiento=date.today()+timedelta(days=365)))
+        db.flush()
 
         # 2. Sembrar Usuarios con diferentes Roles
         print("\n[2/6] Sembrando Usuarios de Prueba...")
-        admin_role = db.query(Role).filter(Role.name == "admin").first()
-        encargado_role = db.query(Role).filter(Role.name == "encargado").first()
-        cajero_role = db.query(Role).filter(Role.name == "cajero").first()
-        cliente_role = db.query(Role).filter(Role.name == "cliente").first()
+        admin_role = db.query(Role).options(lazyload("*")).filter(Role.name == "admin").first()
+        encargado_role = db.query(Role).options(lazyload("*")).filter(Role.name == "encargado").first()
+        cajero_role = db.query(Role).options(lazyload("*")).filter(Role.name == "cajero").first()
+        cliente_role = db.query(Role).options(lazyload("*")).filter(Role.name == "cliente").first()
 
         users_data = [
             {
@@ -1107,7 +1046,7 @@ def seed_all():
 
         users_map = {}
         for u_data in users_data:
-            user = db.query(User).filter(User.email == u_data["email"]).first()
+            user = db.query(User).options(lazyload("*")).filter(User.email == u_data["email"]).first()
             if not user:
                 user = User(
                     email=u_data["email"],
@@ -1119,16 +1058,11 @@ def seed_all():
                     tenant_id=u_data.get("tenant_id")
                 )
                 db.add(user)
-                db.commit()
+                db.flush()
                 db.refresh(user)
                 print(f"  [OK] Creado usuario: {user.email} (Rol: {user.role.name})")
-            else:
-                user.role_id = u_data["role_id"]
-                user.hashed_password = u_data["password"]
-                user.full_name = u_data["full_name"]
-                user.tenant_id = u_data.get("tenant_id")
-                db.commit()
-                print(f"  [+] Usuario actualizado: {user.email}")
+            if user.tenant_id != u_data.get("tenant_id"):
+                raise ValueError("Demo account belongs to another tenant; refusing reassignment")
             users_map[u_data["email"]] = user
 
         # 3. Sembrar Sucursales
@@ -1187,16 +1121,13 @@ def seed_all():
 
         branches_map = {}
         for b_data in branches_data:
-            branch = db.query(Branch).filter(Branch.nombre == b_data["nombre"]).first()
+            branch = db.query(Branch).options(lazyload("*")).filter(Branch.nombre == b_data["nombre"], Branch.tenant_id == b_data["tenant_id"]).first()
             if not branch:
                 branch = Branch(**b_data)
                 db.add(branch)
-                db.commit()
+                db.flush()
                 db.refresh(branch)
                 print(f"  [OK] Creada sucursal: {branch.nombre} en {branch.ciudad}")
-            else:
-                branch.tenant_id = b_data.get("tenant_id", tenant_urban.id)
-                db.commit()
             branches_map[b_data["nombre"]] = branch
 
         # 4. Sembrar Proveedores y Categorías de Moda Masculina
@@ -1237,16 +1168,13 @@ def seed_all():
         ]
 
         for s_data in suppliers_data:
-            supplier = db.query(Supplier).filter(Supplier.nombre == s_data["nombre"]).first()
+            supplier = db.query(Supplier).options(lazyload("*")).filter(Supplier.nombre == s_data["nombre"], Supplier.tenant_id == tenant_urban.id).first()
             if not supplier:
                 s_dict = {**s_data, "tenant_id": tenant_urban.id}
                 supplier = Supplier(**s_dict)
                 db.add(supplier)
-                db.commit()
+                db.flush()
                 print(f"  [OK] Creado proveedor: {supplier.nombre}")
-            else:
-                supplier.tenant_id = tenant_urban.id
-                db.commit()
 
         categories_data = [
             {"nombre": "Poleras & Remeras", "descripcion": "Poleras oversized, boxy fit, remeras básicas y urbanas para hombre"},
@@ -1259,22 +1187,18 @@ def seed_all():
 
         categories_map = {}
         for c_data in categories_data:
-            cat = db.query(Category).filter(Category.nombre == c_data["nombre"]).first()
+            cat = db.query(Category).options(lazyload("*")).filter(Category.nombre == c_data["nombre"], Category.tenant_id == tenant_urban.id).first()
             if not cat:
                 c_dict = {**c_data, "tenant_id": tenant_urban.id}
                 cat = Category(**c_dict)
                 db.add(cat)
-                db.commit()
+                db.flush()
                 db.refresh(cat)
                 print(f"  [OK] Creada categoría: {cat.nombre}")
-            else:
-                cat.tenant_id = tenant_urban.id
-                cat.descripcion = c_data["descripcion"]
-                db.commit()
             categories_map[c_data["nombre"]] = cat
 
         # Categoría para Moda Express (Empresa 2)
-        cat_moda = db.query(Category).filter(Category.nombre == "Moda Formal y Ejecutiva").first()
+        cat_moda = db.query(Category).options(lazyload("*")).filter(Category.nombre == "Moda Formal y Ejecutiva", Category.tenant_id == tenant_moda.id).first()
         if not cat_moda:
             cat_moda = Category(
                 nombre="Moda Formal y Ejecutiva",
@@ -1283,33 +1207,13 @@ def seed_all():
                 tenant_id=tenant_moda.id
             )
             db.add(cat_moda)
-            db.commit()
+            db.flush()
             db.refresh(cat_moda)
             print("  [OK] Creada categoría exclusiva para Moda Express: Moda Formal y Ejecutiva")
-        else:
-            cat_moda.tenant_id = tenant_moda.id
-            db.commit()
         categories_map["Moda Formal y Ejecutiva"] = cat_moda
 
         # 5. Sembrar Productos y Variantes de Moda Masculina (100% Exclusivo Hombre)
         print("\n[5/6] Sembrando Productos y Variantes (Catálogo Masculino con Fondo Blanco)...")
-
-        # Migrar nombres de productos anteriores para conservar historial de ventas/reservas
-        renames_map = {
-            "Polera Oversize FICTT Core": "Polera Gráfica Venom Streetwear",
-            "Polera Heavyweight Boxy Fit": "Polera Minimalista Yahweh Yireh",
-            "Polera Gráfica Cyber Street": "Polera Gráfica Venom Streetwear",
-        }
-        for old_name, new_name in renames_map.items():
-            old_p = db.query(Product).filter(Product.nombre == old_name).first()
-            if old_p:
-                target_p = db.query(Product).filter(Product.nombre == new_name).first()
-                if not target_p or target_p.id == old_p.id:
-                    old_p.nombre = new_name
-                    db.commit()
-                else:
-                    old_p.activo = False
-                    db.commit()
 
         products_data = [
             # 1. Poleras
@@ -1567,21 +1471,13 @@ def seed_all():
             }
         ]
 
-        # Desactivar únicamente productos obsoletos de UrbanStyle que no pertenezcan a la línea masculina
-        active_menswear_names = {p["nombre"] for p in products_data}
-        for existing_prod in db.query(Product).filter(Product.tenant_id == tenant_urban.id).all():
-            if existing_prod.nombre not in active_menswear_names:
-                existing_prod.activo = False
-                print(f"  [-] Desactivado producto obsoleto/no masculino de UrbanStyle: {existing_prod.nombre}")
-        db.commit()
-
         all_variants = []
-        for p_info in products_data:
+        for product_index, p_info in enumerate(products_data):
             cat_obj = categories_map.get(p_info["categoria_nombre"])
             if not cat_obj:
                 continue
 
-            product = db.query(Product).filter(Product.nombre == p_info["nombre"]).first()
+            product = db.query(Product).options(lazyload("*")).filter(Product.nombre == p_info["nombre"], Product.tenant_id == tenant_urban.id).first()
             if not product:
                 product = Product(
                     tenant_id=tenant_urban.id,
@@ -1592,27 +1488,18 @@ def seed_all():
                     temporada=p_info["temporada"],
                     proveedor=p_info["proveedor"],
                     imagen_url=p_info.get("imagen_url"),
+                    en_oferta=product_index < 4,
+                    precio_oferta=(p_info["precio_base"] * Decimal("0.85")).quantize(Decimal("0.01")) if product_index < 4 else None,
                     activo=True
                 )
                 db.add(product)
-                db.commit()
+                db.flush()
                 db.refresh(product)
                 print(f"  [OK] Creado producto masculino: {product.nombre}")
-            else:
-                product.tenant_id = tenant_urban.id
-                product.imagen_url = p_info.get("imagen_url")
-                product.descripcion = p_info["descripcion"]
-                product.precio_base = p_info["precio_base"]
-                product.categoria_id = cat_obj.id
-                product.temporada = p_info["temporada"]
-                product.proveedor = p_info["proveedor"]
-                product.activo = True
-                db.commit()
-                print(f"  [+] Producto masculino actualizado: {product.nombre}")
 
             # Variantes
             for v_data in p_info["variantes"]:
-                variant = db.query(ProductVariant).filter(
+                variant = db.query(ProductVariant).options(lazyload("*")).filter(
                     (ProductVariant.sku == v_data["sku"]) |
                     ((ProductVariant.producto_id == product.id) & (ProductVariant.talla == v_data["talla"]) & (ProductVariant.color == v_data["color"]))
                 ).first()
@@ -1626,13 +1513,10 @@ def seed_all():
                         activo=True
                     )
                     db.add(variant)
-                    db.commit()
+                    db.flush()
                     db.refresh(variant)
-                else:
-                    variant.sku = v_data["sku"]
-                    variant.precio_extra = v_data["precio_extra"]
-                    variant.activo = True
-                    db.commit()
+                if variant.producto_id != product.id:
+                    raise ValueError("Demo SKU belongs to another product")
                 all_variants.append(variant)
 
         # 5.5. Sembrar Catálogo Exclusivo de Moda Express Tarija (Empresa 2)
@@ -1685,7 +1569,7 @@ def seed_all():
 
         moda_variants = []
         for p_data in moda_products:
-            prod_m = db.query(Product).filter(
+            prod_m = db.query(Product).options(lazyload("*")).filter(
                 Product.nombre == p_data["nombre"],
                 Product.tenant_id == tenant_moda.id
             ).first()
@@ -1702,22 +1586,12 @@ def seed_all():
                     activo=True
                 )
                 db.add(prod_m)
-                db.commit()
+                db.flush()
                 db.refresh(prod_m)
                 print(f"  [OK] Creado producto Moda Express: {prod_m.nombre}")
-            else:
-                prod_m.tenant_id = tenant_moda.id
-                prod_m.activo = True
-                prod_m.imagen_url = p_data.get("imagen_url")
-                prod_m.descripcion = p_data["descripcion"]
-                prod_m.precio_base = p_data["precio_base"]
-                prod_m.categoria_id = p_data["categoria_id"]
-                prod_m.temporada = p_data["temporada"]
-                prod_m.proveedor = p_data["proveedor"]
-                db.commit()
 
             for v_data in p_data["variantes"]:
-                var_m = db.query(ProductVariant).filter(ProductVariant.sku == v_data["sku"]).first()
+                var_m = db.query(ProductVariant).options(lazyload("*")).filter(ProductVariant.sku == v_data["sku"]).first()
                 if not var_m:
                     var_m = ProductVariant(
                         producto_id=prod_m.id,
@@ -1728,13 +1602,10 @@ def seed_all():
                         activo=True
                     )
                     db.add(var_m)
-                    db.commit()
+                    db.flush()
                     db.refresh(var_m)
-                else:
-                    var_m.sku = v_data["sku"]
-                    var_m.precio_extra = v_data["precio_extra"]
-                    var_m.activo = True
-                    db.commit()
+                if var_m.producto_id != prod_m.id:
+                    raise ValueError("Demo SKU belongs to another product")
                 moda_variants.append(var_m)
 
         # 6. Sembrar Inventario en Sucursales y Movimientos
@@ -1757,7 +1628,7 @@ def seed_all():
             for branch in branches_map.values():
                 if not branch or branch.tenant_id != tenant_urban.id:
                     continue
-                inv = db.query(Inventory).filter(
+                inv = db.query(Inventory).options(lazyload("*")).filter(
                     Inventory.sucursal_id == branch.id,
                     Inventory.variante_id == v.id
                 ).first()
@@ -1775,7 +1646,7 @@ def seed_all():
                         activo=True
                     )
                     db.add(inv)
-                    db.commit()
+                    db.flush()
                     db.refresh(inv)
 
                     # Registrar movimiento de recepción inicial
@@ -1788,13 +1659,11 @@ def seed_all():
                         stock_despues=stock_qty,
                         referencia="RECEPCION-INICIAL-2025",
                         nota=f"Carga de inventario inicial para {branch.nombre}",
-                        usuario_id=admin_user.id
+                        usuario_id=admin_user.id,
+                        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc)
                     )
                     db.add(mov)
-                    db.commit()
-                else:
-                    inv.tenant_id = branch.tenant_id
-                    db.commit()
+                    db.flush()
                 inventory_items.append(inv)
 
         # Inventario de Moda Express (Empresa 2)
@@ -1804,7 +1673,7 @@ def seed_all():
             for m_branch in [moda_branch_1, moda_branch_2]:
                 if not m_branch:
                     continue
-                inv_m = db.query(Inventory).filter(
+                inv_m = db.query(Inventory).options(lazyload("*")).filter(
                     Inventory.sucursal_id == m_branch.id,
                     Inventory.variante_id == v.id
                 ).first()
@@ -1820,17 +1689,21 @@ def seed_all():
                         activo=True
                     )
                     db.add(inv_m)
-                    db.commit()
-                else:
-                    inv_m.tenant_id = tenant_moda.id
-                    db.commit()
+                    db.flush()
+                    db.add(InventoryMovement(
+                        tenant_id=tenant_moda.id, inventario_id=inv_m.id,
+                        tipo=MovementType.ENTRADA, cantidad=20, stock_antes=0, stock_despues=20,
+                        referencia="RECEPCION-INICIAL-2025",
+                        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc)))
+                    db.flush()
 
         print(f"  [OK] Inventario sembrado: {len(inventory_items)} registros de stock listos.")
 
         # Sembrar Reservas de prueba
-        res1 = db.query(Reservation).filter(Reservation.codigo == "RES-2025-0001").first()
+        res1 = db.query(Reservation).options(lazyload("*")).filter(Reservation.codigo == "RES-2025-0001").first()
         if not res1 and central_branch and cliente_user and len(all_variants) >= 2:
             res1 = Reservation(
+                tenant_id=tenant_urban.id,
                 codigo="RES-2025-0001",
                 cliente_id=cliente_user.id,
                 sucursal_id=central_branch.id,
@@ -1842,7 +1715,7 @@ def seed_all():
                 activo=True
             )
             db.add(res1)
-            db.commit()
+            db.flush()
             db.refresh(res1)
 
             # Detalles de la reserva y reserva de stock
@@ -1865,20 +1738,21 @@ def seed_all():
             db.add_all([det1, det2])
 
             # Actualizar stock reservado en inventario
-            inv_v1 = db.query(Inventory).filter(Inventory.sucursal_id == central_branch.id, Inventory.variante_id == v1.id).first()
-            inv_v2 = db.query(Inventory).filter(Inventory.sucursal_id == central_branch.id, Inventory.variante_id == v2.id).first()
+            inv_v1 = db.query(Inventory).options(lazyload("*")).filter(Inventory.sucursal_id == central_branch.id, Inventory.variante_id == v1.id).first()
+            inv_v2 = db.query(Inventory).options(lazyload("*")).filter(Inventory.sucursal_id == central_branch.id, Inventory.variante_id == v2.id).first()
             if inv_v1:
                 inv_v1.stock_reservado += 1
             if inv_v2:
                 inv_v2.stock_reservado += 1
-            db.commit()
+            db.flush()
             print("  [OK] Creada Reserva de prueba: RES-2025-0001 (Estado: PREPARADA)")
 
         # Reserva 2 (Pendiente)
-        res2 = db.query(Reservation).filter(Reservation.codigo == "RES-2025-0002").first()
+        res2 = db.query(Reservation).options(lazyload("*")).filter(Reservation.codigo == "RES-2025-0002").first()
         if not res2 and equipetrol_branch and cliente_user and len(all_variants) >= 4:
             v3 = all_variants[3]
             res2 = Reservation(
+                tenant_id=tenant_urban.id,
                 codigo="RES-2025-0002",
                 cliente_id=cliente_user.id,
                 sucursal_id=equipetrol_branch.id,
@@ -1890,7 +1764,7 @@ def seed_all():
                 activo=True
             )
             db.add(res2)
-            db.commit()
+            db.flush()
             db.refresh(res2)
 
             det3 = ReservationDetail(
@@ -1901,14 +1775,14 @@ def seed_all():
                 subtotal=Decimal("280.00")
             )
             db.add(det3)
-            inv_v3 = db.query(Inventory).filter(Inventory.sucursal_id == equipetrol_branch.id, Inventory.variante_id == v3.id).first()
+            inv_v3 = db.query(Inventory).options(lazyload("*")).filter(Inventory.sucursal_id == equipetrol_branch.id, Inventory.variante_id == v3.id).first()
             if inv_v3:
                 inv_v3.stock_reservado += 1
-            db.commit()
+            db.flush()
             print("  [OK] Creada Reserva de prueba: RES-2025-0002 (Estado: PENDIENTE)")
 
         # Sembrar Ventas de prueba con métodos activos (EFECTIVO y PAYPAL)
-        sale1 = db.query(Sale).filter(Sale.numero_recibo == "VTA-2025-0001").first()
+        sale1 = db.query(Sale).options(lazyload("*")).filter(Sale.numero_recibo == "VTA-2025-0001").first()
         if not sale1 and central_branch and cajero_user and cliente_user and len(all_variants) >= 2:
             v_sale = all_variants[0]
             sale1 = Sale(
@@ -1920,6 +1794,7 @@ def seed_all():
                 cliente_id=cliente_user.id,
                 cajero_id=cajero_user.id,
                 metodo_pago=PaymentMethod.EFECTIVO,
+                monto_subtotal=Decimal("120.00"),
                 monto_total=Decimal("120.00"),
                 impuesto_iva=Decimal("15.60"),
                 monto_neto=Decimal("104.40"),
@@ -1929,7 +1804,7 @@ def seed_all():
                 created_at=utc_now() - timedelta(days=2)
             )
             db.add(sale1)
-            db.commit()
+            db.flush()
             db.refresh(sale1)
 
             det_sale = SaleDetail(
@@ -1942,7 +1817,7 @@ def seed_all():
             db.add(det_sale)
 
             # Descontar stock
-            inv_sale = db.query(Inventory).filter(Inventory.sucursal_id == central_branch.id, Inventory.variante_id == v_sale.id).first()
+            inv_sale = db.query(Inventory).options(lazyload("*")).filter(Inventory.sucursal_id == central_branch.id, Inventory.variante_id == v_sale.id).first()
             if inv_sale:
                 antes = inv_sale.stock_actual
                 inv_sale.stock_actual = max(0, inv_sale.stock_actual - 1)
@@ -1958,10 +1833,10 @@ def seed_all():
                     usuario_id=cajero_user.id
                 )
                 db.add(mov_vta)
-            db.commit()
+            db.flush()
             print("  [OK] Creada Venta de prueba: VTA-2025-0001 (Presencial / Efectivo / 120.00 Bs.)")
 
-        sale2 = db.query(Sale).filter(Sale.numero_recibo == "VTA-2025-0002").first()
+        sale2 = db.query(Sale).options(lazyload("*")).filter(Sale.numero_recibo == "VTA-2025-0002").first()
         if not sale2 and equipetrol_branch and cajero_user and cliente_user and len(all_variants) >= 4:
             v_sale2 = all_variants[3]
             sale2 = Sale(
@@ -1974,6 +1849,7 @@ def seed_all():
                 cajero_id=None,
                 metodo_pago=PaymentMethod.PAYPAL,
                 referencia_pago="PAYPAL_SANDBOX_8AM31925X3104210E",
+                monto_subtotal=Decimal("280.00"),
                 monto_total=Decimal("280.00"),
                 impuesto_iva=Decimal("36.40"),
                 monto_neto=Decimal("243.60"),
@@ -1983,7 +1859,7 @@ def seed_all():
                 created_at=utc_now() - timedelta(hours=6)
             )
             db.add(sale2)
-            db.commit()
+            db.flush()
             db.refresh(sale2)
 
             det_sale2 = SaleDetail(
@@ -1996,7 +1872,7 @@ def seed_all():
             db.add(det_sale2)
 
             # Descontar stock para sale2
-            inv_sale2 = db.query(Inventory).filter(Inventory.sucursal_id == equipetrol_branch.id, Inventory.variante_id == v_sale2.id).first()
+            inv_sale2 = db.query(Inventory).options(lazyload("*")).filter(Inventory.sucursal_id == equipetrol_branch.id, Inventory.variante_id == v_sale2.id).first()
             if inv_sale2:
                 antes = inv_sale2.stock_actual
                 inv_sale2.stock_actual = max(0, inv_sale2.stock_actual - 1)
@@ -2012,10 +1888,10 @@ def seed_all():
                     usuario_id=admin_user.id
                 )
                 db.add(mov_vta2)
-            db.commit()
+            db.flush()
             print("  [OK] Creada Venta de prueba: VTA-2025-0002 (Digital / PayPal / 280.00 Bs.)")
 
-        sale3 = db.query(Sale).filter(Sale.numero_recibo == "VTA-2025-0003").first()
+        sale3 = db.query(Sale).options(lazyload("*")).filter(Sale.numero_recibo == "VTA-2025-0003").first()
         if not sale3 and central_branch and cliente_user and len(all_variants) >= 5:
             v_sale3 = all_variants[4]
             sale3 = Sale(
@@ -2028,6 +1904,7 @@ def seed_all():
                 cajero_id=None,
                 metodo_pago=PaymentMethod.TARJETA,
                 referencia_pago="STRIPE_DIGITAL_AUTH_77192",
+                monto_subtotal=Decimal("350.00"),
                 monto_total=Decimal("350.00"),
                 impuesto_iva=Decimal("45.50"),
                 monto_neto=Decimal("304.50"),
@@ -2037,7 +1914,7 @@ def seed_all():
                 created_at=utc_now() - timedelta(days=1, hours=2)
             )
             db.add(sale3)
-            db.commit()
+            db.flush()
             db.refresh(sale3)
 
             det_sale3 = SaleDetail(
@@ -2048,10 +1925,17 @@ def seed_all():
                 subtotal=Decimal("350.00")
             )
             db.add(det_sale3)
-            db.commit()
+            inv = db.query(Inventory).options(lazyload("*")).filter_by(sucursal_id=central_branch.id, variante_id=v_sale3.id).one()
+            before = inv.stock_actual
+            inv.stock_actual -= 1
+            db.add(InventoryMovement(tenant_id=sale3.tenant_id, inventario_id=inv.id,
+                tipo=MovementType.SALIDA_VENTA, cantidad=1, stock_antes=before,
+                stock_despues=inv.stock_actual, referencia=sale3.numero_recibo,
+                created_at=sale3.created_at))
+            db.flush()
             print("  [OK] Creada Venta de prueba: VTA-2025-0003 (Digital / Tarjeta / 350.00 Bs.)")
 
-        sale4 = db.query(Sale).filter(Sale.numero_recibo == "VTA-2025-0004").first()
+        sale4 = db.query(Sale).options(lazyload("*")).filter(Sale.numero_recibo == "VTA-2025-0004").first()
         if not sale4 and equipetrol_branch and cajero_user and cliente_user and len(all_variants) >= 6:
             v_sale4 = all_variants[5]
             sale4 = Sale(
@@ -2064,6 +1948,7 @@ def seed_all():
                 cajero_id=cajero_user.id,
                 metodo_pago=PaymentMethod.EFECTIVO,
                 referencia_pago=None,
+                monto_subtotal=Decimal("180.00"),
                 monto_total=Decimal("180.00"),
                 impuesto_iva=Decimal("23.40"),
                 monto_neto=Decimal("156.60"),
@@ -2073,7 +1958,7 @@ def seed_all():
                 created_at=utc_now() - timedelta(hours=3)
             )
             db.add(sale4)
-            db.commit()
+            db.flush()
             db.refresh(sale4)
 
             det_sale4 = SaleDetail(
@@ -2084,11 +1969,18 @@ def seed_all():
                 subtotal=Decimal("180.00")
             )
             db.add(det_sale4)
-            db.commit()
+            inv = db.query(Inventory).options(lazyload("*")).filter_by(sucursal_id=equipetrol_branch.id, variante_id=v_sale4.id).one()
+            before = inv.stock_actual
+            inv.stock_actual -= 1
+            db.add(InventoryMovement(tenant_id=sale4.tenant_id, inventario_id=inv.id,
+                tipo=MovementType.SALIDA_VENTA, cantidad=1, stock_antes=before,
+                stock_despues=inv.stock_actual, referencia=sale4.numero_recibo,
+                created_at=sale4.created_at))
+            db.flush()
             print("  [OK] Creada Venta de prueba: VTA-2025-0004 (Presencial / Efectivo / 180.00 Bs.)")
 
         # Ventas de Moda Express (Empresa 2)
-        sale_m1 = db.query(Sale).filter(Sale.numero_recibo == "VTA-MODA-0001").first()
+        sale_m1 = db.query(Sale).options(lazyload("*")).filter(Sale.numero_recibo == "VTA-MODA-0001").first()
         cajero_moda = users_map.get("cajero@modaexpress.com")
         if not sale_m1 and moda_branch_1 and cajero_moda and len(moda_variants) >= 1:
             v_m1 = moda_variants[0]
@@ -2101,6 +1993,7 @@ def seed_all():
                 cliente_id=None,
                 cajero_id=cajero_moda.id,
                 metodo_pago=PaymentMethod.EFECTIVO,
+                monto_subtotal=Decimal("180.00"),
                 monto_total=Decimal("180.00"),
                 impuesto_iva=Decimal("23.40"),
                 monto_neto=Decimal("156.60"),
@@ -2110,7 +2003,7 @@ def seed_all():
                 created_at=utc_now() - timedelta(days=1)
             )
             db.add(sale_m1)
-            db.commit()
+            db.flush()
             db.refresh(sale_m1)
 
             det_m1 = SaleDetail(
@@ -2121,7 +2014,14 @@ def seed_all():
                 subtotal=Decimal("180.00")
             )
             db.add(det_m1)
-            db.commit()
+            inv = db.query(Inventory).options(lazyload("*")).filter_by(sucursal_id=moda_branch_1.id, variante_id=v_m1.id).one()
+            before = inv.stock_actual
+            inv.stock_actual -= 1
+            db.add(InventoryMovement(tenant_id=sale_m1.tenant_id, inventario_id=inv.id,
+                tipo=MovementType.SALIDA_VENTA, cantidad=1, stock_antes=before,
+                stock_despues=inv.stock_actual, referencia=sale_m1.numero_recibo,
+                created_at=sale_m1.created_at))
+            db.flush()
             print("  [OK] Creada Venta Moda Express: VTA-MODA-0001 (Presencial / 180.00 Bs.)")
 
         # 7. Sembrado masivo y equitativo por sucursal mes a mes (Enero a Octubre 2026)
@@ -2143,6 +2043,8 @@ def seed_all():
             branches_map=branches_map
         )
 
+        db.expire_all()  # Reload relationships populated earlier in this transaction.
+
         # 9. Sembrado de Cambios de Prendas (Garantías Retail)
         seed_product_exchanges(
             db=db,
@@ -2151,35 +2053,10 @@ def seed_all():
             users_map=users_map
         )
 
-        # 10. Garantizar Integridad de Aislamiento Multi-Tenant (Backfill de seguridad)
-        from sqlalchemy import text
-        db.execute(text("""
-            UPDATE inventario SET tenant_id = s.tenant_id FROM sucursales s WHERE inventario.sucursal_id = s.id AND inventario.tenant_id IS NULL;
-            UPDATE movimientos_inventario SET tenant_id = i.tenant_id FROM inventario i WHERE movimientos_inventario.inventario_id = i.id AND movimientos_inventario.tenant_id IS NULL;
-            UPDATE reservas SET tenant_id = s.tenant_id FROM sucursales s WHERE reservas.sucursal_id = s.id AND reservas.tenant_id IS NULL;
-            UPDATE ventas SET tenant_id = s.tenant_id FROM sucursales s WHERE ventas.sucursal_id = s.id AND ventas.tenant_id IS NULL;
-            UPDATE productos SET tenant_id = :urban_id WHERE tenant_id IS NULL;
-            UPDATE categorias SET tenant_id = :urban_id WHERE tenant_id IS NULL;
-            UPDATE temporadas SET tenant_id = :urban_id WHERE tenant_id IS NULL;
-            UPDATE users SET tenant_id = :urban_id WHERE tenant_id IS NULL AND email != 'superadmin@ficcstore.com';
-        """), {"urban_id": tenant_urban.id})
         db.commit()
 
         print("\n==================================================")
         print(" [SUCCESS] BASE DE DATOS POBLADA EXITOSAMENTE! ")
-        print("==================================================")
-        print("Empresas y Credenciales de prueba generadas:")
-        print("[SUPERADMIN] Plataforma SaaS Multitenant:")
-        print(" * SuperAdmin: admin@sistema.com        / Password123!")
-        print("[EMPRESA 1] UrbanStyle Bolivia S.R.L. (Plan Profesional: 499 Bs/mes / IA Habilitada):")
-        print(" * Admin:      admin@urbanstyle.com     / Password123!")
-        print(" * Cajero:     cajero@urbanstyle.com    / Password123!")
-        print(" * Encargado:  encargado@ficttstore.com / Password123!")
-        print(" * Cliente:    cliente@ficttstore.com   / Password123!")
-        print("[EMPRESA 2] Moda Express Tarija (Plan Básico: 199 Bs/mes / Límite 2 Sucursales / Sin IA):")
-        print(" * Admin:      admin@modaexpress.com    / Password123!")
-        print(" * Cajero:     cajero@modaexpress.com   / Password123!")
-        print(" * Cliente:    cliente@modaexpress.com  / Password123!")
         print("==================================================")
 
     except Exception as e:

@@ -372,7 +372,7 @@ SEASONS_SEED = [
 ]
 
 
-def seed(db=None):
+def seed(db=None, *, include_seasons=True):
     close_db = False
     if db is None:
         db = SessionLocal()
@@ -386,12 +386,14 @@ def seed(db=None):
             ("cliente", "Cliente para app móvil y reservas"),
         ]
 
+        new_roles = set()
         for r_name, r_desc in roles_to_ensure:
             role = db.query(Role).filter(Role.name == r_name).first()
             if not role:
+                new_roles.add(r_name)
                 role = Role(name=r_name, description=r_desc)
                 db.add(role)
-        db.commit()
+        db.flush()
 
         # Permisos
         for p_data in PERMISSIONS_SEED:
@@ -399,29 +401,24 @@ def seed(db=None):
             if not perm:
                 perm = Permission(**p_data)
                 db.add(perm)
-            else:
-                perm.module = p_data["module"]
-                perm.method = p_data["method"]
-                perm.path = p_data["path"]
-                perm.description = p_data["description"]
-        db.commit()
+        db.flush()
 
         # Temporadas predefinidas
-        for s_data in SEASONS_SEED:
+        for s_data in (SEASONS_SEED if include_seasons else []):
             season = db.query(Season).filter(Season.nombre == s_data["nombre"]).first()
             if not season:
                 season = Season(**s_data)
                 db.add(season)
-        db.commit()
+        db.flush()
 
         # Assign all seeded permissions to admin role
         admin_role = db.query(Role).filter(Role.name == "admin").first()
-        if admin_role:
+        if admin_role and "admin" in new_roles:
             admin_role.permissions = db.query(Permission).all()
 
         # Default permissions for encargado
         encargado_role = db.query(Role).filter(Role.name == "encargado").first()
-        if encargado_role:
+        if encargado_role and "encargado" in new_roles:
             encargado_codes = [
                 "sucursales.list", "categorias.list", "productos.list", "variantes.list",
                 "proveedores.list", "temporadas.list",
@@ -433,7 +430,7 @@ def seed(db=None):
 
         # Default permissions for cajero
         cajero_role = db.query(Role).filter(Role.name == "cajero").first()
-        if cajero_role:
+        if cajero_role and "cajero" in new_roles:
             cajero_codes = [
                 "sucursales.list", "categorias.list", "productos.list", "variantes.list",
                 "temporadas.list",
@@ -444,14 +441,16 @@ def seed(db=None):
 
         # Default permissions for cliente
         cliente_role = db.query(Role).filter(Role.name == "cliente").first()
-        if cliente_role:
+        if cliente_role and "cliente" in new_roles:
             cliente_codes = [
                 "sucursales.list", "categorias.list", "productos.list", "variantes.list",
                 "temporadas.list", "reservas.create"
             ]
             cliente_role.permissions = db.query(Permission).filter(Permission.code.in_(cliente_codes)).all()
 
-        db.commit()
+        db.flush()
+        if close_db:
+            db.commit()
         print("[SUCCESS] Permisos, roles y temporadas sembrados exitosamente.")
     except Exception as e:
         db.rollback()

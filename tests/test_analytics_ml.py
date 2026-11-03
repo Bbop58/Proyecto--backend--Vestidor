@@ -1,3 +1,4 @@
+from tests.support import make_test_admin
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -77,6 +78,7 @@ def test_analytics_api_endpoints_e2e(client: TestClient, db_session: Session):
     seed(db_session)
     admin_reg = client.post("/api/v1/auth/register", json=ADMIN_DATA)
     assert admin_reg.status_code == 201
+    make_test_admin(db_session,admin_reg.json()["user"]["email"])
     token = admin_reg.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 

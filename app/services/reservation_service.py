@@ -104,6 +104,7 @@ class ReservationService:
 
         # 5. Crear cabecera de reserva
         reserva = Reservation(
+            tenant_id=branch.tenant_id,
             codigo=codigo,
             cliente_id=cliente_id,
             sucursal_id=data.sucursal_id,
@@ -155,6 +156,7 @@ class ReservationService:
 
             # Registrar movimiento tipo SALIDA_RESERVA
             mov = InventoryMovement(
+                tenant_id=inv.tenant_id,
                 inventario_id=inv.id,
                 tipo=MovementType.SALIDA_RESERVA,
                 cantidad=item.cantidad,
@@ -370,6 +372,7 @@ class ReservationService:
                 if inv:
                     inv.stock_reservado = max(0, inv.stock_reservado - detalle.cantidad)
                     mov = InventoryMovement(
+                        tenant_id=inv.tenant_id,
                         inventario_id=inv.id,
                         tipo=MovementType.LIBERACION_RESERVA,
                         cantidad=detalle.cantidad,

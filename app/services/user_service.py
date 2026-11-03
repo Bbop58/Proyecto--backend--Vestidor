@@ -35,8 +35,7 @@ class UserService:
     def create(db: Session, user_in: UserCreate) -> User:
         role_id = user_in.role_id
         if not role_id:
-            user_count = db.query(User).count()
-            default_role_name = "admin" if user_count == 0 else "cliente"
+            default_role_name = "cliente"
             default_role = db.query(Role).filter(Role.name == default_role_name).first()
             if not default_role:
                 default_role = Role(name=default_role_name, description=f"{default_role_name.capitalize()} del sistema")
@@ -47,6 +46,7 @@ class UserService:
 
 
         db_user = User(
+            tenant_id=getattr(user_in,"tenant_id",None) or db.info.get("tenant_scope"),
             email=user_in.email.lower().strip(),
             full_name=user_in.full_name.strip(),
             hashed_password=get_password_hash(user_in.password),
@@ -66,7 +66,7 @@ class UserService:
         if user_in.email is not None:
             db_user.email = user_in.email.lower().strip()
         if user_in.role_id is not None:
-            db_user.role_id = user_in.role_id
+            raise HTTPException(403,"El perfil personal no permite cambiar el rol")
         db.commit()
         db.refresh(db_user)
         return db_user
@@ -106,6 +106,7 @@ class UserService:
             user_in.role_id = default_role.id if default_role else None
 
         db_user = User(
+            tenant_id=getattr(user_in,"tenant_id",None) or db.info.get("tenant_scope"),
             email=user_in.email.lower().strip(),
             full_name=user_in.full_name.strip(),
             hashed_password=get_password_hash(user_in.password),

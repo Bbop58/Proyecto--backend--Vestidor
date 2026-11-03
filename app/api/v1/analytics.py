@@ -22,10 +22,9 @@ router = APIRouter(prefix="/analytics", tags=["Analítica Inteligente con Machin
 
 
 def _resolve_tenant_id(db: Session, current_user: User) -> UUID:
-    if current_user.tenant_id:
-        return current_user.tenant_id
-    first_tenant = db.query(Tenant).first()
-    return first_tenant.id if first_tenant else UUID("3a4e7234-4a3e-444f-a8a4-eab8c885e3d5")
+    if not current_user.tenant_id:
+        raise HTTPException(403,"La cuenta debe pertenecer a una empresa")
+    return current_user.tenant_id
 
 
 @router.post(

@@ -1,3 +1,4 @@
+from tests.support import make_test_admin
 import pytest
 from fastapi.testclient import TestClient
 from app.seed_permissions import seed
@@ -20,6 +21,7 @@ def test_roles_and_permissions_flow(client: TestClient, db_session: Session):
     # 2. Register user (will get admin role by default)
     reg_resp = client.post("/api/v1/auth/register", json=ADMIN_USER_DATA)
     assert reg_resp.status_code == 201
+    make_test_admin(db_session,ADMIN_USER_DATA["email"])
     token = reg_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 

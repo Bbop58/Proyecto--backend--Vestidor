@@ -1,6 +1,6 @@
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.api.deps import require_permission, get_current_user
@@ -45,7 +45,10 @@ def create_role(role_in: RoleCreate, db: Session = Depends(get_db)):
     summary="Obtener detalle de un rol"
 )
 def get_role(role_id: uuid.UUID, db: Session = Depends(get_db)):
-    return RoleService.get_role_by_id(db, role_id)
+    role = RoleService.get_role_by_id(db, role_id)
+    if not role:
+        raise HTTPException(404,"Rol no encontrado")
+    return role
 
 
 @router.put(

@@ -67,32 +67,8 @@ def get_current_subscription_info(
         Subscription.estado == "ACTIVA"
     ).order_by(Subscription.fecha_vencimiento.desc()).first()
 
-    if not sub:
-        pro_plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.codigo == "PROFESIONAL").first()
-        if not pro_plan:
-            pro_plan = SubscriptionPlan(
-                codigo="PROFESIONAL",
-                nombre="Plan Profesional",
-                descripcion="Hasta 10 sucursales, Reportes con IA e Inteligencia Artificial",
-                max_sucursales=10,
-                permite_reportes_ia=True,
-                permite_offline=True,
-                precio_mensual_bob=499.00
-            )
-            db.add(pro_plan)
-            db.flush()
-
-        sub = Subscription(
-            tenant_id=tenant.id,
-            plan_id=pro_plan.id,
-            estado="ACTIVA",
-            fecha_inicio=date.today(),
-            fecha_vencimiento=date.fromordinal(date.today().toordinal() + 365),
-            notas="Suscripción asignada por defecto"
-        )
-        db.add(sub)
-        db.commit()
-        db.refresh(sub)
+    if not sub or sub.fecha_vencimiento < date.today():
+        raise HTTPException(403,"La empresa no tiene una suscripción activa vigente")
 
     plan = sub.plan
 
@@ -147,7 +123,8 @@ def list_subscription_plans(
 def change_tenant_plan(
     request: ChangePlanRequest,
     db: Session = Depends(get_db),
-    tenant: Tenant = Depends(get_current_tenant)
+    tenant: Tenant = Depends(get_current_tenant),
+    admin: User = Depends(require_permission("roles.update"))
 ):
     target_plan = db.query(SubscriptionPlan).filter(
         SubscriptionPlan.codigo == request.plan_codigo.upper().strip(),
@@ -194,7 +171,8 @@ def change_tenant_plan(
 def update_current_tenant_branding(
     request: TenantBrandingUpdateRequest,
     db: Session = Depends(get_db),
-    tenant: Tenant = Depends(get_current_tenant)
+    tenant: Tenant = Depends(get_current_tenant),
+    admin: User = Depends(require_permission("roles.update"))
 ):
     if request.nombre is not None and request.nombre.strip():
         tenant.nombre = request.nombre.strip()
@@ -225,14 +203,8 @@ def update_current_tenant_branding(
 def is_platform_superadmin(user: User) -> bool:
     """Verifica si el usuario es el Super Administrador global de la plataforma SaaS (admin@sistema.com o superadmin@ficcstore.com).
     Los administradores de inquilinos (ej. admin@modaexpress.com) solo administran su propia empresa."""
-    if not user or not user.email:
-        return False
-    email = user.email.lower().strip()
-    return (
-        email in ["admin@sistema.com", "superadmin@ficcstore.com"]
-        or email.endswith("@sistema.com")
-        or (user.tenant_id is None and user.role and "admin" in user.role.name.lower())
-    )
+    from app.config import settings
+    return bool(user and str(user.id) in settings.PLATFORM_ADMIN_USER_IDS)
 
 
 @router.get(
@@ -250,6 +222,7 @@ def get_saas_tenants_overview(
             detail="Acceso restringido: Solo el Super Administrador de la Plataforma SaaS (admin@sistema.com) puede ver todas las empresas."
         )
 
+    db.info.pop("tenant_scope",None)  # Explicit platform UUID grant verified above.
     tenants = db.query(Tenant).order_by(Tenant.created_at.asc()).all()
     overview_items: List[TenantOverviewItem] = []
     total_sucursales = 0
@@ -327,6 +300,8 @@ def get_saas_tenants_overview(
 
 
 def _execute_create_tenant(db: Session, request: TenantCreateRequest) -> TenantOverviewItem:
+    if request.admin_email and not request.admin_password:
+        raise HTTPException(400,"La contraseña del administrador es obligatoria")
     clean_slug = request.slug.lower().strip()
     existing = db.query(Tenant).filter(Tenant.slug == clean_slug).first()
     if existing:
@@ -385,7 +360,7 @@ def _execute_create_tenant(db: Session, request: TenantCreateRequest) -> TenantO
         new_admin = User(
             email=clean_email,
             full_name=request.admin_full_name.strip() if request.admin_full_name else f"Admin {new_tenant.nombre}",
-            hashed_password=get_password_hash(request.admin_password or "Password123!"),
+            hashed_password=get_password_hash(request.admin_password),
             role_id=admin_role.id if admin_role else None,
             tenant_id=new_tenant.id,
             is_active=True,
@@ -458,6 +433,7 @@ def create_new_tenant(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Solo el Super Administrador de la Plataforma SaaS (admin@sistema.com) puede dar de alta nuevas empresas."
         )
+    db.info.pop("tenant_scope",None)
     return _execute_create_tenant(db, request)
 
 
@@ -477,6 +453,7 @@ def toggle_tenant_status(
             detail="Acceso restringido: Solo el Super Administrador de la Plataforma SaaS puede suspender o activar empresas."
         )
 
+    db.info.pop("tenant_scope",None)
     t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Empresa no encontrada")

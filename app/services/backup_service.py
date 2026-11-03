@@ -1,7 +1,7 @@
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Dict, Any, List, Optional
 from uuid import UUID
 from decimal import Decimal
@@ -34,7 +34,7 @@ logger = logging.getLogger("backup_service")
 
 
 def json_serializer(obj):
-    if isinstance(obj, (datetime,)):
+    if isinstance(obj, (datetime,date)):
         return obj.isoformat()
     if isinstance(obj, UUID):
         return str(obj)
@@ -68,194 +68,23 @@ class BackupService:
         Genera un snapshot completo consistente y serializado de todas las entidades del sistema
         con sellado criptográfico SHA-256 de verificación.
         """
-        logger.info(f"Iniciando generación de Backup por {current_user.email if current_user else 'Sistema'}...")
-
-        backup_payload = {
-            "system": "FICCT STORE SaaS Enterprise",
-            "version": "2.0.0",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "generated_by": current_user.email if current_user else "admin",
-            "data": {}
-        }
-
-        # 1. Tenants
-        tenants = db.query(Tenant).all()
-        backup_payload["data"]["tenants"] = [
-            {
-                "id": str(t.id),
-                "nombre": t.nombre,
-                "slug": t.slug,
-                "color_primario": t.color_primario,
-                "color_secundario": t.color_secundario,
-                "eslogan": t.eslogan,
-                "logo_url": t.logo_url,
-                "activo": t.activo
-            }
-            for t in tenants
-        ]
-
-        # 2. Roles y Permisos
-        roles = db.query(Role).all()
-        backup_payload["data"]["roles"] = [
-            {
-                "id": str(r.id),
-                "name": r.name,
-                "description": r.description
-            }
-            for r in roles
-        ]
-
-        # 3. Usuarios
-        users = db.query(User).all()
-        backup_payload["data"]["users"] = [
-            {
-                "id": str(u.id),
-                "tenant_id": str(u.tenant_id) if u.tenant_id else None,
-                "email": u.email,
-                "full_name": u.full_name,
-                "hashed_password": u.hashed_password,
-                "role_id": str(u.role_id) if u.role_id else None,
-                "is_active": u.is_active,
-                "is_verified": u.is_verified
-            }
-            for u in users
-        ]
-
-        # 4. Sucursales
-        branches = db.query(Branch).all()
-        backup_payload["data"]["sucursales"] = [
-            {
-                "id": str(b.id),
-                "tenant_id": str(b.tenant_id) if b.tenant_id else None,
-                "nombre": b.nombre,
-                "ciudad": b.ciudad,
-                "direccion": b.direccion,
-                "telefono": b.telefono,
-                "activa": b.activa
-            }
-            for b in branches
-        ]
-
-        # 5. Categorías y Temporadas
-        categories = db.query(Category).all()
-        backup_payload["data"]["categorias"] = [
-            {
-                "id": str(c.id),
-                "tenant_id": str(c.tenant_id) if c.tenant_id else None,
-                "nombre": c.nombre,
-                "descripcion": c.descripcion,
-                "activo": c.activo
-            }
-            for c in categories
-        ]
-
-        # 6. Productos y Variantes
-        products = db.query(Product).all()
-        backup_payload["data"]["productos"] = [
-            {
-                "id": str(p.id),
-                "tenant_id": str(p.tenant_id) if p.tenant_id else None,
-                "categoria_id": str(p.categoria_id) if p.categoria_id else None,
-                "nombre": p.nombre,
-                "descripcion": p.descripcion,
-                "precio_base": float(p.precio_base) if p.precio_base is not None else 0.0,
-                "temporada": p.temporada,
-                "activo": p.activo
-            }
-            for p in products
-        ]
-
-        variants = db.query(ProductVariant).all()
-        backup_payload["data"]["variantes"] = [
-            {
-                "id": str(v.id),
-                "producto_id": str(v.producto_id),
-                "sku": v.sku,
-                "talla": v.talla,
-                "color": v.color,
-                "precio_ajustado": float(v.precio_ajustado) if v.precio_ajustado is not None else 0.0,
-                "activo": v.activo
-            }
-            for v in variants
-        ]
-
-        # 7. Inventario
-        inventory = db.query(Inventory).all()
-        backup_payload["data"]["inventario"] = [
-            {
-                "id": str(i.id),
-                "tenant_id": str(i.tenant_id) if i.tenant_id else None,
-                "sucursal_id": str(i.sucursal_id),
-                "variante_id": str(i.variante_id),
-                "stock_actual": i.stock_actual,
-                "stock_minimo": i.stock_minimo
-            }
-            for i in inventory
-        ]
-
-        # 8. Ventas y Detalles
-        sales = db.query(Sale).all()
-        backup_payload["data"]["ventas"] = [
-            {
-                "id": str(s.id),
-                "tenant_id": str(s.tenant_id) if s.tenant_id else None,
-                "numero_recibo": s.numero_recibo,
-                "sucursal_id": str(s.sucursal_id),
-                "cliente_id": str(s.cliente_id) if s.cliente_id else None,
-                "cajero_id": str(s.cajero_id) if s.cajero_id else None,
-                "metodo_pago": s.metodo_pago.value if hasattr(s.metodo_pago, "value") else str(s.metodo_pago),
-                "monto_total": float(s.monto_total),
-                "impuesto_iva": float(s.impuesto_iva or 0.0),
-                "monto_neto": float(s.monto_neto or 0.0),
-                "monto_recibido": float(s.monto_recibido) if s.monto_recibido is not None else None,
-                "cambio": float(s.cambio or 0.0),
-                "created_at": s.created_at.isoformat() if s.created_at else None
-            }
-            for s in sales
-        ]
-
-        details = db.query(SaleDetail).all()
-        backup_payload["data"]["detalles_venta"] = [
-            {
-                "id": str(d.id),
-                "venta_id": str(d.venta_id),
-                "producto_id": str(d.producto_id) if d.producto_id else None,
-                "variante_id": str(d.variante_id) if d.variante_id else None,
-                "cantidad": d.cantidad,
-                "precio_unitario": float(d.precio_unitario),
-                "subtotal": float(d.subtotal)
-            }
-            for d in details
-        ]
-
-        # 9. Billeteras y Transacciones
-        wallets = db.query(UserWallet).all()
-        backup_payload["data"]["billeteras"] = [
-            {
-                "id": str(w.id),
-                "user_id": str(w.user_id),
-                "saldo": float(w.saldo),
-                "firma_integridad": w.firma_integridad,
-                "nonce": w.nonce,
-                "moneda": getattr(w, "moneda", "BOB")
-            }
-            for w in wallets
-        ]
-
-        # Calcular Checksum SHA-256 del bloque data
-        data_string = json.dumps(backup_payload["data"], default=json_serializer, sort_keys=True)
-        checksum = hashlib.sha256(data_string.encode("utf-8")).hexdigest()
-        backup_payload["checksum_sha256"] = checksum
-        backup_payload["total_records"] = sum(len(v) for v in backup_payload["data"].values())
-
-        AuditService.log(
-            db=db,
-            action=f"Copia de Seguridad generada (Total: {backup_payload['total_records']} registros)",
-            module="Backups",
-            user=current_user
-        )
-
-        return backup_payload
+        from app.core.tenant_scope import predicates
+        from app.database import Base
+        tenant_id = db.info.get("tenant_scope")
+        if not tenant_id:
+            raise HTTPException(403,"El respaldo requiere una sesión de empresa")
+        aliases = {"variantes_producto":"variantes", "user_wallets":"billeteras"}
+        data = {}
+        for model in predicates(tenant_id):
+            rows = db.query(model).all()
+            key = aliases.get(model.__tablename__,model.__tablename__)
+            data[key] = [{column.key:getattr(row,column.key) for column in model.__table__.columns} for row in rows]
+        payload = {"system":"FICCT STORE SaaS Enterprise", "version":"3.0.0", "scope":"tenant",
+                   "tenant_id":str(tenant_id), "created_at":datetime.now(timezone.utc).isoformat(), "data":data}
+        payload["checksum_sha256"] = hashlib.sha256(json.dumps(data,default=json_serializer,sort_keys=True).encode()).hexdigest()
+        payload["total_records"] = sum(len(rows) for rows in data.values())
+        AuditService.log(db,action="Copia de seguridad de empresa generada",module="Backups",user=current_user)
+        return payload
 
     @classmethod
     def restore_backup(cls, db: Session, backup_content: Dict[str, Any], current_user: Optional[User] = None) -> Dict[str, Any]:
@@ -311,7 +140,7 @@ class BackupService:
                     db.add(c)
                 c.nombre = c_item.get("nombre", c.nombre)
                 c.descripcion = c_item.get("descripcion", c.descripcion)
-                c.activo = c_item.get("activo", True)
+                c.activa = c_item.get("activa", c_item.get("activo", True))
             db.flush()
             restored_counts["categorias"] = len(data.get("categorias", []))
 

@@ -527,6 +527,10 @@ Respond strictly with a JSON object in this exact format:
         raw_sql, interpretation = cls._generate_sql_with_gemini(question, limit=limit)
         validated_sql = cls._validate_sql_security(raw_sql)
 
+        if db.info.get('tenant_scope'):
+            from app.core.tenant_sql import scope_report_sql
+            validated_sql = scope_report_sql(validated_sql,db,db.info['tenant_scope'])
+
         if not re.search(r"\bLIMIT\s+\d+\b", validated_sql, re.IGNORECASE):
             validated_sql = f"{validated_sql} LIMIT {limit}"
 

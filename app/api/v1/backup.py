@@ -56,6 +56,10 @@ async def restore_system(
     Recibe un archivo de respaldo .json generado previamente, valida su integridad
     y restaura el estado del sistema en una transacción atómica.
     """
+    from app.api.v1.subscriptions import is_platform_superadmin
+    if not is_platform_superadmin(current_user):
+        raise HTTPException(403,"La restauración global requiere administración de plataforma")
+    db.info.pop("tenant_scope",None)
     if not file.filename.endswith(".json"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import require_permission, get_current_user
+from app.api.deps import require_permission, get_current_user, get_current_user_optional
 from app.models.inventory_movement import MovementType
 from app.schemas.inventory import (
     InventoryResponse,
@@ -159,7 +159,8 @@ def get_availability(
     talla: Optional[str] = Query(None),
     color: Optional[str] = Query(None),
     ciudad: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_optional)
 ):
     """Endpoint público — no requiere autenticación. Muestra stock disponible > 0."""
     return InventoryService.get_availability(

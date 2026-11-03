@@ -1,7 +1,7 @@
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -21,6 +21,11 @@ from app.services.audit_service import AuditService
 router = APIRouter(prefix="/ventas", tags=["Ventas"])
 
 
+def get_sales_user(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    SaleService._actor_tenant(db, user.id)
+    return user
+
+
 # ─────────────────────────── REPORTES ───────────────────────────────────────
 
 @router.get(
@@ -32,7 +37,7 @@ router = APIRouter(prefix="/ventas", tags=["Ventas"])
 def get_summary_report(
     sucursal_id: Optional[uuid.UUID] = Query(None),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_sales_user)
 ):
     return SaleService.get_summary_report(db, sucursal_id=sucursal_id, tenant_id=current_user.tenant_id)
 
@@ -47,7 +52,7 @@ def get_top_products(
     sucursal_id: Optional[uuid.UUID] = Query(None),
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_sales_user)
 ):
     return SaleService.get_top_products(db, sucursal_id=sucursal_id, limit=limit, tenant_id=current_user.tenant_id)
 
@@ -64,7 +69,7 @@ def get_top_products(
 def create_presencial_sale(
     data: PresencialSaleCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_sales_user)
 ):
     sale = SaleService.create_presencial_sale(db, data, cajero_id=current_user.id)
     recibo = sale.get("numero_recibo") if isinstance(sale, dict) else getattr(sale, "numero_recibo", "")
@@ -87,7 +92,7 @@ def create_presencial_sale(
 def create_digital_sale(
     data: DigitalSaleCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_sales_user)
 ):
     sale = SaleService.create_digital_sale(db, data, cliente_id=current_user.id)
     recibo = sale.get("numero_recibo") if isinstance(sale, dict) else getattr(sale, "numero_recibo", "")
@@ -108,12 +113,13 @@ def create_digital_sale(
 )
 def get_my_purchases(
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_sales_user)
 ):
     """Retorna las compras digitales del cliente que realiza la petición."""
     return SaleService.get_sales(
         db,
         cliente_id=current_user.id,
+        tenant_id=current_user.tenant_id,
         limit=100,
         offset=0
     )
@@ -136,7 +142,7 @@ def get_sales(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_sales_user)
 ):
     return SaleService.get_sales(
         db,
@@ -160,7 +166,7 @@ def get_sales(
 def get_sale(
     venta_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_sales_user)
 ):
     return SaleService.get_sale_by_id(db, venta_id, tenant_id=current_user.tenant_id)
 
@@ -175,7 +181,7 @@ def cancel_sale(
     venta_id: uuid.UUID,
     data: SaleCancel,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_sales_user)
 ):
     res = SaleService.cancel_sale(
         db,
@@ -199,7 +205,13 @@ def cancel_sale(
 )
 def get_sale_receipt_note(
     venta_id: uuid.UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user=Depends(get_sales_user)
 ):
     from app.services.receipt_service import ReceiptService
+    from app.services.role_service import RoleService
+    sale = SaleService.get_sale_by_id(db, venta_id, tenant_id=current_user.tenant_id)
+    permissions = RoleService.get_permission_codes(db, current_user.role_id) if current_user.role_id else []
+    if sale["cliente_id"] != current_user.id and "ventas.list" not in permissions:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
     return ReceiptService.get_sale_receipt(db, venta_id)

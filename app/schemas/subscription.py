@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, EmailStr
 
 
 class SubscriptionPlanResponse(BaseModel):
@@ -33,7 +33,6 @@ class TenantInfo(BaseModel):
     telefono: Optional[str] = None
     email_contacto: Optional[str] = None
     paypal_client_id: Optional[str] = None
-    paypal_client_secret: Optional[str] = None
     paypal_mode: Optional[str] = "sandbox"
     paypal_client_id: Optional[str] = None
     paypal_mode: Optional[str] = "sandbox"
@@ -126,6 +125,6 @@ class TenantCreateRequest(BaseModel):
     paypal_client_id: Optional[str] = None
     paypal_client_secret: Optional[str] = None
     paypal_mode: Optional[str] = "sandbox"
-    admin_email: Optional[str] = None
+    admin_email: Optional[EmailStr] = None
     admin_full_name: Optional[str] = None
-    admin_password: Optional[str] = "Password123!"
+    admin_password: Optional[str] = Field(None,min_length=8,max_length=100)

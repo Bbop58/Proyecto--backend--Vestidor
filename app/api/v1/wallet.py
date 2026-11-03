@@ -38,11 +38,6 @@ def get_my_wallet(
 ):
     try:
         tenant_id = current_user.tenant_id
-        if not tenant_id:
-            from app.models.tenant import Tenant
-            first_tenant = db.query(Tenant).first()
-            tenant_id = first_tenant.id if first_tenant else uuid.uuid4()
-
         wallet = WalletService.get_or_create_wallet(db, current_user.id, tenant_id)
         return WalletResponse.model_validate(wallet)
     except Exception as e:
@@ -65,10 +60,6 @@ def get_my_wallet_history(
 ):
     try:
         tenant_id = current_user.tenant_id
-        if not tenant_id:
-            from app.models.tenant import Tenant
-            first_tenant = db.query(Tenant).first()
-            tenant_id = first_tenant.id if first_tenant else uuid.uuid4()
 
         wallet = WalletService.get_or_create_wallet(db, current_user.id, tenant_id)
         history = WalletService.get_wallet_history(db, wallet.id, limit=limit)
@@ -92,10 +83,6 @@ def topup_with_paypal(
 ):
     try:
         tenant_id = current_user.tenant_id
-        if not tenant_id:
-            from app.models.tenant import Tenant
-            first_tenant = db.query(Tenant).first()
-            tenant_id = first_tenant.id if first_tenant else uuid.uuid4()
 
         from app.api.v1.payments import _resolve_tenant_paypal
         creds = _resolve_tenant_paypal(db=db, user=current_user, tenant_id=tenant_id)
@@ -172,10 +159,6 @@ def sync_offline_wallet_orders(
     current_user: User = Depends(get_current_user)
 ):
     tenant_id = current_user.tenant_id
-    if not tenant_id:
-        from app.models.tenant import Tenant
-        first_tenant = db.query(Tenant).first()
-        tenant_id = first_tenant.id if first_tenant else uuid.uuid4()
 
     res = WalletService.sync_offline_orders_batch(
         db=db,

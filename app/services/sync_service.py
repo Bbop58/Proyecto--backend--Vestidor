@@ -47,6 +47,8 @@ class SyncService:
         for op in batch_request.operations:
             # ── PASO 1: Comprobar Idempotencia ──
             existing_sync = db.query(SyncOperation).filter(
+                SyncOperation.tenant_id == tenant_id,
+                SyncOperation.user_id == current_user.id,
                 SyncOperation.client_operation_id == op.client_operation_id
             ).first()
 
@@ -69,6 +71,18 @@ class SyncService:
                     total_rejected += 1
                 continue
 
+            # The legacy unique key is global. Inspect availability only (never fetch
+            # a foreign result) to reject cross-account collisions without an insert.
+            from sqlalchemy import select, exists
+            claimed = db.execute(select(exists().where(
+                SyncOperation.__table__.c.client_operation_id == op.client_operation_id))).scalar()
+            if claimed:
+                results.append(SyncOperationResult(client_operation_id=op.client_operation_id,
+                    status="CONFLICTO",is_duplicate=False,message="Identificador no disponible para esta cuenta.",
+                    error_detail="Identificador no disponible para esta cuenta."))
+                total_rejected += 1
+                continue
+
             # ── PASO 2: Validar Sucursal y Tenant ──
             branch = db.query(Branch).filter(
                 Branch.id == op.sucursal_id,
@@ -78,20 +92,6 @@ class SyncService:
 
             if not branch:
                 error_msg = f"La sucursal {op.sucursal_id} no existe, está inactiva o no pertenece a su empresa."
-                sync_op = SyncOperation(
-                    client_operation_id=op.client_operation_id,
-                    tenant_id=tenant_id,
-                    branch_id=op.sucursal_id,
-                    user_id=current_user.id,
-                    operation_type=op.operation_type,
-                    client_created_at=op.fecha_local,
-                    sync_status="CONFLICTO",
-                    error_detail=error_msg,
-                    response_payload={"status": "CONFLICTO", "error": error_msg}
-                )
-                db.add(sync_op)
-                db.commit()
-
                 results.append(SyncOperationResult(
                     client_operation_id=op.client_operation_id,
                     status="CONFLICTO",

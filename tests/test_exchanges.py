@@ -1,3 +1,4 @@
+from tests.support import make_test_admin
 import pytest
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -14,13 +15,18 @@ ADMIN_DATA = {
 }
 
 
-def test_complete_product_exchange_flow(client: TestClient, db_session: Session):
+def test_complete_product_exchange_flow(client: TestClient, db_session: Session, commercial_tenant):
     # 1. Seed base roles & permissions
     seed(db_session)
 
     # 2. Registrar usuario Admin
     admin_reg = client.post("/api/v1/auth/register", json=ADMIN_DATA)
     assert admin_reg.status_code == 201
+    from app.models.user import User
+    # Commercial fixtures explicitly belong to a company; no legacy global account.
+    db_session.query(User).filter_by(email=ADMIN_DATA["email"]).one().tenant_id = commercial_tenant.id
+    db_session.commit()
+    make_test_admin(db_session,admin_reg.json()["user"]["email"])
     admin_token = admin_reg.json()["access_token"]
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 

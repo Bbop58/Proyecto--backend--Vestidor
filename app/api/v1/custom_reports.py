@@ -21,7 +21,7 @@ class CustomReportRequest(BaseModel):
 
 @router.get("/meta", summary="Obtener entidades y columnas disponibles para el constructor de reportes")
 def get_report_builder_metadata(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("ventas.reports"))
 ):
     """
     Retorna la lista de módulos y campos disponibles para armar reportes dinámicos.
@@ -33,7 +33,7 @@ def get_report_builder_metadata(
 def generate_custom_report(
     payload: CustomReportRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_permission("ventas.reports"))
 ):
     """
     Construye y ejecuta la consulta personalizada retornando las filas y columnas exactas solicitadas.

@@ -1,12 +1,12 @@
 import os
 from typing import List, Union
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import AnyHttpUrl, field_validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore"
@@ -14,10 +14,18 @@ class Settings(BaseSettings):
 
     RUN_STARTUP_MIGRATIONS: bool = False
     RUN_DEMO_SEED: bool = False
+    PLATFORM_ADMIN_USER_IDS: List[str] = []
+
+    @field_validator('SECRET_KEY')
+    @classmethod
+    def require_private_signing_key(cls,value):
+        if value.startswith(("REPLACE_WITH_","CHANGE_ME")) or value in {'supersecretkey-change-this-in-production-long-random-string','your-secret-key-change-in-production'}:
+            raise ValueError('Configure a private SECRET_KEY; the public default is forbidden')
+        return value
 
     PROJECT_NAME: str = "Sistema de Autenticacion"
     API_V1_STR: str = "/api/v1"
-    SECRET_KEY: str = "supersecretkey-change-this-in-production-long-random-string"
+    SECRET_KEY: str = Field(..., min_length=32)
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7

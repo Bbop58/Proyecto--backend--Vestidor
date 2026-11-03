@@ -24,3 +24,6 @@ pandas>=2.2.0
 scikit-learn>=1.5.0
 joblib>=1.4.0
 
+
+# Parsed SQL boundaries for tenant-scoped voice reports
+sqlglot==30.29.0

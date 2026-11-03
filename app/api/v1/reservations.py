@@ -89,7 +89,13 @@ def get_reservation(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    return ReservationService.get_reservation_by_id(db, reserva_id)
+    reservation = ReservationService.get_reservation_by_id(db, reserva_id)
+    permissions = RoleService.get_permission_codes(db,current_user.role_id)
+    owner = reservation.get("cliente_id") if isinstance(reservation,dict) else reservation.cliente_id
+    if owner != current_user.id and "reservas.list" not in permissions:
+        from fastapi import HTTPException
+        raise HTTPException(404,"Reserva no encontrada")
+    return reservation
 
 
 @router.patch(

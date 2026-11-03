@@ -1,4 +1,5 @@
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, case
 
 from app.models.branch import Branch
+from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.product_variant import ProductVariant
 from app.models.inventory import Inventory
@@ -22,8 +24,44 @@ from app.schemas.sale import (
     TopProductReport,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class SaleService:
+
+    @staticmethod
+    def _actor_tenant(db: Session, actor_id: uuid.UUID):
+        actor = db.query(User).filter(User.id == actor_id, User.is_active == True).first()
+        if not actor or not actor.tenant_id:
+            raise HTTPException(status_code=403, detail="La cuenta debe pertenecer a una empresa")
+        if not db.query(Tenant.id).filter(Tenant.id == actor.tenant_id, Tenant.activo == True).first():
+            raise HTTPException(status_code=403, detail="Empresa inactiva o no disponible")
+        return actor.tenant_id
+
+    @staticmethod
+    def _validate_scope(db: Session, data, tenant_id, cliente_id=None, digital=False):
+        branch = db.query(Branch).filter_by(id=data.sucursal_id, tenant_id=tenant_id, activa=True).first()
+        if not branch:
+            raise HTTPException(status_code=404, detail="Sucursal no encontrada o inactiva")
+        if cliente_id and not db.query(User.id).filter_by(id=cliente_id,tenant_id=tenant_id,is_active=True).first():
+            raise HTTPException(status_code=404, detail="Cliente no encontrado o inactivo")
+        # Validate the whole payload before adding a header or changing any stock.
+        for item in data.items:
+            variant = db.query(ProductVariant).filter_by(id=item.variante_id,activo=True).first()
+            if not variant or not variant.producto or variant.producto.tenant_id != tenant_id or not variant.producto.activo:
+                raise HTTPException(status_code=404, detail="Variante no encontrada o inactiva")
+            if not db.query(Inventory.id).filter_by(sucursal_id=branch.id,
+                    variante_id=item.variante_id,tenant_id=tenant_id,activo=True).first():
+                raise HTTPException(status_code=400, detail="Inventario no disponible en esta empresa")
+            if item.reserva_id:
+                if digital:
+                    raise HTTPException(status_code=400, detail="La compra digital no liquida reservas")
+                reservation = db.query(Reservation).filter_by(id=item.reserva_id,tenant_id=tenant_id,sucursal_id=branch.id).first()
+                if not reservation or not db.query(User.id).filter_by(id=reservation.cliente_id,tenant_id=tenant_id).first():
+                    raise HTTPException(status_code=404, detail="Reserva no encontrada")
+                if cliente_id and reservation.cliente_id != cliente_id:
+                    raise HTTPException(status_code=400, detail="La reserva pertenece a otro cliente")
+        return branch
 
     @staticmethod
     def _format_sale_response(venta: Sale) -> dict:
@@ -77,8 +115,13 @@ class SaleService:
     def create_presencial_sale(
         db: Session,
         data: PresencialSaleCreate,
-        cajero_id: Optional[uuid.UUID] = None
+        cajero_id: Optional[uuid.UUID] = None,
+        actor_id: Optional[uuid.UUID] = None
     ) -> dict:
+        tenant_id = SaleService._actor_tenant(db, actor_id or cajero_id)
+        SaleService._validate_scope(db, data, tenant_id, data.cliente_id)
+        if cajero_id and SaleService._actor_tenant(db, cajero_id) != tenant_id:
+            raise HTTPException(status_code=403, detail="Cajero de otra empresa")
         # 1. Validar sucursal
         branch = db.query(Branch).filter(Branch.id == data.sucursal_id, Branch.activa == True).first()
         if not branch:
@@ -175,6 +218,7 @@ class SaleService:
 
             # Registrar movimiento de salida por venta
             mov = InventoryMovement(
+                tenant_id=tenant_id,
                 inventario_id=inv.id,
                 tipo=MovementType.SALIDA_VENTA,
                 cantidad=-item.cantidad,
@@ -246,6 +290,8 @@ class SaleService:
         data: DigitalSaleCreate,
         cliente_id: uuid.UUID
     ) -> dict:
+        tenant_id = SaleService._actor_tenant(db, cliente_id)
+        SaleService._validate_scope(db, data, tenant_id, cliente_id, digital=True)
         branch = db.query(Branch).filter(Branch.id == data.sucursal_id, Branch.activa == True).first()
         if not branch:
             raise HTTPException(status_code=404, detail="Sucursal no encontrada o inactiva")
@@ -254,6 +300,7 @@ class SaleService:
         numero_recibo = f"DIG-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
         venta = Sale(
+            tenant_id=tenant_id,
             numero_recibo=numero_recibo,
             tipo=SaleType.DIGITAL,
             estado=SaleStatus.COMPLETADA,
@@ -290,6 +337,7 @@ class SaleService:
             inv.stock_actual = max(0, inv.stock_actual - item.cantidad)
 
             mov = InventoryMovement(
+                tenant_id=tenant_id,
                 inventario_id=inv.id,
                 tipo=MovementType.SALIDA_VENTA,
                 cantidad=-item.cantidad,
@@ -385,7 +433,8 @@ class SaleService:
         motivo: str,
         usuario_id: uuid.UUID
     ) -> dict:
-        venta = db.query(Sale).filter(Sale.id == venta_id).first()
+        tenant_id = SaleService._actor_tenant(db, usuario_id)
+        venta = db.query(Sale).filter(Sale.id == venta_id, Sale.tenant_id == tenant_id).first()
         if not venta:
             raise HTTPException(status_code=404, detail="Venta no encontrada")
 
@@ -406,6 +455,7 @@ class SaleService:
                 stock_antes = inv.stock_actual
                 inv.stock_actual += detalle.cantidad
                 mov = InventoryMovement(
+                    tenant_id=tenant_id,
                     inventario_id=inv.id,
                     tipo=MovementType.DEVOLUCION,
                     cantidad=detalle.cantidad,

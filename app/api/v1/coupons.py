@@ -20,10 +20,9 @@ router = APIRouter(prefix="/coupons", tags=["Cupones y Ofertas"])
 
 
 def _resolve_tenant_id(db: Session, current_user: User) -> uuid.UUID:
-    if current_user.tenant_id:
-        return current_user.tenant_id
-    first_tenant = db.query(Tenant).first()
-    return first_tenant.id if first_tenant else uuid.uuid4()
+    if not current_user.tenant_id:
+        raise HTTPException(403,"La cuenta debe pertenecer a una empresa")
+    return current_user.tenant_id
 
 
 @router.get("", response_model=List[CouponResponse], summary="Listar cupones de descuento del tenant")

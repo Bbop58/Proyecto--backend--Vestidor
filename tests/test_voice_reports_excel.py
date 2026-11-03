@@ -1,3 +1,4 @@
+from tests.support import make_test_admin
 import io
 import pytest
 import openpyxl
@@ -19,6 +20,7 @@ def test_canonical_exam_queries_and_excel_export(client: TestClient, db_session:
     # 2. Registrar y autenticar Admin
     admin_reg = client.post("/api/v1/auth/register", json=ADMIN_DATA)
     assert admin_reg.status_code == 201
+    make_test_admin(db_session,admin_reg.json()["user"]["email"])
     token = admin_reg.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -117,10 +119,12 @@ def test_sql_injection_and_destructive_keyword_protection(client: TestClient, db
     # Seed & Login
     seed(db_session)
     admin_reg = client.post("/api/v1/auth/register", json={
+        "tenant_id": str(ADMIN_DATA["tenant_id"]),
         "email": "security_test@example.com",
         "password": "AdminPassword123!",
         "full_name": "Security Tester"
     })
+    make_test_admin(db_session,admin_reg.json()["user"]["email"])
     token = admin_reg.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 

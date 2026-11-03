@@ -23,6 +23,7 @@ class RoleResponse(RoleBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    is_shared: bool = False
     created_at: datetime
     updated_at: datetime
 

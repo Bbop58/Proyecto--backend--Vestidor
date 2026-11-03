@@ -11,6 +11,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
+    tenant_id: Optional[uuid.UUID] = None
     password: str = Field(..., min_length=8, max_length=100, description="Minimum 8 characters")
     role_id: Optional[uuid.UUID] = None
 
@@ -42,6 +43,7 @@ class UserResponse(UserBase):
     id: uuid.UUID
     is_active: bool
     is_verified: bool
+    is_platform_admin: bool = False
     role: Optional[RoleResponse] = None
     permissions: List[str] = []
     tenant_id: Optional[uuid.UUID] = None

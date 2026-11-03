@@ -22,12 +22,20 @@ from app.schemas.paypal import (
 )
 from app.services.paypal_service import PayPalService
 from app.services.sale_service import SaleService
+from app.services.role_service import RoleService
 from app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/payments", tags=["Pagos y Pasarelas"])
 
 
 def _resolve_tenant_paypal(db: Session, sucursal_id: Optional[uuid.UUID] = None, user: Optional[User] = None, tenant_id: Optional[uuid.UUID] = None) -> Dict[str, Any]:
+    if user is not None:
+        account_tenant = SaleService._actor_tenant(db, user.id)
+        if tenant_id and tenant_id != account_tenant:
+            raise HTTPException(status_code=404, detail="Empresa no disponible")
+        if sucursal_id and not db.query(Branch.id).filter_by(id=sucursal_id,tenant_id=account_tenant,activa=True).first():
+            raise HTTPException(status_code=404, detail="Sucursal no disponible")
+        tenant_id = account_tenant
     tenant = None
     if tenant_id:
         tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
@@ -324,6 +332,16 @@ def create_paypal_order(
     current_user: User = Depends(get_current_user)
 ):
     """Genera una orden de cobro en la API de PayPal v2 y devuelve el order_id en la cuenta del tenant."""
+    staff = "ventas.create" in RoleService.get_permission_codes(db,current_user.role_id)
+    if data.cliente_id and data.cliente_id != current_user.id and not staff:
+        raise HTTPException(403,"El cliente debe operar con su propia cuenta")
+    if data.reserva_id:
+        from app.models.reservation import Reservation
+        reservation = db.query(Reservation).filter_by(id=data.reserva_id,tenant_id=current_user.tenant_id).first()
+        if not reservation or (not staff and reservation.cliente_id != current_user.id):
+            raise HTTPException(404,"Reserva no disponible")
+        if data.sucursal_id and reservation.sucursal_id != data.sucursal_id:
+            raise HTTPException(400,"La reserva no pertenece a la sucursal")
     creds = _resolve_tenant_paypal(db=db, sucursal_id=data.sucursal_id, user=current_user)
     order_data = PayPalService.create_order(
         monto_bob=data.monto_bob,
@@ -356,11 +374,25 @@ def capture_paypal_order(
     Si la captura es exitosa, registra la venta en la BD, descuenta el stock
     y emite el recibo de venta oficial.
     """
+    # Validate ownership before either returning a previous sale or contacting PayPal.
+    tenant_id = SaleService._actor_tenant(db, current_user.id)
+    is_client = "ventas.create" not in RoleService.get_permission_codes(db,current_user.role_id)
+    if is_client and data.cliente_id and data.cliente_id != current_user.id:
+        raise HTTPException(status_code=403, detail="El cliente debe operar con su propia cuenta")
+    validation = PresencialSaleCreate(
+        sucursal_id=data.sucursal_id,
+        cliente_id=current_user.id if is_client else data.cliente_id,
+        items=[item.model_copy(update={"reserva_id":data.reserva_id or item.reserva_id}) for item in data.detalles],
+        pago=PaymentInfo(metodo=PaymentMethod.PAYPAL))
+    SaleService._validate_scope(db, validation, tenant_id, validation.cliente_id)
     # 0. Idempotencia local: si esta orden de PayPal ya fue registrada en una venta previa, retornarla de inmediato
     existing_sale = db.query(Sale).filter(
+        Sale.tenant_id == tenant_id,
         Sale.referencia_pago.like(f"%{data.order_id}%")
     ).first()
     if existing_sale:
+        if is_client and existing_sale.cliente_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Venta no encontrada")
         logger.info(f"Venta con PayPal #{data.order_id} ya registrada previamente (#{existing_sale.numero_recibo}). Retornando de forma idempotente.")
         return PayPalCaptureOrderResponse(
             venta=SaleResponse(**SaleService._format_sale_response(existing_sale)),
@@ -399,7 +431,7 @@ def capture_paypal_order(
         ))
 
     # 3. Determinar cliente y cajero
-    is_client_user = bool(current_user.role and "cliente" in current_user.role.name.lower())
+    is_client_user = "ventas.create" not in RoleService.get_permission_codes(db,current_user.role_id)
     target_cliente_id = data.cliente_id or (current_user.id if is_client_user else None)
     cajero_id = None if is_client_user else current_user.id
 
@@ -419,7 +451,8 @@ def capture_paypal_order(
     sale_dict = SaleService.create_presencial_sale(
         db=db,
         data=sale_payload,
-        cajero_id=cajero_id
+        cajero_id=cajero_id,
+        actor_id=current_user.id
     )
 
     # 4.1 Registrar pago en bitácora

@@ -1,3 +1,4 @@
+from tests.support import make_test_admin
 import pytest
 from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
@@ -17,19 +18,26 @@ CLIENT_DATA = {
 }
 
 
-def test_phase5_complete_flow(client: TestClient, db_session: Session):
+def test_phase5_complete_flow(client: TestClient, db_session: Session, commercial_tenant):
     # 1. Seed database
     seed(db_session)
 
     # 2. Register Admin user
     admin_reg = client.post("/api/v1/auth/register", json=ADMIN_DATA)
     assert admin_reg.status_code == 201
+    from app.models.user import User
+    # Commercial fixtures explicitly belong to a company; no legacy global account.
+    db_session.query(User).filter_by(email=ADMIN_DATA["email"]).one().tenant_id = commercial_tenant.id
+    db_session.commit()
+    make_test_admin(db_session,admin_reg.json()["user"]["email"])
     admin_token = admin_reg.json()["access_token"]
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
     # 3. Register Client user
     client_reg = client.post("/api/v1/auth/register", json=CLIENT_DATA)
     assert client_reg.status_code == 201
+    db_session.query(User).filter_by(email=CLIENT_DATA["email"]).one().tenant_id = commercial_tenant.id
+    db_session.commit()
     client_token = client_reg.json()["access_token"]
     client_headers = {"Authorization": f"Bearer {client_token}"}
 

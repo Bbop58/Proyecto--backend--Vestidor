@@ -3,7 +3,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.api.deps import require_permission, get_current_user
+from app.api.deps import require_permission, get_current_user, get_current_subscription
 from app.models.user import User
 from app.schemas.branch import BranchCreate, BranchUpdate, BranchResponse
 from app.services.branch_service import BranchService
@@ -29,7 +29,7 @@ def list_branches(
     "",
     response_model=BranchResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_permission("sucursales.create"))],
+    dependencies=[Depends(require_permission("sucursales.create")), Depends(get_current_subscription)],
     summary="Crear una nueva sucursal"
 )
 def create_branch(

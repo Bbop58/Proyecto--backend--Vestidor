@@ -41,6 +41,8 @@ class WalletService:
 
     @staticmethod
     def get_or_create_wallet(db: Session, user_id: uuid.UUID, tenant_id: uuid.UUID) -> UserWallet:
+        if not db.query(User.id).filter_by(id=user_id,tenant_id=tenant_id,is_active=True).first():
+            raise HTTPException(404,"Cliente no disponible en esta empresa")
         wallet = db.query(UserWallet).filter(
             UserWallet.user_id == user_id,
             UserWallet.tenant_id == tenant_id
@@ -92,6 +94,8 @@ class WalletService:
             WalletTransaction.referencia_externa == f"PAYPAL_{order_id}"
         ).first()
         if existing_tx:
+            if existing_tx.wallet.user_id != user_id or existing_tx.tenant_id != tenant_id:
+                raise HTTPException(404,"Operación no disponible")
             logger.info(f"Topup PayPal #{order_id} ya acreditado previamente.")
             return existing_tx.wallet
 

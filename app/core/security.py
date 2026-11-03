@@ -21,7 +21,7 @@ def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
 
-def create_access_token(subject: Union[str, Any], expires_delta: Optional[timedelta] = None) -> Dict[str, Any]:
+def create_access_token(subject: Union[str, Any], expires_delta: Optional[timedelta] = None, *, tenant_id: Optional[uuid.UUID] = None) -> Dict[str, Any]:
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
@@ -30,6 +30,7 @@ def create_access_token(subject: Union[str, Any], expires_delta: Optional[timede
     jti = str(uuid.uuid4())
     to_encode = {
         "sub": str(subject),
+        "tenant_id": str(tenant_id) if tenant_id else None,
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "jti": jti,
@@ -39,7 +40,7 @@ def create_access_token(subject: Union[str, Any], expires_delta: Optional[timede
     return {"token": encoded_jwt, "jti": jti, "expires_at": expire}
 
 
-def create_refresh_token(subject: Union[str, Any], expires_delta: Optional[timedelta] = None) -> Dict[str, Any]:
+def create_refresh_token(subject: Union[str, Any], expires_delta: Optional[timedelta] = None, *, tenant_id: Optional[uuid.UUID] = None) -> Dict[str, Any]:
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
@@ -48,6 +49,7 @@ def create_refresh_token(subject: Union[str, Any], expires_delta: Optional[timed
     jti = str(uuid.uuid4())
     to_encode = {
         "sub": str(subject),
+        "tenant_id": str(tenant_id) if tenant_id else None,
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "jti": jti,

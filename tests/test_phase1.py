@@ -1,3 +1,4 @@
+from tests.support import make_test_admin
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -25,6 +26,7 @@ def test_phase1_complete_flow(client: TestClient, db_session: Session):
     # 2. Register Admin user (first user = admin)
     admin_reg = client.post("/api/v1/auth/register", json=ADMIN_DATA)
     assert admin_reg.status_code == 201
+    make_test_admin(db_session,admin_reg.json()["user"]["email"])
     admin_token = admin_reg.json()["access_token"]
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 

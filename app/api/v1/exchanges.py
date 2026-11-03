@@ -111,7 +111,15 @@ def get_exchange_by_id(
 )
 def get_exchange_receipt_note(
     id: uuid.UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
+    from fastapi import HTTPException
+    from app.models.product_exchange import ProductExchange
+    from app.services.role_service import RoleService
+    exchange = db.query(ProductExchange).filter_by(id=id,tenant_id=current_user.tenant_id).first()
+    permissions = RoleService.get_permission_codes(db,current_user.role_id)
+    if not exchange or (exchange.cliente_id != current_user.id and 'ventas.list' not in permissions):
+        raise HTTPException(404,'Cambio no encontrado')
     from app.services.receipt_service import ReceiptService
     return ReceiptService.get_exchange_receipt(db, id)

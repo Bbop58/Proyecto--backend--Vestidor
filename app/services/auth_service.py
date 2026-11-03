@@ -25,19 +25,27 @@ from app.core.exceptions import (
 class AuthService:
     @staticmethod
     def register(db: Session, register_in: RegisterRequest) -> Tuple[User, str, str]:
+        from app.models.tenant import Tenant
+        tenant = db.query(Tenant).filter_by(id=register_in.tenant_id,activo=True).first()
+        if not tenant:
+            raise HTTPException(404,"Empresa no disponible")
         existing_user = UserService.get_by_email(db, register_in.email)
         if existing_user:
             raise UserAlreadyExistsException()
         
         user_create = UserCreate(
+            tenant_id=register_in.tenant_id,
             email=register_in.email,
             full_name=register_in.full_name,
             password=register_in.password
         )
         user = UserService.create(db, user_create)
         
-        access_token_data = create_access_token(subject=str(user.id))
-        refresh_token_data = create_refresh_token(subject=str(user.id))
+        from app.models.tenant import Tenant
+        if not user.tenant_id or not db.query(Tenant.id).filter_by(id=user.tenant_id,activo=True).first():
+            raise HTTPException(403,"La cuenta debe pertenecer a una empresa activa")
+        access_token_data = create_access_token(subject=str(user.id), tenant_id=user.tenant_id)
+        refresh_token_data = create_refresh_token(subject=str(user.id), tenant_id=user.tenant_id)
         
         return user, access_token_data["token"], refresh_token_data["token"]
 
@@ -47,14 +55,20 @@ class AuthService:
         if not user:
             raise CredentialsException(detail="Correo electronico o contrasena incorrectos")
         
+        if login_in.tenant_id and login_in.tenant_id != user.tenant_id:
+            raise CredentialsException(detail="Correo electrónico o contraseña incorrectos")
+
         if not verify_password(login_in.password, user.hashed_password):
             raise CredentialsException(detail="Correo electronico o contrasena incorrectos")
         
         if not user.is_active:
             raise InactiveUserException()
         
-        access_token_data = create_access_token(subject=str(user.id))
-        refresh_token_data = create_refresh_token(subject=str(user.id))
+        from app.models.tenant import Tenant
+        if not user.tenant_id or not db.query(Tenant.id).filter_by(id=user.tenant_id,activo=True).first():
+            raise HTTPException(403,"La cuenta debe pertenecer a una empresa activa")
+        access_token_data = create_access_token(subject=str(user.id), tenant_id=user.tenant_id)
+        refresh_token_data = create_refresh_token(subject=str(user.id), tenant_id=user.tenant_id)
         
         return user, access_token_data["token"], refresh_token_data["token"]
 
@@ -79,6 +93,11 @@ class AuthService:
             if not user or not user.is_active:
                 raise CredentialsException(detail="Usuario no encontrado o inactivo")
             
+            from app.models.tenant import Tenant
+            if not user.tenant_id or not db.query(Tenant.id).filter_by(id=user.tenant_id,activo=True).first():
+                raise HTTPException(403,"La cuenta debe pertenecer a una empresa activa")
+            if payload.get("tenant_id") != str(user.tenant_id):
+                raise CredentialsException(detail="La sesión no corresponde a la empresa actual")
             # Blacklist the old refresh token
             exp_timestamp = payload.get("exp")
             expires_at = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
@@ -87,17 +106,24 @@ class AuthService:
             db.commit()
             
             # Issue new pair
-            new_access = create_access_token(subject=str(user.id))
-            new_refresh = create_refresh_token(subject=str(user.id))
+            new_access = create_access_token(subject=str(user.id), tenant_id=user.tenant_id)
+            new_refresh = create_refresh_token(subject=str(user.id), tenant_id=user.tenant_id)
             
             return user, new_access["token"], new_refresh["token"]
         except Exception as e:
-            if isinstance(e, (CredentialsException, TokenRevokedException, InactiveUserException)):
+            if isinstance(e, (HTTPException, CredentialsException, TokenRevokedException, InactiveUserException)):
                 raise e
             raise CredentialsException(detail="Token de actualizacion invalido o expirado")
 
     @staticmethod
     def logout(db: Session, token_payload: dict, refresh_token_str: Optional[str] = None) -> None:
+        if refresh_token_str:
+            try:
+                reference = decode_token(refresh_token_str)
+            except Exception:
+                reference = None  # Revoking the access token still works with an expired refresh.
+            if reference and (reference.get('sub') != token_payload.get('sub') or reference.get('type') != 'refresh'):
+                raise HTTPException(400,'El token de renovación no pertenece a esta sesión')
         try:
             jti = token_payload.get("jti")
             exp_timestamp = token_payload.get("exp")

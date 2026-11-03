@@ -49,7 +49,9 @@ class InventoryService:
             .first()
         )
         if not inv:
+            branch = db.query(Branch).filter_by(id=sucursal_id).one()
             inv = Inventory(
+                tenant_id=branch.tenant_id,
                 sucursal_id=sucursal_id,
                 variante_id=variante_id,
                 stock_actual=0,
@@ -72,6 +74,7 @@ class InventoryService:
     ) -> InventoryMovement:
         """Crea y persiste un movimiento de inventario."""
         mov = InventoryMovement(
+            tenant_id=inventario.tenant_id,
             inventario_id=inventario.id,
             tipo=tipo,
             cantidad=cantidad,
@@ -162,6 +165,7 @@ class InventoryService:
             inv.stock_actual += item.cantidad
 
             mov = InventoryMovement(
+                tenant_id=inv.tenant_id,
                 inventario_id=inv.id,
                 tipo=MovementType.ENTRADA,
                 cantidad=item.cantidad,
@@ -207,6 +211,7 @@ class InventoryService:
         inv.stock_actual = nuevo_stock
 
         mov = InventoryMovement(
+            tenant_id=inv.tenant_id,
             inventario_id=inv.id,
             tipo=MovementType.AJUSTE,
             cantidad=data.cantidad,

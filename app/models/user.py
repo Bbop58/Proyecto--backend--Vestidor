@@ -27,3 +27,8 @@ class User(Base):
     role = relationship("Role", back_populates="users", lazy="joined")
     tenant = relationship("Tenant", foreign_keys=[tenant_id], lazy="joined")
 
+
+    @property
+    def is_platform_admin(self):
+        from app.config import settings
+        return str(self.id) in settings.PLATFORM_ADMIN_USER_IDS

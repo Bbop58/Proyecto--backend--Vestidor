@@ -298,7 +298,7 @@ def paypal_cancel_page():
     <div class="card">
         <div class="icon-circle">✕</div>
         <h1>Operación Cancelada</h1>
-        <p>No se realizó ningún cargo en tu cuenta de PayPal. Puedes cerrar esta ventana y regresar a la app FICCT STORE para intentar nuevamente.</p>
+        <p>La autorización se canceló. Regresa a la aplicación y consulta el estado de la orden antes de volver a intentar el pago.</p>
         <button class="btn-action" onclick="closeWindow();">Volver a la App / Cerrar Ventana</button>
         <p style="font-size: 11px; color: #94a3b8; margin-top: 12px; margin-bottom: 0;">
             Si la pestaña no se cierra automáticamente por políticas de tu navegador, simplemente pulsa 'Atrás' o cambia a la <strong>App FICCT STORE</strong>.
@@ -331,32 +331,8 @@ def create_paypal_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Genera una orden de cobro en la API de PayPal v2 y devuelve el order_id en la cuenta del tenant."""
-    staff = "ventas.create" in RoleService.get_permission_codes(db,current_user.role_id)
-    if data.cliente_id and data.cliente_id != current_user.id and not staff:
-        raise HTTPException(403,"El cliente debe operar con su propia cuenta")
-    if data.reserva_id:
-        from app.models.reservation import Reservation
-        reservation = db.query(Reservation).filter_by(id=data.reserva_id,tenant_id=current_user.tenant_id).first()
-        if not reservation or (not staff and reservation.cliente_id != current_user.id):
-            raise HTTPException(404,"Reserva no disponible")
-        if data.sucursal_id and reservation.sucursal_id != data.sucursal_id:
-            raise HTTPException(400,"La reserva no pertenece a la sucursal")
-    creds = _resolve_tenant_paypal(db=db, sucursal_id=data.sucursal_id, user=current_user)
-    order_data = PayPalService.create_order(
-        monto_bob=data.monto_bob,
-        items=data.items,
-        sucursal_id=str(data.sucursal_id) if data.sucursal_id else None,
-        reserva_id=str(data.reserva_id) if data.reserva_id else None,
-        descripcion=data.descripcion or f"Compra en {creds['brand_name']}",
-        return_url=data.return_url,
-        cancel_url=data.cancel_url,
-        client_id=creds["client_id"],
-        client_secret=creds["client_secret"],
-        mode=creds["mode"],
-        brand_name=creds["brand_name"]
-    )
-    return PayPalCreateOrderResponse(**order_data)
+    from app.services.payment_flow_service import PaymentFlowService
+    return PaymentFlowService.create(db, current_user, data)
 
 
 @router.post(
@@ -369,122 +345,16 @@ def capture_paypal_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Captura los fondos en PayPal tras la aprobación del cliente.
-    Si la captura es exitosa, registra la venta en la BD, descuenta el stock
-    y emite el recibo de venta oficial.
-    """
-    # Validate ownership before either returning a previous sale or contacting PayPal.
-    tenant_id = SaleService._actor_tenant(db, current_user.id)
-    is_client = "ventas.create" not in RoleService.get_permission_codes(db,current_user.role_id)
-    if is_client and data.cliente_id and data.cliente_id != current_user.id:
-        raise HTTPException(status_code=403, detail="El cliente debe operar con su propia cuenta")
-    validation = PresencialSaleCreate(
-        sucursal_id=data.sucursal_id,
-        cliente_id=current_user.id if is_client else data.cliente_id,
-        items=[item.model_copy(update={"reserva_id":data.reserva_id or item.reserva_id}) for item in data.detalles],
-        pago=PaymentInfo(metodo=PaymentMethod.PAYPAL))
-    SaleService._validate_scope(db, validation, tenant_id, validation.cliente_id)
-    # 0. Idempotencia local: si esta orden de PayPal ya fue registrada en una venta previa, retornarla de inmediato
-    existing_sale = db.query(Sale).filter(
-        Sale.tenant_id == tenant_id,
-        Sale.referencia_pago.like(f"%{data.order_id}%")
-    ).first()
-    if existing_sale:
-        if is_client and existing_sale.cliente_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Venta no encontrada")
-        logger.info(f"Venta con PayPal #{data.order_id} ya registrada previamente (#{existing_sale.numero_recibo}). Retornando de forma idempotente.")
-        return PayPalCaptureOrderResponse(
-            venta=SaleResponse(**SaleService._format_sale_response(existing_sale)),
-            paypal_order_id=data.order_id,
-            paypal_capture_id=data.order_id,
-            paypal_status="COMPLETED",
-            monto_usd=round(float(existing_sale.monto_total) / 6.96, 2)
-        )
+    from app.services.payment_flow_service import PaymentFlowService
+    return PaymentFlowService.capture(db, current_user, data.order_id, supplied=data)
 
-    # 1. Capturar orden en PayPal REST API usando credenciales del Tenant o Global
-    creds = _resolve_tenant_paypal(db=db, sucursal_id=data.sucursal_id, user=current_user)
-    capture_res = PayPalService.capture_order(
-        data.order_id,
-        client_id=creds["client_id"],
-        client_secret=creds["client_secret"],
-        mode=creds["mode"]
-    )
-    
-    if capture_res.get("status") != "COMPLETED":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"La orden de PayPal no fue completada. Estado: {capture_res.get('status')}"
-        )
 
-    capture_id = capture_res.get("capture_id")
-    monto_usd = capture_res.get("monto_usd", 0.0)
-
-    # 2. Transformar detalles a items de venta
-    sale_items = []
-    for d in data.detalles:
-        sale_items.append(SaleItemCreate(
-            variante_id=d.variante_id,
-            cantidad=d.cantidad,
-            precio_unitario=d.precio_unitario,
-            reserva_id=data.reserva_id
-        ))
-
-    # 3. Determinar cliente y cajero
-    is_client_user = "ventas.create" not in RoleService.get_permission_codes(db,current_user.role_id)
-    target_cliente_id = data.cliente_id or (current_user.id if is_client_user else None)
-    cajero_id = None if is_client_user else current_user.id
-
-    sale_payload = PresencialSaleCreate(
-        sucursal_id=data.sucursal_id,
-        cliente_id=target_cliente_id,
-        items=sale_items,
-        pago=PaymentInfo(
-            metodo=PaymentMethod.PAYPAL,
-            monto_recibido=None,
-            referencia=f"PAYPAL_{capture_id}"
-        ),
-        nota=data.nota or f"Venta pagada vía PayPal Sandbox (Capture ID: {capture_id}, USD {monto_usd:.2f})"
-    )
-
-    # 4. Registrar venta en base de datos
-    sale_dict = SaleService.create_presencial_sale(
-        db=db,
-        data=sale_payload,
-        cajero_id=cajero_id,
-        actor_id=current_user.id
-    )
-
-    # 4.1 Registrar pago en bitácora
-    recibo_num = sale_dict.get("numero_recibo") or sale_dict.get("numero_comprobante") or "N/A"
-    AuditService.log(
-        db=db,
-        action=f"Pago PayPal confirmado (${monto_usd:.2f} USD) - Comprobante #{recibo_num}",
-        module="Pagos",
-        user=current_user
-    )
-
-    # 5. Notificar al cliente sobre la compra digital exitosa
-    try:
-        from app.services.notification_service import NotificationService
-        target_user_id = data.cliente_id or current_user.id
-        comprobante = sale_dict.get("numero_recibo") or sale_dict.get("numero_comprobante", "N/A")
-        total_bob = float(sale_dict.get("monto_total") or sale_dict.get("total", 0.0))
-        NotificationService.create(
-            db=db,
-            user_id=target_user_id,
-            title="¡Compra Confirmada! 💳",
-            message=f"Tu pago de Bs {total_bob:.2f} fue procesado con éxito. Se emitió tu comprobante #{comprobante}.",
-            type="PURCHASE_SUCCESS",
-            reference_id=str(sale_dict.get("id", ""))
-        )
-    except Exception:
-        pass
-
-    return PayPalCaptureOrderResponse(
-        venta=SaleResponse(**sale_dict),
-        paypal_order_id=data.order_id,
-        paypal_capture_id=capture_id,
-        paypal_status=capture_res.get("status"),
-        monto_usd=monto_usd
-    )
+@router.get('/paypal/orders/{order_id}/status', summary='Consultar estado conciliado de una orden propia')
+def paypal_order_status(order_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    from app.models.payment_intent import PaymentIntent
+    row = db.query(PaymentIntent).filter_by(provider_order_id=order_id, tenant_id=current_user.tenant_id,
+                                          user_id=current_user.id).first()
+    if not row:
+        raise HTTPException(404, 'Orden no disponible')
+    return {'order_id': row.provider_order_id, 'state': row.state, 'purpose': row.purpose,
+            'monto_bob': row.amount_bob, 'monto_usd': row.amount_usd, 'refund_id': row.refund_id}

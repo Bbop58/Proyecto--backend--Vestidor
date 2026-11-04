@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import event
 
 from tests.test_tenant_sales import shops
+from tests.support_payments import confirmed_intent
 from app.models.inventory import Inventory
 from app.models.inventory_movement import InventoryMovement, MovementType
 from app.models.product_variant import ProductVariant
@@ -62,7 +63,7 @@ def test_stored_zero_tax_is_not_recomputed(db_session, shops):
 
 
 def test_exact_cash_with_fractional_cents_is_accepted(db_session,shops):
-    u,v,bs=shops['a'];data=sale_data(bs[0],v,precio_unitario=29.95)
+    u,v,bs=shops['a'];v.producto.precio_base=29.95;db_session.commit();data=sale_data(bs[0],v,precio_unitario=29.95)
     data.pago.monto_recibido=29.95
     result=SaleService.create_presencial_sale(db_session,data,u.id)
     assert result['monto_total']==29.95
@@ -158,7 +159,8 @@ def test_repeated_variant_cannot_oversell(db_session,shops,digital):
     with pytest.raises(HTTPException):
         if digital:
             SaleService.create_digital_sale(db_session,DigitalSaleCreate(
-                sucursal_id=bs[0].id,items=data.items),u.id)
+                sucursal_id=bs[0].id,items=data.items),u.id,
+                _payment_intent=confirmed_intent(db_session,u.id,bs[0].id,120))
         else:
             SaleService.create_presencial_sale(db_session,data,u.id)
     assert snapshot(db_session)==before
@@ -400,7 +402,8 @@ def test_last_unit_is_allocated_once_across_real_transactions(committed_shop,ope
                         items=[dict(variante_id=variant_id,cantidad=1)]),user_id)
                 elif operation=='digital':
                     SaleService.create_digital_sale(db,DigitalSaleCreate(sucursal_id=branch_id,
-                        items=[dict(variante_id=variant_id,cantidad=1)]),user_id)
+                        items=[dict(variante_id=variant_id,cantidad=1)]),user_id,
+                        _payment_intent=confirmed_intent(db,user_id,branch_id,10))
                 else:
                     SaleService.create_presencial_sale(db,sale_data(branch,variant),user_id)
                 return 'success'

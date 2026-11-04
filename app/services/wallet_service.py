@@ -1,441 +1,233 @@
-import uuid
-from app.core.commercial_transaction import commercial_transaction, lock_branch
-import hmac
+"""Ledger-backed wallet. Provider amounts and client balances are never trusted."""
 import hashlib
-import logging
-from decimal import Decimal
+import hmac
+import json
+import uuid
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
-
-from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
-
+from decimal import Decimal
+from fastapi import HTTPException
+from sqlalchemy import select
+from app.config import settings
+from app.core.money import money, quote
+from app.core.commercial_transaction import commercial_transaction, lock_branch
+from app.models.user import User
 from app.models.user_wallet import UserWallet
 from app.models.wallet_transaction import WalletTransaction
-from app.models.sale import Sale, SaleType, SaleStatus, PaymentMethod
-from app.models.sale_detail import SaleDetail
+from app.models.payment_intent import PaymentIntent
+from app.models.branch import Branch
 from app.models.inventory import Inventory
 from app.models.inventory_movement import InventoryMovement, MovementType
-from app.models.product_variant import ProductVariant
-from app.models.branch import Branch
-from app.models.user import User
-from app.schemas.wallet import OfflineOrderPayload
-from app.services.notification_service import NotificationService
-
-logger = logging.getLogger(__name__)
-
-WALLET_SECRET_KEY = "FASHIONSTORE_WALLET_SECRET_KEY_SECURE_2026"
+from app.models.sale import Sale, SaleType, SaleStatus, PaymentMethod
+from app.models.sale_detail import SaleDetail
 
 
 class WalletService:
     @staticmethod
-    def _compute_signature(user_id: uuid.UUID, saldo: Decimal, nonce: int) -> str:
-        """Calcula el hash criptográfico HMAC-SHA256 para sellar el balance del cliente."""
-        payload = f"{user_id}:{float(saldo):.2f}:{nonce}".encode("utf-8")
-        return hmac.new(WALLET_SECRET_KEY.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    def _compute_signature(user_id, saldo, nonce, tenant_id=None, retained=0):
+        key = settings.WALLET_SIGNING_KEY
+        if not key:
+            raise HTTPException(503, 'Configura una clave privada para la billetera')
+        payload = f'{tenant_id}:{user_id}:BOB:{money(saldo):.2f}:{money(retained):.2f}:{nonce}'.encode()
+        return hmac.new(key.encode(), payload, hashlib.sha256).hexdigest()
 
     @staticmethod
-    def verify_wallet_integrity(wallet: UserWallet) -> bool:
-        """Verifica si la firma HMAC-SHA256 coincide con el balance y nonce almacenados."""
-        expected = WalletService._compute_signature(wallet.user_id, wallet.saldo_actual, wallet.nonce_secuencia)
-        return hmac.compare_digest(wallet.firma_balance or "", expected)
+    def _seal(wallet):
+        wallet.firma_balance = WalletService._compute_signature(wallet.user_id, wallet.saldo_actual,
+            wallet.nonce_secuencia, wallet.tenant_id, wallet.saldo_retenido)
 
     @staticmethod
-    def get_or_create_wallet(db: Session, user_id: uuid.UUID, tenant_id: uuid.UUID) -> UserWallet:
-        if not db.query(User.id).filter_by(id=user_id,tenant_id=tenant_id,is_active=True).first():
-            raise HTTPException(404,"Cliente no disponible en esta empresa")
-        wallet = db.query(UserWallet).filter(
-            UserWallet.user_id == user_id,
-            UserWallet.tenant_id == tenant_id
-        ).first()
+    def verify_wallet_integrity(wallet):
+        if wallet.moneda != 'BOB' or wallet.nonce_secuencia < 0:
+            return False
+        expected = WalletService._compute_signature(wallet.user_id, wallet.saldo_actual,
+            wallet.nonce_secuencia, wallet.tenant_id, wallet.saldo_retenido)
+        return hmac.compare_digest(wallet.firma_balance or '', expected)
 
+    @staticmethod
+    def _lock_user(db, user_id, tenant_id):
+        user = db.query(User).filter_by(id=user_id, tenant_id=tenant_id, is_active=True).with_for_update(of=User).first()
+        if not user:
+            raise HTTPException(404, 'Cliente no disponible en esta empresa')
+        return user
+
+    @staticmethod
+    def _locked_wallet(db, user_id, tenant_id):
+        WalletService._lock_user(db, user_id, tenant_id)
+        wallet = (db.query(UserWallet).filter_by(user_id=user_id, tenant_id=tenant_id)
+                  .populate_existing().with_for_update(of=UserWallet).first())
         if not wallet:
-            zero_saldo = Decimal("0.00")
-            initial_sig = WalletService._compute_signature(user_id, zero_saldo, 0)
-            wallet = UserWallet(
-                user_id=user_id,
-                tenant_id=tenant_id,
-                saldo_actual=zero_saldo,
-                saldo_retenido=zero_saldo,
-                nonce_secuencia=0,
-                firma_balance=initial_sig,
-                moneda="BOB"
-            )
-            db.add(wallet)
-            db.commit()
-            db.refresh(wallet)
-        elif not wallet.firma_balance:
-            wallet.firma_balance = WalletService._compute_signature(user_id, wallet.saldo_actual, wallet.nonce_secuencia)
-            db.commit()
-            db.refresh(wallet)
-
-        return wallet
-
-    @staticmethod
-    def get_wallet_history(db: Session, wallet_id: uuid.UUID, limit: int = 30) -> List[WalletTransaction]:
-        return (
-            db.query(WalletTransaction)
-            .filter(WalletTransaction.wallet_id == wallet_id)
-            .order_by(WalletTransaction.created_at.desc())
-            .limit(limit)
-            .all()
-        )
-
-    @staticmethod
-    def topup_paypal(
-        db: Session,
-        user_id: uuid.UUID,
-        tenant_id: uuid.UUID,
-        order_id: str,
-        monto_usd: float,
-        monto_bs: Optional[float] = None
-    ) -> UserWallet:
-        # 1. Validar que la orden de PayPal no fue procesada previamente (Idempotencia)
-        existing_tx = db.query(WalletTransaction).filter(
-            WalletTransaction.referencia_externa == f"PAYPAL_{order_id}"
-        ).first()
-        if existing_tx:
-            if existing_tx.wallet.user_id != user_id or existing_tx.tenant_id != tenant_id:
-                raise HTTPException(404,"Operación no disponible")
-            logger.info(f"Topup PayPal #{order_id} ya acreditado previamente.")
-            return existing_tx.wallet
-
-        # 2. Tipo de cambio oficial 6.96 Bs/USD
-        monto_credito = Decimal(str(round(monto_bs if monto_bs else (monto_usd * 6.96), 2)))
-
-        # 3. Bloqueo pesimista de billetera
-        wallet = db.query(UserWallet).filter(
-            UserWallet.user_id == user_id,
-            UserWallet.tenant_id == tenant_id
-        ).with_for_update().first()
-
-        if not wallet:
-            wallet = WalletService.get_or_create_wallet(db, user_id, tenant_id)
-
-        saldo_ant = wallet.saldo_actual
-        saldo_pos = saldo_ant + monto_credito
-        wallet.saldo_actual = saldo_pos
-        wallet.nonce_secuencia += 1
-        wallet.firma_balance = WalletService._compute_signature(wallet.user_id, saldo_pos, wallet.nonce_secuencia)
-        wallet.ultimo_sync_at = datetime.now(timezone.utc)
-
-        # 4. Registrar movimiento contable
-        tx = WalletTransaction(
-            wallet_id=wallet.id,
-            tenant_id=tenant_id,
-            tipo="RECARGA_PAYPAL",
-            monto=monto_credito,
-            saldo_anterior=saldo_ant,
-            saldo_posterior=saldo_pos,
-            referencia_externa=f"PAYPAL_{order_id}",
-            origen="MOBILE",
-            estado_sync="CONCILIADO",
-            notas=f"Recarga con PayPal de ${monto_usd:.2f} USD (T/C 6.96 Bs/USD)",
-            metadatos={"order_id": order_id, "monto_usd": monto_usd}
-        )
-        db.add(tx)
-        db.commit()
-        db.refresh(wallet)
-
-        # 5. Notificación Push al cliente
-        try:
-            NotificationService.create(
-                db=db,
-                user_id=user_id,
-                title="Fondos Acreditados a tu Billetera",
-                message=f"Se han acreditado Bs. {monto_credito:.2f} (${monto_usd:.2f} USD) a tu saldo prepago. Nuevo saldo: Bs. {saldo_pos:.2f}.",
-                type="BILLETERA",
-                reference_id=str(tx.id)
-            )
-        except Exception as err:
-            logger.warning(f"Error emitiendo notif de recarga: {err}")
-
-        return wallet
-
-    @staticmethod
-    def topup_cash_admin(
-        db: Session,
-        admin_user: User,
-        cliente_id: uuid.UUID,
-        monto_bs: float,
-        notas: Optional[str] = None
-    ) -> UserWallet:
-        tenant_id = admin_user.tenant_id
-        if not tenant_id:
-            raise HTTPException(status_code=400, detail="El usuario administrativo no tiene empresa asignada.")
-
-        monto_decimal = Decimal(str(round(monto_bs, 2)))
-
-        wallet = db.query(UserWallet).filter(
-            UserWallet.user_id == cliente_id,
-            UserWallet.tenant_id == tenant_id
-        ).with_for_update().first()
-
-        if not wallet:
-            wallet = WalletService.get_or_create_wallet(db, cliente_id, tenant_id)
-
-        saldo_ant = wallet.saldo_actual
-        saldo_pos = saldo_ant + monto_decimal
-        wallet.saldo_actual = saldo_pos
-        wallet.nonce_secuencia += 1
-        wallet.firma_balance = WalletService._compute_signature(wallet.user_id, saldo_pos, wallet.nonce_secuencia)
-        wallet.ultimo_sync_at = datetime.now(timezone.utc)
-
-        tx = WalletTransaction(
-            wallet_id=wallet.id,
-            tenant_id=tenant_id,
-            tipo="RECARGA_EFECTIVO_MOSTRADOR",
-            monto=monto_decimal,
-            saldo_anterior=saldo_ant,
-            saldo_posterior=saldo_pos,
-            referencia_externa=f"CAJA_REC_{datetime.utcnow().strftime('%Y%m%d%H%M')}",
-            origen="WEB_ADMIN",
-            estado_sync="CONCILIADO",
-            notas=notas or f"Depósito en efectivo en mostrador recibido por {admin_user.full_name}",
-            metadatos={"cajero_id": str(admin_user.id), "cajero_nombre": admin_user.full_name}
-        )
-        db.add(tx)
-        db.commit()
-        db.refresh(wallet)
-
-        try:
-            NotificationService.create(
-                db=db,
-                user_id=cliente_id,
-                title="Recarga de Fondos en Sucursal 🏢",
-                message=f"Se acreditaron Bs. {monto_decimal:.2f} en efectivo en mostrador. Tu saldo disponible es Bs. {saldo_pos:.2f}.",
-                type="BILLETERA",
-                reference_id=str(tx.id)
-            )
-        except Exception as err:
-            logger.warning(f"Error emitiendo notif de recarga en caja: {err}")
-
+            wallet = UserWallet(user_id=user_id, tenant_id=tenant_id, saldo_actual=Decimal('0.00'),
+                saldo_retenido=Decimal('0.00'), nonce_secuencia=0, moneda='BOB')
+            WalletService._seal(wallet)
+            db.add(wallet); db.flush()
+        elif not WalletService.verify_wallet_integrity(wallet):
+            raise HTTPException(409, 'La billetera requiere conciliación de integridad; no se modificó su saldo')
         return wallet
 
     @staticmethod
     @commercial_transaction
-    def sync_offline_orders_batch(
-        db: Session,
-        user_id: uuid.UUID,
-        tenant_id: uuid.UUID,
-        orders: List[OfflineOrderPayload]
-    ) -> Dict[str, Any]:
-        """
-        Procesa el lote de compras offline realizadas con Billetera Virtual en modo Store-and-Forward.
-        Garantiza atomicidad con SELECT FOR UPDATE, idempotencia estricta por UUID y conciliación contable.
-        """
-        for branch_id in sorted({order.sucursal_id for order in orders}, key=str):
+    def get_or_create_wallet(db, user_id, tenant_id):
+        wallet = WalletService._locked_wallet(db, user_id, tenant_id)
+        db.commit(); db.refresh(wallet)
+        return wallet
+
+    @staticmethod
+    def get_wallet_history(db, wallet_id, limit=30):
+        return db.query(WalletTransaction).filter_by(wallet_id=wallet_id).order_by(WalletTransaction.created_at.desc()).limit(limit).all()
+
+    @staticmethod
+    def fingerprint(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), default=str).encode()).hexdigest()
+
+    @staticmethod
+    def _existing(db, key, wallet, digest):
+        tx = db.query(WalletTransaction).filter_by(client_operation_id=key).first()
+        if tx:
+            if tx.wallet_id != wallet.id or tx.tenant_id != wallet.tenant_id or (tx.metadatos or {}).get('request_hash') != digest:
+                raise HTTPException(409, 'La clave de operación ya corresponde a otro contenido o cuenta')
+            return tx
+        if db.execute(select(WalletTransaction.__table__.c.id).where(WalletTransaction.__table__.c.client_operation_id == key)).first():
+            raise HTTPException(409, 'La clave de operación no está disponible')
+        return None
+
+    @staticmethod
+    @commercial_transaction
+    def topup_paypal(db, user_id, tenant_id, order_id, monto_usd, monto_bs=None, _payment_intent=None):
+        intent = _payment_intent
+        if (not isinstance(intent, PaymentIntent) or intent.state != 'CAPTURED' or intent.purpose != 'WALLET'
+            or intent.user_id != user_id or intent.tenant_id != tenant_id or intent.provider_order_id != order_id or not intent.capture_id):
+            raise HTTPException(409, 'La recarga requiere una captura verificada por el servidor')
+        wallet = WalletService._locked_wallet(db, user_id, tenant_id)
+        before = wallet.saldo_actual
+        credit = money(intent.amount_bob, positive=True)
+        wallet.saldo_actual += credit; wallet.nonce_secuencia += 1
+        wallet.ultimo_sync_at = datetime.now(timezone.utc)
+        WalletService._seal(wallet)
+        db.add(WalletTransaction(wallet_id=wallet.id, tenant_id=tenant_id, tipo='RECARGA_PAYPAL',
+            monto=credit, saldo_anterior=before, saldo_posterior=wallet.saldo_actual,
+            payment_intent_id=intent.id, referencia_externa=f'PAYPAL_{intent.capture_id}',
+            origen='SERVER', estado_sync='CONCILIADO', metadatos={'order_id': order_id}))
+        intent.state = 'APPLIED'
+        db.commit(); db.refresh(wallet)
+        return wallet
+
+    @staticmethod
+    @commercial_transaction
+    def topup_cash_admin(db, admin_user, cliente_id, monto_bs, notas=None, client_operation_id=None):
+        from app.services.role_service import RoleService
+        if 'ventas.create' not in RoleService.get_permission_codes(db, admin_user.role_id):
+            raise HTTPException(403, 'La recarga requiere autorización de caja')
+        credit = money(monto_bs, positive=True)
+        wallet = WalletService._locked_wallet(db, cliente_id, admin_user.tenant_id)
+        key = client_operation_id or uuid.uuid4()
+        digest = WalletService.fingerprint({'type': 'CASH', 'amount': str(credit), 'actor': str(admin_user.id)})
+        existing = WalletService._existing(db, key, wallet, digest)
+        if existing:
+            return wallet
+        before = wallet.saldo_actual
+        wallet.saldo_actual += credit; wallet.nonce_secuencia += 1
+        wallet.ultimo_sync_at = datetime.now(timezone.utc)
+        WalletService._seal(wallet)
+        db.add(WalletTransaction(wallet_id=wallet.id, tenant_id=wallet.tenant_id, tipo='RECARGA_EFECTIVO_MOSTRADOR',
+            monto=credit, saldo_anterior=before, saldo_posterior=wallet.saldo_actual, client_operation_id=key,
+            referencia_externa=f'CAJA_REC_{key}', origen='WEB_ADMIN', estado_sync='CONCILIADO', notas=notas,
+            metadatos={'cajero_id': str(admin_user.id), 'request_hash': digest}))
+        db.commit(); db.refresh(wallet)
+        return wallet
+
+    @staticmethod
+    @commercial_transaction
+    def sync_offline_orders_batch(db, user_id, tenant_id, orders):
+        WalletService._lock_user(db, user_id, tenant_id)  # User -> branches -> wallet throughout.
+        for branch_id in sorted({o.sucursal_id for o in orders}, key=str):
+            branch = db.query(Branch).filter_by(id=branch_id, tenant_id=tenant_id, activa=True).first()
+            if not branch:
+                raise HTTPException(404, 'Sucursal no disponible')
             lock_branch(db, branch_id)
-        wallet = db.query(UserWallet).filter(
-            UserWallet.user_id == user_id,
-            UserWallet.tenant_id == tenant_id
-        ).with_for_update().first()
-
-        if not wallet:
-            wallet = WalletService.get_or_create_wallet(db, user_id, tenant_id)
-            for branch_id in sorted({order.sucursal_id for order in orders}, key=str):
-                lock_branch(db, branch_id)
-            wallet = db.query(UserWallet).filter_by(id=wallet.id).populate_existing().with_for_update().one()
-
-        exitosas = 0
-        fallidas = 0
-        detalles_resultado = []
-        notificaciones_pendientes = []
-
-        for ord_data in orders:
-            # 1. Idempotencia: Verificar si esta operación offline ya fue sincronizada
-            existing_tx = db.query(WalletTransaction).filter(
-                WalletTransaction.client_operation_id == ord_data.client_operation_id
-            ).first()
-
-            if existing_tx:
-                detalles_resultado.append({
-                    "client_operation_id": str(ord_data.client_operation_id),
-                    "status": "CONFIRMADA",
-                    "estado": "YA_PROCESADA",
-                    "receipt_number": existing_tx.referencia_externa,
-                    "numero_recibo": existing_tx.referencia_externa,
-                    "mensaje": "Operación offline previamente sincronizada.",
-                    "referencia": existing_tx.referencia_externa
-                })
-                exitosas += 1
-                continue
-
-            monto_orden = Decimal(str(round(ord_data.monto_total, 2)))
-
-            # 2. Control de Sobregiro: Validar saldo disponible en base de datos central
-            if wallet.saldo_actual < monto_orden:
-                detalles_resultado.append({
-                    "client_operation_id": str(ord_data.client_operation_id),
-                    "status": "RECHAZADA_POR_SOBREGIRO",
-                    "estado": "RECHAZADA_POR_SOBREGIRO",
-                    "error_detail": f"Saldo central insuficiente (Disponible: {wallet.saldo_actual} Bs vs Requerido: {monto_orden} Bs).",
-                    "mensaje": f"Saldo central insuficiente (Disponible: {wallet.saldo_actual} Bs vs Requerido: {monto_orden} Bs).",
-                })
-                fallidas += 1
-                continue
-
-            # 3. Validar disponibilidad de stock en la sucursal seleccionada
-            stock_insuficiente = False
-            items_procesables = []
-
-            requested = {}
-            for item in ord_data.items:
-                requested[item.variante_id] = requested.get(item.variante_id, 0) + item.cantidad
-            for item in ord_data.items:
-                inv = db.query(Inventory).filter(
-                    Inventory.sucursal_id == ord_data.sucursal_id,
-                    Inventory.variante_id == item.variante_id
-                ).first()
-
-                if not inv or not inv.activo or inv.stock_disponible < requested[item.variante_id]:
-                    stock_insuficiente = True
-                    break
-                items_procesables.append((inv, item))
-
-            # Caso de Borde: Prenda agotada mientras el cliente estaba offline (Compensación Automática)
-            if stock_insuficiente:
-                detalles_resultado.append({
-                    "client_operation_id": str(ord_data.client_operation_id),
-                    "status": "COMPENSADA_POR_STOCK",
-                    "estado": "COMPENSADA_POR_STOCK",
-                    "error_detail": "Prenda agotada en sucursal durante el periodo offline. Fondos no debitados.",
-                    "mensaje": "Prenda agotada en sucursal durante el periodo offline. Fondos no debitados.",
-                })
-                notificaciones_pendientes.append((
-                    user_id,
-                    "Aviso de Compra Offline ⚠️",
-                    "Una prenda de tu compra offline se agotó en tienda. Tu saldo de Billetera no fue debitado.",
-                    "COMPENSACION_STOCK",
-                    str(ord_data.client_operation_id)
-                ))
-                fallidas += 1
-                continue
-
-            # 4. Generar Venta Oficial y descontar Kardex
-            fecha_recibo = datetime.utcnow().strftime("%Y%m%d")
-            short_id = uuid.uuid4().hex[:6].upper()
-            num_recibo = f"VTA-WAL-{fecha_recibo}-{short_id}"
-            auth_code = ord_data.codigo_autorizacion_offline or ord_data.firma_cliente or f"OFF-{str(ord_data.client_operation_id)[:8].upper()}"
-
-            iva = round(monto_orden * Decimal("0.13"), 2)
-            neto = monto_orden - iva
-
-            nueva_venta = Sale(
-                tenant_id=tenant_id,
-                numero_recibo=num_recibo,
-                tipo=SaleType.DIGITAL,
-                estado=SaleStatus.COMPLETADA,
-                sucursal_id=ord_data.sucursal_id,
-                cliente_id=user_id,
-                cajero_id=None,
-                metodo_pago=PaymentMethod.PAYPAL,  # Clasificada como cobro digital garantizado
-                referencia_pago=f"BILLETERA_AUTH_{auth_code}",
-                monto_total=monto_orden,
-                impuesto_iva=iva,
-                monto_neto=neto,
-                monto_recibido=monto_orden,
-                cambio=Decimal("0.00"),
-                nota=f"Compra Offline reconciliada vía Billetera Virtual (Auth: {auth_code})"
-            )
-            db.add(nueva_venta)
-            db.flush()
-
-            # Descontar stock y registrar salidas
-            for inv, itm in items_procesables:
-                stock_antes = inv.stock_actual
-                inv.stock_actual -= itm.cantidad
-
-                mov = InventoryMovement(
-                    tenant_id=tenant_id,
-                    inventario_id=inv.id,
-                    tipo=MovementType.SALIDA_VENTA,
-                    cantidad=itm.cantidad,
-                    stock_antes=stock_antes,
-                    stock_despues=inv.stock_actual,
-                    referencia=num_recibo,
-                    nota=f"Salida por venta offline con billetera {num_recibo}",
-                    usuario_id=user_id
-                )
-                db.add(mov)
-
-                det = SaleDetail(
-                    venta_id=nueva_venta.id,
-                    variante_id=itm.variante_id,
-                    cantidad=itm.cantidad,
-                    precio_unitario=Decimal(str(itm.precio_unitario)),
-                    subtotal=Decimal(str(round(itm.precio_unitario * itm.cantidad, 2)))
-                )
-                db.add(det)
-
-            # 5. Débito atómico de saldo en la Billetera
-            saldo_ant = wallet.saldo_actual
-            saldo_pos = saldo_ant - monto_orden
-            wallet.saldo_actual = saldo_pos
-            wallet.nonce_secuencia += 1
-            wallet.firma_balance = WalletService._compute_signature(wallet.user_id, saldo_pos, wallet.nonce_secuencia)
-            wallet.ultimo_sync_at = datetime.now(timezone.utc)
-
-            tx = WalletTransaction(
-                wallet_id=wallet.id,
-                tenant_id=tenant_id,
-                tipo="PAGO_ORDEN_OFFLINE",
-                monto=-monto_orden,
-                saldo_anterior=saldo_ant,
-                saldo_posterior=saldo_pos,
-                referencia_externa=num_recibo,
-                client_operation_id=ord_data.client_operation_id,
-                origen="MOBILE",
-                estado_sync="CONCILIADO",
-                notas=f"Pago offline regularizado. Comprobante #{num_recibo}",
-                metadatos={"auth_code": auth_code, "recibo": num_recibo}
-            )
-            db.add(tx)
-
-            detalles_resultado.append({
-                "client_operation_id": str(ord_data.client_operation_id),
-                "status": "CONFIRMADA",
-                "estado": "CONFIRMADA",
-                "receipt_number": num_recibo,
-                "numero_recibo": num_recibo,
-                "monto_debitado": float(monto_orden),
-                "nuevo_saldo": float(saldo_pos)
-            })
-            exitosas += 1
-
-            notificaciones_pendientes.append((
-                user_id,
-                "¡Compra Offline Sincronizada! 🎉",
-                f"Tu compra offline #{num_recibo} por Bs. {float(monto_orden):.2f} ha sido consolidada con tus fondos de Billetera.",
-                "VENTA",
-                str(nueva_venta.id)
-            ))
-
-        db.commit()
-        db.refresh(wallet)
-
-        # Disparar notificaciones DESPUÉS del commit seguro
-        for n_uid, n_title, n_msg, n_type, n_ref in notificaciones_pendientes:
+        wallet = WalletService._locked_wallet(db, user_id, tenant_id)
+        results = []; successful = failed = 0
+        for order in orders:
+            digest = WalletService.fingerprint(order.model_dump(mode='json', exclude={'fecha_local','fecha_orden'}))
             try:
-                NotificationService.create(
-                    db=db,
-                    user_id=n_uid,
-                    title=n_title,
-                    message=n_msg,
-                    type=n_type,
-                    reference_id=n_ref
-                )
-            except Exception:
-                pass
+                existing = WalletService._existing(db, order.client_operation_id, wallet, digest)
+                if existing:
+                    results.append(dict(client_operation_id=str(order.client_operation_id), status='CONFIRMADA',
+                        estado='YA_PROCESADA', receipt_number=existing.referencia_externa, numero_recibo=existing.referencia_externa))
+                    successful += 1
+                    continue
+                pricing = quote(db, order.items, tenant_id, getattr(order, 'codigo_cupon', None))
+                if money(order.monto_total) != pricing['total']:
+                    raise HTTPException(409, 'El importe no coincide con los precios del servidor')
+                if wallet.saldo_actual-wallet.saldo_retenido < pricing['total']:
+                    raise HTTPException(400, 'RECHAZADA_POR_SOBREGIRO')
+                quantities = {}
+                for item in order.items: quantities[item.variante_id] = quantities.get(item.variante_id, 0)+item.cantidad
+                for variant, quantity in quantities.items():
+                    inv = db.query(Inventory).filter_by(sucursal_id=order.sucursal_id, variante_id=variant, activo=True).first()
+                    if not inv or inv.stock_disponible < quantity:
+                        raise HTTPException(400, 'COMPENSADA_POR_STOCK')
+            except HTTPException as error:
+                code = error.detail if error.detail in ('RECHAZADA_POR_SOBREGIRO','COMPENSADA_POR_STOCK') else 'CONFLICTO'
+                results.append(dict(client_operation_id=str(order.client_operation_id), status=code, estado=code,
+                                    error_detail=error.detail, mensaje=error.detail))
+                failed += 1
+                continue
+            pricing = quote(db, order.items, tenant_id, getattr(order, 'codigo_cupon', None), consume=True)
+            total = pricing['total']; tax = money(total*Decimal('.13'))
+            sale = Sale(tenant_id=tenant_id, sucursal_id=order.sucursal_id, cliente_id=user_id,
+                numero_recibo=f'VTA-WAL-{uuid.uuid4().hex[:20].upper()}', tipo=SaleType.DIGITAL,
+                estado=SaleStatus.COMPLETADA, metodo_pago=PaymentMethod.BILLETERA,
+                referencia_pago=f'WALLET_{order.client_operation_id}', monto_subtotal=pricing['subtotal'],
+                descuento=pricing['descuento'], codigo_cupon=pricing['codigo_cupon'], monto_total=total,
+                impuesto_iva=tax, monto_neto=total-tax, monto_recibido=total, cambio=0)
+            db.add(sale); db.flush()
+            for row in pricing['items']:
+                variant_id = uuid.UUID(row['variante_id']); quantity = row['cantidad']; price = money(row['precio_unitario'])
+                inv = db.query(Inventory).filter_by(sucursal_id=order.sucursal_id, variante_id=variant_id).one()
+                before_stock = inv.stock_actual; inv.stock_actual -= quantity
+                db.add(InventoryMovement(tenant_id=tenant_id, inventario_id=inv.id, tipo=MovementType.SALIDA_VENTA,
+                    cantidad=quantity, stock_antes=before_stock, stock_despues=inv.stock_actual,
+                    referencia=sale.numero_recibo, usuario_id=user_id))
+                db.add(SaleDetail(venta_id=sale.id, variante_id=variant_id, cantidad=quantity,
+                                  precio_unitario=price, subtotal=price*quantity))
+            before = wallet.saldo_actual; wallet.saldo_actual -= total; wallet.nonce_secuencia += 1
+            wallet.ultimo_sync_at = datetime.now(timezone.utc); WalletService._seal(wallet)
+            db.add(WalletTransaction(wallet_id=wallet.id, tenant_id=tenant_id, tipo='PAGO_ORDEN_OFFLINE',
+                monto=-total, saldo_anterior=before, saldo_posterior=wallet.saldo_actual,
+                client_operation_id=order.client_operation_id, referencia_externa=sale.numero_recibo,
+                origen='MOBILE', estado_sync='CONCILIADO',
+                metadatos={'sale_id': str(sale.id), 'request_hash': digest}))
+            db.flush()
+            successful += 1
+            results.append(dict(client_operation_id=str(order.client_operation_id), status='CONFIRMADA', estado='CONFIRMADA',
+                receipt_number=sale.numero_recibo, numero_recibo=sale.numero_recibo, nuevo_saldo=float(wallet.saldo_actual)))
+        db.commit(); db.refresh(wallet)
+        return dict(procesadas=len(orders), exitosas=successful, fallidas=failed, nuevo_saldo=float(wallet.saldo_actual),
+            nuevo_nonce=wallet.nonce_secuencia, nueva_firma=wallet.firma_balance, detalles=results, results=results)
 
-        return {
-            "procesadas": len(orders),
-            "exitosas": exitosas,
-            "fallidas": fallidas,
-            "nuevo_saldo": float(wallet.saldo_actual),
-            "nuevo_nonce": wallet.nonce_secuencia,
-            "nueva_firma": wallet.firma_balance or "",
-            "detalles": detalles_resultado,
-            "results": detalles_resultado
-        }
+    @staticmethod
+    def refund_sale(db, sale, wallet_tx):
+        wallet = WalletService._locked_wallet(db, sale.cliente_id, sale.tenant_id)
+        if wallet.id != wallet_tx.wallet_id or money(-wallet_tx.monto) != money(sale.monto_total):
+            raise HTTPException(409, 'La venta requiere conciliación de billetera')
+        key = uuid.uuid5(sale.id, 'wallet-refund')
+        if db.query(WalletTransaction.id).filter_by(client_operation_id=key).first():
+            raise HTTPException(409, 'La devolución ya fue aplicada')
+        before = wallet.saldo_actual; wallet.saldo_actual += money(sale.monto_total); wallet.nonce_secuencia += 1
+        WalletService._seal(wallet)
+        db.add(WalletTransaction(wallet_id=wallet.id, tenant_id=wallet.tenant_id, tipo='REEMBOLSO_DEVOLUCION_PRENDA',
+            monto=money(sale.monto_total), saldo_anterior=before, saldo_posterior=wallet.saldo_actual,
+            client_operation_id=key, referencia_externa=f'REFUND_{sale.numero_recibo}', origen='SERVER', estado_sync='CONCILIADO'))
 
+
+    @staticmethod
+    def credit_exchange(db, user_id, tenant_id, amount, exchange_id):
+        wallet = WalletService._locked_wallet(db, user_id, tenant_id)
+        credit = money(amount, positive=True)
+        before = wallet.saldo_actual
+        wallet.saldo_actual += credit; wallet.nonce_secuencia += 1
+        WalletService._seal(wallet)
+        db.add(WalletTransaction(wallet_id=wallet.id, tenant_id=tenant_id, tipo='REEMBOLSO_DEVOLUCION_PRENDA',
+            monto=credit, saldo_anterior=before, saldo_posterior=wallet.saldo_actual,
+            client_operation_id=uuid.uuid5(exchange_id, 'exchange-credit'), referencia_externa=f'CAMBIO_{exchange_id}',
+            origen='SERVER', estado_sync='CONCILIADO', metadatos={'exchange_id': str(exchange_id)}))

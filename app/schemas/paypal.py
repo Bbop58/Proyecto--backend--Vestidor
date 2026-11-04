@@ -19,6 +19,9 @@ class PayPalCreateOrderRequest(BaseModel):
     descripcion: Optional[str] = "Compra en FICCT STORE"
     return_url: Optional[str] = None
     cancel_url: Optional[str] = None
+    detalles: List[SaleItemCreate] = Field(default_factory=list)
+    codigo_cupon: Optional[str] = Field(None, max_length=50)
+    request_id: Optional[uuid.UUID] = None
 
 
 class PayPalCreateOrderResponse(BaseModel):
@@ -31,7 +34,7 @@ class PayPalCreateOrderResponse(BaseModel):
 
 
 class PayPalCaptureOrderRequest(BaseModel):
-    order_id: str = Field(..., description="PayPal Order ID devuelto por el SDK de PayPal")
+    order_id: str = Field(..., pattern=r'^[A-Za-z0-9-]{3,100}$', description="PayPal Order ID devuelto por el SDK de PayPal")
     sucursal_id: uuid.UUID = Field(..., description="Sucursal donde se concreta la venta")
     detalles: List[SaleItemCreate] = Field(..., min_length=1, description="Items vendidos")
     cliente_id: Optional[uuid.UUID] = None

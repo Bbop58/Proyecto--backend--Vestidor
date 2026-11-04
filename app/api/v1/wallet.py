@@ -1,6 +1,6 @@
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.orm import Session
@@ -40,11 +40,13 @@ def get_my_wallet(
         tenant_id = current_user.tenant_id
         wallet = WalletService.get_or_create_wallet(db, current_user.id, tenant_id)
         return WalletResponse.model_validate(wallet)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error en get_my_wallet: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error consultando billetera: {str(e)}"
+            detail="No se pudo consultar la billetera"
         )
 
 
@@ -64,11 +66,13 @@ def get_my_wallet_history(
         wallet = WalletService.get_or_create_wallet(db, current_user.id, tenant_id)
         history = WalletService.get_wallet_history(db, wallet.id, limit=limit)
         return [WalletTransactionResponse.model_validate(t) for t in history]
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error en get_my_wallet_history: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error consultando historial de billetera: {str(e)}"
+            detail="No se pudo consultar el historial"
         )
 
 
@@ -81,71 +85,11 @@ def topup_with_paypal(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    try:
-        tenant_id = current_user.tenant_id
-
-        from app.api.v1.payments import _resolve_tenant_paypal
-        creds = _resolve_tenant_paypal(db=db, user=current_user, tenant_id=tenant_id)
-        client_id = creds["client_id"]
-        client_secret = creds["client_secret"]
-        mode = creds["mode"]
-        brand_name = creds["brand_name"]
-
-        monto_bob = data.monto_bob or data.monto_bs
-
-        # 1. Si no hay order_id pero hay monto, generar la orden en PayPal Sandbox
-        if not data.order_id and monto_bob:
-            order_res = PayPalService.create_order(
-                monto_bob=monto_bob,
-                descripcion=f"Recarga de Billetera Virtual {brand_name}",
-                return_url=None,
-                cancel_url=None,
-                client_id=client_id,
-                client_secret=client_secret,
-                mode=mode,
-                brand_name=brand_name
-            )
-            return {
-                "order_id": order_res["order_id"],
-                "approve_url": order_res["approve_url"],
-                "monto_usd": order_res["monto_usd"],
-                "monto_bob": monto_bob
-            }
-
-        # 2. Si ya viene el order_id, capturar y acreditar el saldo
-        if data.order_id:
-            try:
-                PayPalService.capture_order(
-                    data.order_id,
-                    client_id=client_id,
-                    client_secret=client_secret,
-                    mode=mode
-                )
-            except Exception as e:
-                logger.info(f"Nota en captura PayPal topup #{data.order_id}: {e}")
-
-            wallet = WalletService.topup_paypal(
-                db=db,
-                user_id=current_user.id,
-                tenant_id=tenant_id,
-                order_id=data.order_id,
-                monto_usd=data.monto_usd or ((monto_bob or 0.0) / 6.96),
-                monto_bs=monto_bob
-            )
-            return WalletResponse.model_validate(wallet)
-
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Debes proporcionar un order_id o un monto en Bolivianos (monto_bob)"
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error en topup_with_paypal: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error en recarga de billetera: {str(e)}"
-        )
+    from app.services.payment_flow_service import PaymentFlowService
+    if data.order_id:
+        wallet = PaymentFlowService.capture(db, current_user, data.order_id, purpose='WALLET')
+        return WalletResponse.model_validate(wallet)
+    return PaymentFlowService.create(db, current_user, data, purpose='WALLET')
 
 
 @router.post(
@@ -213,6 +157,8 @@ def admin_topup_cash(
             detail="No se encontró ningún usuario con el correo o ID especificado"
         )
 
+    if not data.client_operation_id:
+        raise HTTPException(400, "La recarga requiere una clave de operación para evitar duplicados")
     monto = data.monto or data.monto_bs or 0.0
     if monto <= 0:
         raise HTTPException(
@@ -225,11 +171,16 @@ def admin_topup_cash(
         admin_user=current_user,
         cliente_id=cliente.id,
         monto_bs=monto,
-        notas=data.notas
+        notas=data.notas,
+        client_operation_id=data.client_operation_id
     )
 
-    now_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    comp_num = f"REC-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    from app.models.wallet_transaction import WalletTransaction
+    transaction = db.query(WalletTransaction).filter_by(client_operation_id=data.client_operation_id,
+                                                        wallet_id=wallet.id).one()
+    monto = float(transaction.monto)
+    now_str = transaction.created_at.astimezone(timezone(timedelta(hours=-4))).strftime("%d/%m/%Y %H:%M:%S")
+    comp_num = f"REC-{data.client_operation_id}"
 
     return {
         "success": True,

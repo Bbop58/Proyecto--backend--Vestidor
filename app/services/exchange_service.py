@@ -3,6 +3,7 @@ from datetime import datetime, timezone, date
 from decimal import Decimal
 from collections import defaultdict, Counter
 from app.core.commercial_transaction import commercial_transaction, lock_branch
+from app.core.money import catalog_price, money
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -217,8 +218,15 @@ class ExchangeService:
                 detail=f"Recibo de venta '{data.numero_recibo}' no encontrado."
             )
 
+        if venta.cliente_id:
+            from app.services.wallet_service import WalletService
+            WalletService._lock_user(db, venta.cliente_id, venta.tenant_id)
         lock_branch(db, venta.sucursal_id)
         db.refresh(venta)
+        from app.models.payment_intent import PaymentIntent
+        payment = db.query(PaymentIntent).filter_by(sale_id=venta.id).first()
+        if payment and payment.state != 'APPLIED':
+            raise HTTPException(409, "La venta tiene un reembolso en conciliación")
         if venta.estado != SaleStatus.COMPLETADA:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -250,11 +258,6 @@ class ExchangeService:
         quantities_sold = Counter()
         for detail in venta.detalles:
             quantities_sold[detail.variante_id] += detail.cantidad
-        # Different historic prices for the same variant need explicit allocation.
-        for detail in venta.detalles:
-            if detail.precio_unitario != detalles_venta_map[detail.variante_id].precio_unitario:
-                raise HTTPException(409, "La venta contiene precios distintos para una variante; requiere conciliación")
-
         # 4. Procesar y validar cada par de prenda (devuelta vs entregada)
         items_a_procesar = []
         monto_total_devuelto = Decimal("0.0")
@@ -262,6 +265,7 @@ class ExchangeService:
 
         # Agrupar cantidades devueltas en la solicitud actual para evitar trampas de duplicación en el payload
         cantidades_solicitadas_dev = defaultdict(int)
+        allocated = Counter(cantidades_cambiadas)
         for item in data.items:
             cantidades_solicitadas_dev[item.variante_devuelta_id] += item.cantidad_devuelta
 
@@ -293,8 +297,32 @@ class ExchangeService:
         # 5. Validar disponibilidad de stock de las prendas entregadas en la sucursal
         for item in data.items:
             det_orig = detalles_venta_map[item.variante_devuelta_id]
-            precio_devuelto = Decimal(str(det_orig.precio_unitario))
-            subtotal_devuelto = precio_devuelto * Decimal(str(item.cantidad_devuelta))
+            remaining = item.cantidad_devuelta
+            skip = allocated[item.variante_devuelta_id]
+            subtotal_devuelto = Decimal('0.00')
+            originals = sorted((d for d in venta.detalles if d.variante_id == item.variante_devuelta_id),
+                               key=lambda d: (d.created_at, str(d.id)))
+            nominal_total = sum(d.subtotal for d in venta.detalles)
+            discount_factor = ((nominal_total-Decimal(str(venta.descuento or 0)))/nominal_total
+                               if nominal_total else Decimal('0'))
+            prefix_by_id = {}
+            prefix = Decimal('0')
+            for line in sorted(venta.detalles, key=lambda d: (d.created_at, str(d.id))):
+                prefix_by_id[line.id] = prefix
+                prefix += line.subtotal
+            for original in originals:
+                skipped = min(skip, original.cantidad); skip -= skipped
+                take = min(remaining, original.cantidad-skipped)
+                start = prefix_by_id[original.id] + original.precio_unitario*skipped
+                subtotal_devuelto += money((start+original.precio_unitario*take)*discount_factor)-money(start*discount_factor)
+                remaining -= take
+            if remaining:
+                raise HTTPException(409, "No quedan unidades elegibles para cambio")
+            allocated[item.variante_devuelta_id] += item.cantidad_devuelta
+            # Reject a fraction of a cent that cannot fit the current per-unit schema.
+            precio_devuelto = subtotal_devuelto/Decimal(item.cantidad_devuelta)
+            if precio_devuelto != precio_devuelto.quantize(Decimal('.01')):
+                raise HTTPException(409, "Divide el cambio por precio original para conservar los centavos")
             monto_total_devuelto += subtotal_devuelto
 
             # Obtener datos de la variante entregada
@@ -328,7 +356,7 @@ class ExchangeService:
 
             # Precio de la prenda entregada (precio base del producto + precio extra de variante)
             prod_entregado = var_entregada.producto
-            precio_entregado = Decimal(str(prod_entregado.precio_base)) + Decimal(str(var_entregada.precio_extra))
+            precio_entregado = catalog_price(var_entregada)
             subtotal_entregado = precio_entregado * Decimal(str(item.cantidad_entregada))
             monto_total_entregado += subtotal_entregado
 
@@ -343,6 +371,10 @@ class ExchangeService:
             })
 
         diferencia_total = monto_total_entregado - monto_total_devuelto
+        if diferencia_total > 0 and data.metodo_pago_diferencia not in ('EFECTIVO','TARJETA','QR'):
+            raise HTTPException(400, "Registra el medio de cobro de la diferencia en caja")
+        if diferencia_total < 0 and not venta.cliente_id:
+            raise HTTPException(409, "Identifica al cliente para acreditar la diferencia a su billetera")
 
         # 6. Generar número único de comprobante de cambio
         now = utc_now()
@@ -361,7 +393,7 @@ class ExchangeService:
             monto_total_devuelto=monto_total_devuelto,
             monto_total_entregado=monto_total_entregado,
             diferencia=diferencia_total,
-            metodo_pago_diferencia=data.metodo_pago_diferencia if diferencia_total > 0 else "NINGUNO",
+            metodo_pago_diferencia=data.metodo_pago_diferencia if diferencia_total > 0 else ("BILLETERA" if diferencia_total < 0 else "NINGUNO"),
             motivo=data.motivo,
             estado_prenda=data.estado_prenda,
             nota=data.nota,
@@ -369,6 +401,8 @@ class ExchangeService:
         db.add(cambio)
         db.flush()
 
+        if diferencia_total < 0:
+            WalletService.credit_exchange(db, venta.cliente_id, venta.tenant_id, -diferencia_total, cambio.id)
         # 8. Procesar movimientos de inventario y detalles
         for proc in items_a_procesar:
             item = proc["item"]

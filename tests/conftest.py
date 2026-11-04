@@ -1,6 +1,7 @@
 import os
 import secrets
 os.environ["SECRET_KEY"] = secrets.token_urlsafe(48)
+os.environ["WALLET_SIGNING_KEY"] = secrets.token_urlsafe(48)
 from sqlalchemy.engine import make_url
 _test_url = os.environ.get("TEST_DATABASE_URL", "")
 if _test_url:

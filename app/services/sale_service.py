@@ -2,6 +2,8 @@ import uuid
 import logging
 from decimal import Decimal, ROUND_HALF_UP
 from collections import Counter
+from app.core.money import quote, money
+from app.models.payment_intent import PaymentIntent
 from app.core.commercial_transaction import commercial_transaction, lock_branch
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -31,6 +33,18 @@ logger = logging.getLogger(__name__)
 
 
 class SaleService:
+
+    @staticmethod
+    def _attach_payment(sale, intent):
+        if intent is None:
+            return
+        if (intent.state != 'CAPTURED' or intent.purpose != 'SALE' or not intent.capture_id
+                or intent.tenant_id != sale.tenant_id or intent.sale_id is not None
+                or intent.sucursal_id != sale.sucursal_id or intent.cliente_id != sale.cliente_id
+                or money(intent.amount_bob) != money(sale.monto_total)):
+            raise HTTPException(409, "El cobro no corresponde a esta venta")
+        intent.sale_id = sale.id
+        intent.state = 'APPLIED'
 
     @staticmethod
     def _actor_tenant(db: Session, actor_id: uuid.UUID):
@@ -121,12 +135,18 @@ class SaleService:
         db: Session,
         data: PresencialSaleCreate,
         cajero_id: Optional[uuid.UUID] = None,
-        actor_id: Optional[uuid.UUID] = None
+        actor_id: Optional[uuid.UUID] = None,
+        _payment_intent: Optional[PaymentIntent] = None
     ) -> dict:
         tenant_id = SaleService._actor_tenant(db, actor_id or cajero_id)
         SaleService._validate_scope(db, data, tenant_id, data.cliente_id)
+        if data.pago.metodo == PaymentMethod.BILLETERA:
+            raise HTTPException(409, "Usa el flujo de billetera que valida y descuenta el saldo")
         if cajero_id and SaleService._actor_tenant(db, cajero_id) != tenant_id:
             raise HTTPException(status_code=403, detail="Cajero de otra empresa")
+        if data.pago.metodo == PaymentMethod.PAYPAL and _payment_intent is None:
+            raise HTTPException(409, "PayPal requiere una captura verificada por el servidor")
+        pricing = quote(db, data.items, tenant_id, data.codigo_cupon, consume=True)
         # 1. Validar sucursal
         branch = db.query(Branch).filter(Branch.id == data.sucursal_id, Branch.activa == True).first()
         if not branch:
@@ -188,6 +208,7 @@ class SaleService:
         monto_total = Decimal("0.00")
 
         # 4. Procesar cada ítem
+        prices = iter(pricing["items"])
         for item in data.items:
             variant = db.query(ProductVariant).filter(
                 ProductVariant.id == item.variante_id,
@@ -246,11 +267,7 @@ class SaleService:
             db.add(mov)
 
             # Determinar precio
-            precio_unit = item.precio_unitario
-            if precio_unit is None:
-                precio_unit = float(variant.producto.precio_base) + float(variant.precio_extra)
-
-            precio_unit = Decimal(str(precio_unit)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            precio_unit = money(next(prices)["precio_unitario"])
             subtotal = precio_unit * item.cantidad
             monto_total += subtotal
 
@@ -269,9 +286,12 @@ class SaleService:
             reservation.estado = ReservationStatus.COMPLETADA
 
         # 5. Validar pago en efectivo, cambio y cálculo de impuestos (13% IVA y 87% Ganancia neta)
+        monto_total = pricing["total"]
+        venta.descuento = pricing["descuento"]
+        venta.codigo_cupon = pricing["codigo_cupon"]
         iva = (monto_total * Decimal("0.13")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         neto = round(monto_total - iva, 2)
-        venta.monto_subtotal = monto_total
+        venta.monto_subtotal = pricing["subtotal"]
         venta.monto_total = monto_total
         venta.impuesto_iva = iva
         venta.monto_neto = neto
@@ -286,6 +306,7 @@ class SaleService:
             venta.monto_recibido = recibido
             venta.cambio = recibido - monto_total
 
+        SaleService._attach_payment(venta, _payment_intent)
         db.commit()
         db.refresh(venta)
 
@@ -311,10 +332,14 @@ class SaleService:
     def create_digital_sale(
         db: Session,
         data: DigitalSaleCreate,
-        cliente_id: uuid.UUID
+        cliente_id: uuid.UUID,
+        _payment_intent: Optional[PaymentIntent] = None
     ) -> dict:
         tenant_id = SaleService._actor_tenant(db, cliente_id)
         SaleService._validate_scope(db, data, tenant_id, cliente_id, digital=True)
+        if _payment_intent is None:
+            raise HTTPException(409, "Completa el pago mediante la pasarela; una referencia no acredita el cobro")
+        pricing = quote(db, data.items, tenant_id, data.codigo_cupon, consume=True)
         branch = db.query(Branch).filter(Branch.id == data.sucursal_id, Branch.activa == True).first()
         if not branch:
             raise HTTPException(status_code=404, detail="Sucursal no encontrada o inactiva")
@@ -330,8 +355,8 @@ class SaleService:
             sucursal_id=data.sucursal_id,
             cliente_id=cliente_id,
             cajero_id=None,
-            metodo_pago=PaymentMethod.TARJETA,
-            referencia_pago=data.token_pago or "PAY-DIGITAL-AUTH",
+            metodo_pago=PaymentMethod.PAYPAL,
+            referencia_pago=f"PAYPAL_{_payment_intent.capture_id}",
             monto_total=0.0,
             nota=data.nota
         )
@@ -339,6 +364,7 @@ class SaleService:
         db.flush()
 
         monto_total = Decimal("0.00")
+        prices = iter(pricing["items"])
         for item in data.items:
             variant = db.query(ProductVariant).filter(
                 ProductVariant.id == item.variante_id,
@@ -372,8 +398,7 @@ class SaleService:
             )
             db.add(mov)
 
-            precio_unit = float(variant.producto.precio_base) + float(variant.precio_extra)
-            precio_unit = Decimal(str(precio_unit)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            precio_unit = money(next(prices)["precio_unitario"])
             subtotal = precio_unit * item.cantidad
             monto_total += subtotal
 
@@ -386,12 +411,16 @@ class SaleService:
             )
             db.add(detalle)
 
+        monto_total = pricing["total"]
+        venta.descuento = pricing["descuento"]
+        venta.codigo_cupon = pricing["codigo_cupon"]
         iva = (monto_total * Decimal("0.13")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         neto = round(monto_total - iva, 2)
-        venta.monto_subtotal = monto_total
+        venta.monto_subtotal = pricing["subtotal"]
         venta.monto_total = monto_total
         venta.impuesto_iva = iva
         venta.monto_neto = neto
+        SaleService._attach_payment(venta, _payment_intent)
         db.commit()
         db.refresh(venta)
 
@@ -464,8 +493,22 @@ class SaleService:
         if not venta:
             raise HTTPException(status_code=404, detail="Venta no encontrada")
 
+        from app.models.wallet_transaction import WalletTransaction
+        from app.services.wallet_service import WalletService
+        wallet_tx = db.query(WalletTransaction).filter(
+            WalletTransaction.tenant_id == tenant_id,
+            WalletTransaction.tipo.in_(['PAGO_ORDEN_OFFLINE','PAGO_ORDEN_ONLINE']),
+            WalletTransaction.referencia_externa == venta.numero_recibo).first()
+        if wallet_tx:
+            WalletService._lock_user(db, venta.cliente_id, tenant_id)
+        elif venta.metodo_pago == PaymentMethod.BILLETERA:
+            raise HTTPException(409, "La venta no tiene un débito de billetera conciliable")
         lock_branch(db, venta.sucursal_id)
         db.refresh(venta)
+        intent = db.query(PaymentIntent).filter_by(sale_id=venta.id, tenant_id=tenant_id).first()
+        if venta.metodo_pago == PaymentMethod.PAYPAL and not wallet_tx:
+            if not intent or intent.state != 'REFUNDED':
+                raise HTTPException(409, 'La venta requiere reembolso confirmado de la pasarela antes de anular')
         from app.models.product_exchange import ProductExchange
         if db.query(ProductExchange.id).filter_by(venta_id=venta.id).first():
             raise HTTPException(409, "No se puede anular una venta con cambios de prendas; requiere conciliación")
@@ -501,6 +544,8 @@ class SaleService:
                 )
                 db.add(mov)
 
+        if wallet_tx:
+            WalletService.refund_sale(db, venta, wallet_tx)
         for reservation_id in {d.reserva_id for d in venta.detalles if d.reserva_id}:
             reservation = db.query(Reservation).filter_by(id=reservation_id).first()
             if reservation:
@@ -541,6 +586,7 @@ class SaleService:
             func.coalesce(func.sum(case((Sale.metodo_pago == PaymentMethod.QR, Sale.monto_total), else_=0)), 0).label("ventas_qr"),
             func.coalesce(func.sum(case((Sale.metodo_pago == PaymentMethod.TARJETA, Sale.monto_total), else_=0)), 0).label("ventas_tarjeta"),
             func.coalesce(func.sum(case((Sale.metodo_pago == PaymentMethod.PAYPAL, Sale.monto_total), else_=0)), 0).label("ventas_paypal"),
+            func.coalesce(func.sum(case((Sale.metodo_pago == PaymentMethod.BILLETERA, Sale.monto_total), else_=0)), 0).label("ventas_billetera"),
             func.coalesce(func.sum(Sale.impuesto_iva), 0).label("total_iva"),
             func.coalesce(func.sum(Sale.monto_neto), 0).label("ganancia_neta"),
         ).filter(Sale.estado == SaleStatus.COMPLETADA)
@@ -563,10 +609,11 @@ class SaleService:
             "ticket_promedio": round(ticket_promedio, 2),
             "ventas_efectivo": round(float(m.get("ventas_efectivo") or 0.0), 2),
             "ventas_paypal": round(float(m.get("ventas_paypal") or 0.0), 2),
+            "ventas_billetera": round(float(m.get("ventas_billetera") or 0.0), 2),
             "ventas_tarjeta": round(float(m.get("ventas_tarjeta") or 0.0), 2),
             "ventas_qr": round(float(m.get("ventas_qr") or 0.0), 2),
-            "total_iva": round(float(m.get("total_iva") or (ingresos_totales * 0.13)), 2),
-            "ganancia_neta": round(float(m.get("ganancia_neta") or (ingresos_totales * 0.87)), 2),
+            "total_iva": round(float(m.get("total_iva") or 0), 2),
+            "ganancia_neta": round(float(m.get("ganancia_neta") or 0), 2),
         }
 
     @staticmethod

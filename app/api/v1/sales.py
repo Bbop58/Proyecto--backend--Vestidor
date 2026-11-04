@@ -183,12 +183,8 @@ def cancel_sale(
     db: Session = Depends(get_db),
     current_user=Depends(get_sales_user)
 ):
-    res = SaleService.cancel_sale(
-        db,
-        venta_id=venta_id,
-        motivo=data.motivo,
-        usuario_id=current_user.id
-    )
+    from app.services.payment_flow_service import PaymentFlowService
+    res = PaymentFlowService.refund_sale(db, current_user, venta_id, data.motivo)
     recibo = res.get("numero_recibo") if isinstance(res, dict) else getattr(res, "numero_recibo", "")
     AuditService.log(
         db=db,

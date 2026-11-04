@@ -21,7 +21,9 @@ class Role(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
-    permissions = relationship("Permission", secondary=role_permissions, backref="roles", lazy="joined")
+    # A sale/exchange may join several users. Joining each permission collection
+    # multiplies rows (buyer x cashier x exchange staff); fetch collections once.
+    permissions = relationship("Permission", secondary=role_permissions, backref="roles", lazy="selectin")
     users = relationship("User", back_populates="role")
 
     __table_args__ = (UniqueConstraint("tenant_id","name",name="uq_roles_tenant_name"),

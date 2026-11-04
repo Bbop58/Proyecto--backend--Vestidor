@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 import pytest
+from tests.support_payments import fake_paypal
 from app.api.deps import get_current_user
 from app.main import app
 from app.seed_permissions import seed
@@ -81,15 +82,23 @@ def test_sales_reject_foreign_references_without_writes(client,db_session,shops,
 
 
 @pytest.mark.parametrize('digital',[False,True])
-def test_account_buys_in_both_own_branches(client,db_session,shops,digital):
+def test_account_buys_in_both_own_branches(client,db_session,shops,digital,fake_paypal):
     user,var,branches=shops['a']
     if digital:
         user.role_id=db_session.query(Role).filter_by(name='cliente').one().id
         db_session.commit()
     app.dependency_overrides[get_current_user]=lambda:user
     for branch in branches:
-        response=client.post('/api/v1/ventas/'+('digital' if digital else 'presencial'),json=payload(branch,var,digital))
-        assert response.status_code==201,response.text
+        if digital:
+            created=client.post('/api/v1/payments/paypal/create-order',json={
+                'monto_bob':10,'sucursal_id':str(branch.id),'detalles':payload(branch,var,True)['items']})
+            assert created.status_code==201,created.text
+            response=client.post('/api/v1/payments/paypal/capture-order',json={
+                'order_id':created.json()['order_id'],'sucursal_id':str(branch.id),'detalles':payload(branch,var,True)['items']})
+            assert response.status_code==200,response.text
+        else:
+            response=client.post('/api/v1/ventas/presencial',json=payload(branch,var))
+        assert response.status_code==(200 if digital else 201),response.text
     assert all(s.tenant_id==user.tenant_id for s in db_session.query(Sale).all())
     assert all(m.tenant_id==user.tenant_id for m in db_session.query(InventoryMovement).all())
 

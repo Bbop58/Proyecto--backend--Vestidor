@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Numeric, DateTime, ForeignKey, Text
+from sqlalchemy import Column, String, Numeric, DateTime, ForeignKey, Text, CheckConstraint, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -27,6 +27,10 @@ class WalletTransaction(Base):
 
     referencia_externa = Column(String(150), nullable=True, index=True)
     client_operation_id = Column(UUID(as_uuid=True), unique=True, nullable=True, index=True)
+    payment_intent_id = Column(UUID(as_uuid=True), ForeignKey('payment_intents.id', name='fk_wallet_payment_intent'), nullable=True)
+    __table_args__ = (
+        UniqueConstraint('payment_intent_id', name='uq_wallet_payment_intent'),
+        CheckConstraint("saldo_anterior BETWEEN 0 AND 99999999.99 AND saldo_posterior BETWEEN 0 AND 99999999.99 AND monto > -100000000 AND monto < 100000000 AND saldo_posterior = saldo_anterior + monto", name="ck_wallet_ledger"),)
 
     origen = Column(String(30), nullable=False, default="MOBILE")  # 'MOBILE', 'WEB_ADMIN', 'SERVER'
     estado_sync = Column(String(30), nullable=False, default="CONCILIADO")  # 'CONCILIADO', 'EN_DISPUTA'

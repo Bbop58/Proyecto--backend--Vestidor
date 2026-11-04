@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, UniqueConstraint, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -42,5 +42,6 @@ class UserWallet(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "tenant_id", name="uq_user_tenant_wallet"),
+        CheckConstraint("saldo_actual BETWEEN 0 AND 99999999.99 AND saldo_retenido BETWEEN 0 AND saldo_actual AND nonce_secuencia >= 0 AND moneda = 'BOB'", name="ck_wallet_balance"),
     )
 

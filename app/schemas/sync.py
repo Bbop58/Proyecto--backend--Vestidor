@@ -12,6 +12,7 @@ class SyncItemCreate(BaseModel):
 
 
 class SyncOperationItemRequest(BaseModel):
+    codigo_cupon: Optional[str] = Field(None, max_length=50)
     client_operation_id: uuid.UUID = Field(..., description="UUID único generado por el dispositivo offline (Web/Flutter)")
     operation_type: str = Field(default="VENTA_CONTADO_OFFLINE", description="'VENTA_CONTADO_OFFLINE' o 'RESERVA_OFFLINE'")
     sucursal_id: uuid.UUID = Field(..., description="ID de la sucursal donde ocurrió la venta")

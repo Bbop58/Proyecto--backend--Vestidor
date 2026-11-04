@@ -1,5 +1,7 @@
 import uuid
 from app.core.commercial_transaction import lock_branch
+from app.core.money import quote, money
+from fastapi import HTTPException
 from datetime import datetime, timezone, date
 from decimal import Decimal
 from typing import List, Optional
@@ -107,6 +109,26 @@ class SyncService:
             branch_id = branch.id
             branch_nombre = branch.nombre
 
+            try:
+                if op.operation_type != 'VENTA_CONTADO_OFFLINE':
+                    raise HTTPException(409, "Este tipo requiere un flujo de sincronización específico")
+                if not op.metodo_pago or op.metodo_pago.upper() not in ('EFECTIVO','QR','TARJETA'):
+                    raise HTTPException(409, "Método de pago no autorizado para venta manual offline")
+                pricing = quote(db, op.items, tenant_id, getattr(op, 'codigo_cupon', None))
+                if money(op.monto_total) != pricing['total']:
+                    raise HTTPException(409, "El total no coincide con el catálogo del servidor")
+                received = money(op.monto_efectivo_recibido) if op.monto_efectivo_recibido is not None else pricing['total']
+                if op.metodo_pago.upper() == 'EFECTIVO' and received < pricing['total']:
+                    raise HTTPException(409, "Efectivo insuficiente")
+                change = received-pricing['total'] if op.metodo_pago.upper() == 'EFECTIVO' else Decimal('0.00')
+                if op.cambio_entregado is not None and money(op.cambio_entregado) != change:
+                    raise HTTPException(409, "El cambio no coincide con el cálculo del servidor")
+            except HTTPException as error:
+                results.append(SyncOperationResult(client_operation_id=op.client_operation_id, status='CONFLICTO',
+                    is_duplicate=False, message='Operación monetaria rechazada', error_detail=error.detail))
+                total_rejected += 1
+                continue
+
             # ── PASO 3: Validar Disponibilidad de Stock Físico ──
             insufficient_stock_error: Optional[str] = None
             inventories_to_update = []
@@ -174,6 +196,7 @@ class SyncService:
 
             # ── PASO 4: Confirmar Venta, Descontar Stock y Crear Kardex ──
             try:
+                pricing = quote(db, op.items, tenant_id, getattr(op, "codigo_cupon", None), consume=True)
                 # 4.1 Descontar stock
                 stock_steps = []
                 for inv, item in inventories_to_update:
@@ -187,7 +210,7 @@ class SyncService:
                 numero_recibo = f"VTA-OFF-{fecha_str}-{short_uuid}"
 
                 # 4.3 Impuestos
-                monto_total = Decimal(str(op.monto_total))
+                monto_total = pricing["total"]
                 impuesto_iva = round(monto_total * Decimal("0.13"), 2)
                 monto_neto = round(monto_total - impuesto_iva, 2)
 
@@ -205,11 +228,14 @@ class SyncService:
                     tipo=SaleType.PRESENCIAL,
                     estado=SaleStatus.COMPLETADA,
                     metodo_pago=metodo,
+                    monto_subtotal=pricing["subtotal"],
+                    descuento=pricing["descuento"],
+                    codigo_cupon=pricing["codigo_cupon"],
                     monto_total=monto_total,
                     impuesto_iva=impuesto_iva,
                     monto_neto=monto_neto,
-                    monto_recibido=Decimal(str(op.monto_efectivo_recibido)) if op.monto_efectivo_recibido is not None else None,
-                    cambio=Decimal(str(op.cambio_entregado)) if op.cambio_entregado is not None else None,
+                    monto_recibido=received,
+                    cambio=change,
                     numero_recibo=numero_recibo,
                     nota=f"[SYNC OFFLINE] {op.notas or ''}".strip(),
                     created_at=op.fecha_local

@@ -24,6 +24,7 @@ class PresencialSaleCreate(BaseModel):
     items: List[SaleItemCreate] = Field(..., min_length=1)
     pago: PaymentInfo
     nota: Optional[str] = Field(None, max_length=300)
+    codigo_cupon: Optional[str] = Field(None, max_length=50)
 
 
 class DigitalSaleCreate(BaseModel):
@@ -31,6 +32,7 @@ class DigitalSaleCreate(BaseModel):
     items: List[SaleItemCreate] = Field(..., min_length=1)
     token_pago: Optional[str] = Field(None, description="Token de pasarela de pago")
     nota: Optional[str] = Field(None, max_length=300)
+    codigo_cupon: Optional[str] = Field(None, max_length=50)
 
 
 class SaleCancel(BaseModel):
@@ -90,6 +92,7 @@ class SalesSummaryReport(BaseModel):
     ticket_promedio: float
     ventas_efectivo: float
     ventas_paypal: float = 0.0
+    ventas_billetera: float = 0.0
     ventas_tarjeta: float = 0.0
     ventas_qr: float = 0.0
 

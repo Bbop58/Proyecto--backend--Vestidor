@@ -28,6 +28,7 @@ class PaymentMethod(str, enum.Enum):
     TARJETA = "TARJETA"
     QR = "QR"
     PAYPAL = "PAYPAL"
+    BILLETERA = "BILLETERA"
 
 
 class Sale(Base):

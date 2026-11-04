@@ -1,4 +1,5 @@
 from app.database import Base
+from app.models.payment_intent import PaymentIntent
 from app.models.user import User
 from app.models.token_blacklist import TokenBlacklist
 from app.models.role import Role
@@ -32,6 +33,7 @@ from app.models.wallet_transaction import WalletTransaction
 from app.models.coupon import Coupon
 
 __all__ = [
+    "PaymentIntent",
     "Base",
     "Tenant",
     "SubscriptionPlan",

@@ -44,6 +44,7 @@ class PayPalTopupRequest(BaseModel):
     monto_bob: Optional[float] = Field(None, gt=0, description="Monto en Bolivianos a recargar")
     monto_usd: Optional[float] = Field(None, gt=0, description="Monto recargado en dólares")
     monto_bs: Optional[float] = Field(None, gt=0, description="Equivalente en Bolivianos")
+    request_id: Optional[uuid.UUID] = None
 
 
 class AdminCashTopupRequest(BaseModel):
@@ -52,6 +53,7 @@ class AdminCashTopupRequest(BaseModel):
     monto: Optional[float] = Field(None, gt=0, description="Monto en Bolivianos recibido en caja")
     monto_bs: Optional[float] = Field(None, gt=0, description="Monto en Bolivianos recibido en caja")
     notas: Optional[str] = Field(None, max_length=250, description="Observaciones del cajero")
+    client_operation_id: Optional[uuid.UUID] = None
 
 
 class CashTopupReceipt(BaseModel):
@@ -78,6 +80,7 @@ class OfflineOrderItem(BaseModel):
 
 
 class OfflineOrderPayload(BaseModel):
+    codigo_cupon: Optional[str] = Field(None, max_length=50)
     client_operation_id: uuid.UUID = Field(..., description="UUIDv4 único generado offline por la app móvil")
     sucursal_id: uuid.UUID
     items: List[OfflineOrderItem] = Field(..., min_length=1)

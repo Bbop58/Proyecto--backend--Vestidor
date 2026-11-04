@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     RUN_STARTUP_MIGRATIONS: bool = False
     RUN_DEMO_SEED: bool = False
     PLATFORM_ADMIN_USER_IDS: List[str] = []
+    WALLET_SIGNING_KEY: str | None = Field(None, min_length=32)
+
+    @field_validator('WALLET_SIGNING_KEY')
+    @classmethod
+    def require_private_wallet_key(cls, value):
+        if value and value.startswith(('FASHIONSTORE_WALLET_', 'REPLACE_', 'CHANGE_ME')):
+            raise ValueError('Configure a private wallet signing key; public examples are forbidden')
+        return value
 
     @field_validator('SECRET_KEY')
     @classmethod
@@ -50,8 +58,8 @@ class Settings(BaseSettings):
     ]
 
     # PayPal Configuration
-    PAYPAL_CLIENT_ID: str = "BAAIlKDZJDPAM82OYRg0wA792WPdU2nHF_j5IEcNBLfwVoWVN1phsaHHDPwFY-BsX2IitDOaADBEKsWM3M"
-    PAYPAL_CLIENT_SECRET: str = "EBm9qsZjiTndBEIxD8uNwMn3zQHaqudRd19GYswegmwGfuUsshYhApfUu6IQ2jnX51oqKaUoaq3fvyim"
+    PAYPAL_CLIENT_ID: str = ""
+    PAYPAL_CLIENT_SECRET: str = ""
     PAYPAL_MODE: str = "sandbox"
     PAYPAL_EXCHANGE_RATE: float = 6.96
 

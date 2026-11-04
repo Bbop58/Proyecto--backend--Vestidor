@@ -17,10 +17,7 @@ router = APIRouter(prefix="/users", tags=["Usuarios"])
 
 
 def build_user_response(user: User, db: Session) -> UserResponse:
-    res = UserResponse.model_validate(user)
-    if user.role_id:
-        res.permissions = RoleService.get_permission_codes(db, user.role_id)
-    return res
+    return UserService.build_user_response(db, user)
 
 
 @router.get(

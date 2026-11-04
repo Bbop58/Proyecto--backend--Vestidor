@@ -6,7 +6,9 @@ from sqlalchemy import inspect
 from sqlalchemy.engine import make_url
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 url=make_url(os.environ.get('DATABASE_URL',''))
-if url.host not in ('127.0.0.1','localhost') or url.database!='fashionstore_test_phase5_browser' or url.port!=55439 or url.query:
+if url.host not in ('127.0.0.1','localhost') or (url.database,url.port) not in {
+    ('fashionstore_test_phase5_browser',55439), ('fashionstore_test_phase7_browser',55499)
+} or url.query:
     raise RuntimeError('Dedicated local phase5 browser database required')
 from app.database import engine,Base,SessionLocal
 import app.models

@@ -4,6 +4,19 @@ from sqlalchemy import text
 from tests.conftest import test_engine
 
 
+@pytest.fixture(autouse=True)
+def isolate_committed_demo_reset():
+    """The reset intentionally commits; never leave its seeded data for other tests."""
+    from app.database import Base
+    Base.metadata.drop_all(test_engine)
+    Base.metadata.create_all(test_engine)
+    try:
+        yield
+    finally:
+        Base.metadata.drop_all(test_engine)
+        Base.metadata.create_all(test_engine)
+
+
 def test_fresh_rebuilds_legacy_schema_seeds_twice_and_authenticates():
     from scripts.reset_demo_database import reset_demo_database
     from app.database import Base

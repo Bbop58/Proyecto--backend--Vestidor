@@ -12,6 +12,7 @@ from gradio_client import Client, handle_file
 from google import genai
 
 from app.config import settings
+from app.core.gemini_models import http_options
 from app.models.product import Product
 from app.models.product_variant import ProductVariant
 from app.schemas.ai import VirtualTryOnRequest, VirtualTryOnResponse
@@ -36,7 +37,7 @@ class AITryOnService:
         if not api_key:
             raise ValueError("GEMINI_API_KEY no está configurada.")
 
-        client = genai.Client(api_key=api_key, http_options={'timeout':20000})
+        client = genai.Client(api_key=api_key, http_options=http_options(20000))
 
         # Convertir a PIL RGB para asegurar compatibilidad de canales y formatos
         person_pil = Image.open(io.BytesIO(user_bytes)).convert("RGB")
@@ -54,9 +55,9 @@ class AITryOnService:
             "5. Output strictly a clean photorealistic portrait image of the person wearing the garment."
         )
 
-        logger.info(f"Enviando solicitud de vestidor virtual a Gemini Flash Image ('gemini-2.5-flash-image')...")
+        logger.info('Solicitud de vestidor virtual: %s', settings.GEMINI_IMAGE_MODEL)
         response = client.models.generate_content(
-            model="gemini-2.5-flash-image",
+            model=settings.GEMINI_IMAGE_MODEL,
             contents=[person_pil, garment_pil, prompt],
         )
 

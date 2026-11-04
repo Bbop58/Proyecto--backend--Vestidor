@@ -1,0 +1,55 @@
+"""Provider regressions without live keys, quota or nondeterministic latency."""
+from types import SimpleNamespace
+import pytest
+from fastapi import HTTPException
+from app.config import settings
+from app.core.gemini_models import candidates, http_options
+from app.services.voice_report_service import VoiceReportService
+from app.services.chatbot_service import ChatbotService
+from tests.test_tenant_sales import shops
+
+
+def test_model_list_is_explicit_unique_and_bounded():
+    assert candidates('gemini-3.5-flash-lite, gemini-3.5-flash-lite,gemini-3.8-flash,gemini-extra') == ['gemini-3.5-flash-lite','gemini-3.8-flash']
+    assert candidates('https://attacker.invalid, bad model') == []
+    options=http_options()
+    assert options.timeout==10000
+    assert options.retry_options.attempts==1
+
+
+def test_voice_tries_available_configured_backup_after_overload(monkeypatch):
+    monkeypatch.setattr(settings,'VOICE_GEMINI_API_KEY','unit-test-only')
+    monkeypatch.setattr(settings,'GEMINI_VOICE_MODELS','gemini-3.5-flash-lite,gemini-3.8-flash')
+    calls=[]
+    def generate(**kw):
+        calls.append(kw['model'])
+        assert kw['config'].thinking_config.thinking_level.value.lower()=='low'
+        if len(calls)==1:raise RuntimeError('503 simulated')
+        return SimpleNamespace(text='{"sql":"SELECT COUNT(*) FROM ventas","interpretation":"Conteo"}')
+    monkeypatch.setattr('app.services.voice_report_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    sql,_=VoiceReportService._generate_sql_with_gemini('Cantidad de recibos emitidos')
+    assert sql=='SELECT COUNT(*) FROM ventas'
+    assert calls==['gemini-3.5-flash-lite','gemini-3.8-flash']
+
+
+def test_voice_provider_failure_remains_failure_not_another_report(monkeypatch):
+    monkeypatch.setattr(settings,'VOICE_GEMINI_API_KEY','unit-test-only')
+    def generate(**kw):raise TimeoutError('simulated private request')
+    monkeypatch.setattr('app.services.voice_report_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    with pytest.raises(HTTPException) as error:
+        VoiceReportService._generate_sql_with_gemini('Cantidad de recibos emitidos')
+    assert error.value.status_code==503
+    assert 'private' not in error.value.detail
+
+
+@pytest.mark.parametrize('available',[True,False])
+def test_chat_response_distinguishes_gemini_and_local(db_session,shops,monkeypatch,available):
+    monkeypatch.setattr(ChatbotService,'get_api_key',classmethod(lambda cls:'unit-test-only'))
+    def generate(**kw):
+        if not available:raise TimeoutError('simulated')
+        return SimpleNamespace(text='Respuesta de prueba')
+    monkeypatch.setattr('app.services.chatbot_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    result=ChatbotService.process_message(db_session,'hola',[],current_user=shops['a'][0])
+    assert result.origen==('gemini' if available else 'local')
+    assert bool(result.modelo)==available
+    if not available:assert result.reply.startswith('Respuesta local (IA no disponible')

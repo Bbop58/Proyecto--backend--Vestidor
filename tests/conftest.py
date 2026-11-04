@@ -14,6 +14,8 @@ else:
     os.environ["DATABASE_URL"] = "postgresql://invalid:invalid@127.0.0.1:1/fashionstore_test_unconfigured"
 os.environ["RUN_STARTUP_MIGRATIONS"] = "false"
 os.environ["RUN_DEMO_SEED"] = "false"
+# Do not let a developer's .env CORS override determine API regressions.
+os.environ["BACKEND_CORS_ORIGINS"] = '["http://localhost:4200","https://proyecto-frontend-vestidor-ten.vercel.app"]'
 import pytest
 from typing import Generator
 from fastapi.testclient import TestClient

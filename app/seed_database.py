@@ -1051,6 +1051,10 @@ def seed_all(db=None):
             user = db.query(User).options(lazyload("*")).filter(User.email == u_data["email"]).first()
             if not user:
                 user = User(
+                    # Stable demo identities survive fresh+seed so an explicitly
+                    # configured PLATFORM_ADMIN_USER_IDS does not expire on deploy.
+                    # This does not itself grant platform privileges.
+                    id=uuid.uuid5(uuid.NAMESPACE_URL, f"fashionstore:demo:user:{u_data['email']}"),
                     email=u_data["email"],
                     full_name=u_data["full_name"],
                     role_id=u_data["role_id"],

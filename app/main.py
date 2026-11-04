@@ -6,6 +6,7 @@ from app.config import settings
 from app.api.v1.router import api_v1_router
 from app.database import engine, Base
 import app.models
+from app.api.health import router as health_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -25,7 +26,6 @@ for extra_origin in ["http://localhost:8080", "http://127.0.0.1:8080"]:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,6 +33,7 @@ app.add_middleware(
 
 # Include API v1 Router
 app.include_router(api_v1_router, prefix=settings.API_V1_STR)
+app.include_router(health_router)
 
 # Mount static files directory for product images and assets
 import os
@@ -44,10 +45,17 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    import traceback
+    # Starlette's outer ServerErrorMiddleware executes this handler outside
+    # CORSMiddleware. Preserve the same explicit origin policy on 500s.
+    origin = request.headers.get('origin')
+    headers = {}
+    if origin in origins:
+        headers = {'Access-Control-Allow-Origin': origin,
+                   'Access-Control-Allow-Credentials': 'true', 'Vary': 'Origin'}
     return JSONResponse(
         status_code=500,
-        content={"detail": "Error interno del servidor"}
+        content={"detail": "Error interno del servidor"},
+        headers=headers,
     )
 
 

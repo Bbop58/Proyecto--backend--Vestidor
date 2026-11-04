@@ -10,6 +10,7 @@ from app.services.role_service import RoleService
 from app.core.money import catalog_product_price
 
 from app.config import settings
+from app.core.gemini_models import candidates, http_options, thinking, failure_code
 from app.models.tenant import Tenant
 from app.models.product import Product
 from app.models.product_variant import ProductVariant
@@ -284,13 +285,14 @@ DIRECTIVAS CONVERSACIONALES:
 5. Da respuestas concisas (máximo 2 a 3 párrafos cortos) con viñetas.
 """
 
-        # 7. Inferencia con Google Gemini (Ultra-rápida con gemini-flash-lite-latest y timeout 10s)
+        # 7. Two bounded attempts; no hidden SDK retries.
         api_key = cls.get_api_key()
         reply = None
+        reply_model = None
 
         if api_key:
             try:
-                client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=10000))
+                client = genai.Client(api_key=api_key, http_options=http_options())
 
                 contents = []
                 for h in history[-4:]:  # Últimas 4 interacciones para no inflar latencia
@@ -308,7 +310,7 @@ DIRECTIVAS CONVERSACIONALES:
                     )
                 )
 
-                candidate_models = ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"]
+                candidate_models = candidates(settings.GEMINI_CHAT_MODELS)
 
                 for model_name in candidate_models:
                     try:
@@ -318,19 +320,21 @@ DIRECTIVAS CONVERSACIONALES:
                             config=types.GenerateContentConfig(
                                 system_instruction=system_instruction,
                                 temperature=0.3,
-                                max_output_tokens=350,
+                                max_output_tokens=1024,
+                                thinking_config=thinking(model_name),
                                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
                             )
                         )
                         if response and response.text:
                             reply = response.text.strip()
+                            reply_model = model_name
                             break
                     except Exception as err:
-                        logger.warning(f"Fallo modelo {model_name} en chatbot: {err}")
+                        logger.warning('Fallo modelo %s en chatbot: %s', model_name, failure_code(err))
                         continue
 
             except Exception as e:
-                logger.error(f"Error general en Chatbot Gemini: {e}", exc_info=True)
+                logger.error('Error general en Chatbot Gemini: %s', failure_code(e))
 
         # 8. Fallback Local Determinista Inmediato (< 5 ms) si Gemini no respondió o falló
         if not reply:
@@ -348,6 +352,7 @@ DIRECTIVAS CONVERSACIONALES:
                 business_metrics=business_metrics,
                 top_products=top_products_data
             )
+            reply = 'Respuesta local (IA no disponible en este momento).\n\n' + reply
 
         # 9. Generar Chips de Sugerencias Rápidas según rol y marca
         if is_staff_user:
@@ -376,7 +381,9 @@ DIRECTIVAS CONVERSACIONALES:
             reply=reply,
             suggested_prompts=suggested_prompts,
             tenant_name=tenant_name,
-            tenant_slug=tenant_slug_val
+            tenant_slug=tenant_slug_val,
+            origen='gemini' if reply_model else 'local',
+            modelo=reply_model,
         )
 
     @classmethod

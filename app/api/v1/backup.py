@@ -28,7 +28,7 @@ def download_backup(
     current_user: User = Depends(require_permission("roles.create"))
 ):
     """
-    Genera un snapshot completo consistente del sistema con checksum SHA-256
+    Genera un snapshot consistente de la empresa autenticada con checksum SHA-256
     y lo retorna como archivo descargable .json.
     """
     backup_data = BackupService.create_backup(db=db, current_user=current_user)
@@ -54,25 +54,28 @@ async def restore_system(
 ):
     """
     Recibe un archivo de respaldo .json generado previamente, valida su integridad
-    y restaura el estado del sistema en una transacción atómica.
+    y restaura la empresa autenticada en una transacción atómica.
     """
     from app.api.v1.subscriptions import is_platform_superadmin
     if not is_platform_superadmin(current_user):
-        raise HTTPException(403,"La restauración global requiere administración de plataforma")
-    db.info.pop("tenant_scope",None)
-    if not file.filename.endswith(".json"):
+        raise HTTPException(403,"La restauración de empresa requiere administración de plataforma")
+    if not (file.filename or '').endswith(".json"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Formato de archivo no válido. Se requiere un archivo JSON (.json)."
         )
 
     try:
-        content = await file.read()
+        content = await file.read(10 * 1024 * 1024 + 1)
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(413,"El respaldo supera el límite de 10 MB")
         backup_dict = json.loads(content.decode("utf-8"))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No se pudo leer el archivo JSON: {str(e)}"
+            detail="No se pudo leer el archivo JSON de respaldo"
         )
 
     return BackupService.restore_backup(

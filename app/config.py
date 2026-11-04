@@ -54,7 +54,8 @@ class Settings(BaseSettings):
         "http://localhost:8080",
         "http://127.0.0.1:8080",
         "https://proyecto-frontend-vestidor.vercel.app",
-        "https://*.vercel.app"
+        "https://proyecto-frontend-vestidor-ten.vercel.app",
+        "http://127.0.0.1:54205"
     ]
 
     # PayPal Configuration
@@ -67,6 +68,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     VOICE_GEMINI_API_KEY: str = ""
     CHATBOT_GEMINI_API_KEY: str = ""
+    # Comma-separated stable model IDs; at most two attempts per request.
+    GEMINI_VOICE_MODELS: str = "gemini-3.5-flash-lite,gemini-3.8-flash"
+    GEMINI_CHAT_MODELS: str = "gemini-3.5-flash-lite,gemini-3.8-flash"
+    GEMINI_IMAGE_MODEL: str = "gemini-3.1-flash-image"
 
     # Hugging Face Configuration (User Access Token for IDM-VTON)
     HF_TOKEN: str = ""

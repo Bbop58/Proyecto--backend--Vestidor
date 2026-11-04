@@ -239,7 +239,7 @@ def test_private_routes_have_authentication_dependencies():
     from fastapi.routing import APIRoute
     public={'/auth/register','/auth/login','/auth/login/swagger','/auth/refresh',
             '/payments/paypal/config','/payments/paypal/return','/payments/paypal/cancel',
-            '/subscriptions/public/tenants','/subscriptions/plans','/subscriptions/onboarding','/health','/'}
+            '/subscriptions/public/tenants','/subscriptions/plans','/subscriptions/onboarding','/health','/health/ready','/'}
     def dependencies(dep):
         names={getattr(dep.call,'__name__','')}
         for child in dep.dependencies:names |= dependencies(child)

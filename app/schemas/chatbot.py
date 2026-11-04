@@ -14,6 +14,8 @@ class ChatbotRequest(BaseModel):
 
 
 class ChatbotResponse(BaseModel):
+    origen: Literal['gemini', 'local'] = 'local'
+    modelo: Optional[str] = None
     reply: str = Field(..., description="Respuesta conversacional del asistente")
     suggested_prompts: List[str] = Field(default_factory=list, description="Chips interactivos de preguntas rápidas sugeridas")
     tenant_name: str = Field(..., description="Nombre de la empresa que atiende")

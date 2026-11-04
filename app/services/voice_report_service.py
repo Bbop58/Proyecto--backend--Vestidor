@@ -18,6 +18,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 from app.config import settings
+from app.core.gemini_models import candidates, http_options, thinking, failure_code
 from app.schemas.voice_report import VoiceReportQueryResponse
 
 logger = logging.getLogger("voice_report_service")
@@ -253,7 +254,7 @@ class VoiceReportService:
         if not api_key:
             raise HTTPException(503, 'El servicio de IA no está configurado para interpretar esa consulta. Puedes usar un reporte predefinido.')
 
-        client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=10000))
+        client = genai.Client(api_key=api_key, http_options=http_options())
 
         prompt = f"""
 You are an expert PostgreSQL Database Architect and Business Intelligence Analyst.
@@ -289,7 +290,7 @@ Respond strictly with a JSON object in this exact format:
                 detail="Pregunta rechazada por motivos de seguridad: contiene instrucciones destructivas o inyección SQL no permitida."
             )
 
-        candidate_models = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+        candidate_models = candidates(settings.GEMINI_VOICE_MODELS)
         response = None
         last_err = None
 
@@ -302,13 +303,15 @@ Respond strictly with a JSON object in this exact format:
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
                         temperature=0.1,
+                        thinking_config=thinking(m_name),
+                        max_output_tokens=2048,
                     )
                 )
                 if response and response.text:
                     break
             except Exception as m_err:
                 last_err = m_err
-                logger.warning(f"Error con modelo {m_name}: {m_err}, intentando siguiente...")
+                logger.warning('Error con modelo %s: %s; intentando siguiente', m_name, failure_code(m_err))
 
         if not response or not response.text:
             raise HTTPException(503, 'El servicio de IA no respondió. Reintenta tu consulta.')

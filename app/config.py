@@ -69,8 +69,8 @@ class Settings(BaseSettings):
     VOICE_GEMINI_API_KEY: str = ""
     CHATBOT_GEMINI_API_KEY: str = ""
     # Comma-separated stable model IDs; at most two attempts per request.
-    GEMINI_VOICE_MODELS: str = "gemini-3.5-flash-lite,gemini-3.8-flash"
-    GEMINI_CHAT_MODELS: str = "gemini-3.5-flash-lite,gemini-3.8-flash"
+    GEMINI_VOICE_MODELS: str = "gemini-3.6-flash,gemini-3.5-flash-lite"
+    GEMINI_CHAT_MODELS: str = "gemini-3.6-flash,gemini-3.5-flash-lite"
     GEMINI_IMAGE_MODEL: str = "gemini-3.1-flash-image"
 
     # Hugging Face Configuration (User Access Token for IDM-VTON)

@@ -17,6 +17,23 @@ def test_model_list_is_explicit_unique_and_bounded():
     assert options.retry_options.attempts==1
 
 
+def test_defaults_try_the_live_validated_text_model_first(monkeypatch):
+    from app.config import Settings
+    calls=[]
+    monkeypatch.setattr(settings,'VOICE_GEMINI_API_KEY','unit-test-only')
+    for name in ('GEMINI_VOICE_MODELS','GEMINI_CHAT_MODELS'):
+        configured=Settings.model_fields[name].default
+        assert candidates(configured)==['gemini-3.6-flash','gemini-3.5-flash-lite']
+        monkeypatch.setattr(settings,name,configured)
+    def generate(**kwargs):
+        calls.append(kwargs['model'])
+        return SimpleNamespace(text='{"sql":"SELECT COUNT(*) FROM ventas","interpretation":"Conteo"}')
+    monkeypatch.setattr('app.services.voice_report_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    sql,_=VoiceReportService._generate_sql_with_gemini('Cantidad de recibos emitidos')
+    assert sql=='SELECT COUNT(*) FROM ventas'
+    assert calls==['gemini-3.6-flash']
+
+
 def test_voice_tries_available_configured_backup_after_overload(monkeypatch):
     monkeypatch.setattr(settings,'VOICE_GEMINI_API_KEY','unit-test-only')
     monkeypatch.setattr(settings,'GEMINI_VOICE_MODELS','gemini-3.5-flash-lite,gemini-3.8-flash')

@@ -22,6 +22,7 @@ class UnsupervisedModelMetrics(BaseModel):
 
 
 class TrainingMetricsResponse(BaseModel):
+    origen_datos: str = 'SINTETICO_DEMOSTRACION'
     supervisado: SupervisedModelMetrics
     no_supervisado: UnsupervisedModelMetrics
     fecha_entrenamiento: str
@@ -42,6 +43,7 @@ class ForecastDataPoint(BaseModel):
 
 
 class DemandForecastResponse(BaseModel):
+    origen_datos: str = 'SINTETICO_DEMOSTRACION'
     serie_temporal: List[ForecastDataPoint]
     metricas: SupervisedModelMetrics
     resumen_ejecutivo: str
@@ -55,10 +57,11 @@ class DemandPredictCustomRequest(BaseModel):
     temporada: str = Field(default="Invierno")
     categoria_nombre: Optional[str] = "Poleras y Camisas"
     sucursal_nombre: Optional[str] = "Sucursal Central"
-    ventas_semana_anterior_bs: Optional[float] = 12500.0
+    ventas_semana_anterior_bs: float = Field(default=12500.0,ge=0,le=99999999,allow_inf_nan=False)
 
 
 class DemandPredictCustomResponse(BaseModel):
+    origen_datos: str = 'SINTETICO_DEMOSTRACION'
     demanda_proyectada_bs: float
     unidades_estimadas: int
     rango_confianza_inferior_bs: float
@@ -92,6 +95,7 @@ class CustomerDataPoint(BaseModel):
 
 
 class CustomerSegmentationResponse(BaseModel):
+    origen_datos: str = 'SINTETICO_DEMOSTRACION'
     clusters: List[CustomerClusterCentroid]
     puntos_muestra: List[CustomerDataPoint]
     metricas: UnsupervisedModelMetrics
@@ -101,6 +105,7 @@ class CustomerSegmentationResponse(BaseModel):
 # ── Optimizador Predictivo de Ofertas y Liquidaciones (Smart Markdown) ──
 
 class MarkdownRecommendation(BaseModel):
+    origen_datos: str = 'REGLAS_ROTACION_SOBRE_DATOS_EMPRESA'
     producto_id: str
     producto_nombre: str
     categoria: str

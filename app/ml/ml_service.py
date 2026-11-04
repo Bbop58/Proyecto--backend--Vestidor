@@ -279,7 +279,7 @@ class MLAnalyticsService:
                     else:
                         estado = "SUGERIDA"
                         diag = (
-                            f"El modelo predictivo detecta una velocidad de rotación baja ({units_sold_30d} unidades en 30 días) "
+                            f"La regla de rotación detecta pocas ventas ({units_sold_30d} unidades en 30 días) "
                             f"frente a un stock acumulado de {total_stock} unidades. A este ritmo tardará aproximadamente {projected_days} días en agotarse, "
                             f"inmovilizando Bs. {dinero_inmovilizado:,.2f} en capital de trabajo. Se sugiere programar una oferta de {sug_discount:.0f}% OFF "
                             f"para impulsar la salida de inventario antes de fin de mes."
@@ -320,7 +320,8 @@ class MLAnalyticsService:
         db: Session,
         tenant_id: UUID,
         product_id: UUID,
-        payload: ApplyMarkdownRequest
+        payload: ApplyMarkdownRequest,
+        _commit: bool = True
     ) -> ApplyMarkdownResponse:
         """
         Aplica o programa una oferta sugerida por Machine Learning sobre un producto.
@@ -334,6 +335,8 @@ class MLAnalyticsService:
             raise ValueError("Producto no encontrado o no pertenece a este tenant.")
 
         base_price = float(product.precio_base)
+        if base_price <= 0:
+            raise ValueError('La oferta requiere un precio base positivo')
 
         if payload.precio_oferta:
             offer_price = round(payload.precio_oferta, 2)
@@ -351,13 +354,18 @@ class MLAnalyticsService:
         if payload.fecha_inicio:
             try:
                 start_dt = datetime.strptime(payload.fecha_inicio, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            except Exception:
-                pass
+            except ValueError:
+                raise ValueError('Fecha de inicio no válida')
         if payload.fecha_fin:
             try:
                 end_dt = datetime.strptime(payload.fecha_fin, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            except Exception:
-                pass
+            except ValueError:
+                raise ValueError('Fecha de fin no válida')
+
+        if not 0 < offer_price < base_price:
+            raise ValueError('La oferta debe ser positiva y menor al precio base')
+        if start_dt and end_dt and end_dt < start_dt:
+            raise ValueError('La fecha de fin no puede ser anterior al inicio')
 
         product.en_oferta = True
         product.precio_oferta = Decimal(str(offer_price))
@@ -366,8 +374,11 @@ class MLAnalyticsService:
         product.motivo_oferta = payload.motivo or f"Liquidación predictiva ML ({discount_pct:.0f}% OFF)"
         product.updated_at = datetime.now(timezone.utc)
 
-        db.commit()
-        db.refresh(product)
+        if _commit:
+            db.commit()
+            db.refresh(product)
+        else:
+            db.flush()
 
         return ApplyMarkdownResponse(
             success=True,

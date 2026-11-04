@@ -6,9 +6,11 @@ from app.models.product import Product
 from app.models.category import Category
 from app.models.product_variant import ProductVariant
 from app.models.inventory import Inventory
+from app.models.branch import Branch
 from app.models.sale_detail import SaleDetail
 from app.models.sale import Sale, SaleStatus
 from app.models.favorite import Favorite
+from app.core.money import catalog_product_price
 from app.schemas.recommendation import ProductRecommendationResponse
 
 
@@ -16,11 +18,15 @@ class RecommendationService:
     @staticmethod
     def _get_product_stock(db: Session, product_id: uuid.UUID, tenant_id: uuid.UUID) -> int:
         stock = (
-            db.query(func.coalesce(func.sum(Inventory.stock_actual), 0))
+            db.query(func.coalesce(func.sum(Inventory.stock_actual-Inventory.stock_reservado), 0))
             .join(ProductVariant, Inventory.variante_id == ProductVariant.id)
+            .join(Branch,Inventory.sucursal_id == Branch.id)
             .filter(
                 ProductVariant.producto_id == product_id,
                 Inventory.tenant_id == tenant_id,
+                ProductVariant.activo == True,
+                Branch.tenant_id == tenant_id,
+                Branch.activa == True,
                 Inventory.activo == True
             )
             .scalar()
@@ -38,6 +44,7 @@ class RecommendationService:
             nombre=p.nombre,
             descripcion=p.descripcion,
             precio_base=float(p.precio_base) if p.precio_base else 0.0,
+            precio_desde=float(catalog_product_price(p)),
             categoria_nombre=p.categoria.nombre if p.categoria else "General",
             imagen_url=p.imagen_url,
             motivo_recomendacion=motivo,

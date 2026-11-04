@@ -32,7 +32,7 @@ Tables & Columns:
    - numero_recibo: VARCHAR (e.g. 'REC-2026-0001')
    - tipo: VARCHAR (Enum: 'PRESENCIAL', 'DIGITAL')
    - estado: VARCHAR (Enum: 'PENDIENTE_PAGO', 'COMPLETADA', 'CANCELADA')
-   - metodo_pago: VARCHAR (Enum: 'EFECTIVO', 'TARJETA', 'QR', 'PAYPAL')
+   - metodo_pago: VARCHAR (Enum: 'EFECTIVO', 'TARJETA', 'QR', 'PAYPAL', 'BILLETERA')
    - monto_total: NUMERIC(10,2) (Total amount of sale in Bolivianos)
    - impuesto_iva: NUMERIC(10,2) (13% IVA tax collected)
    - monto_neto: NUMERIC(10,2) (87% net revenue / ganancia neta after tax)
@@ -72,14 +72,14 @@ Tables & Columns:
    - id: UUID (Primary Key)
    - nombre: VARCHAR (Category name)
    - descripcion: TEXT
-   - activo: BOOLEAN
+   - activa: BOOLEAN
 
 6. sucursales (Branches/Stores table):
    - id: UUID (Primary Key)
    - nombre: VARCHAR (Branch name e.g. 'Sucursal Central', 'Sucursal Norte')
    - direccion: VARCHAR
    - telefono: VARCHAR
-   - activo: BOOLEAN
+   - activa: BOOLEAN
 
 7. users (Customers / Employees table):
    - id: UUID (Primary Key)
@@ -99,8 +99,10 @@ Tables & Columns:
    - id: UUID (Primary Key)
    - cliente_id: UUID (Foreign key to users.id)
    - sucursal_id: UUID (Foreign key to sucursales.id)
-   - estado: VARCHAR (Enum: 'PENDIENTE', 'CONFIRMADA', 'COMPLETADA', 'CANCELADA')
-   - total: NUMERIC(10,2)
+   - estado: VARCHAR (Enum: 'PENDIENTE', 'PREPARADA', 'COMPLETADA', 'RECOGIDA', 'CANCELADA', 'EXPIRADA')
+   - total_estimado: NUMERIC(10,2)
+   - codigo: VARCHAR
+   - fecha_expiracion: TIMESTAMPTZ
    - created_at: TIMESTAMPTZ
 
 10. cambios_producto (Product Exchanges table):
@@ -249,14 +251,9 @@ class VoiceReportService:
         )
 
         if not api_key:
-            # Fallback seguro genérico si no hay API key
-            fallback_sql = (
-                "SELECT v.numero_recibo, v.tipo, v.metodo_pago, v.monto_total, v.created_at "
-                "FROM ventas v WHERE v.estado = 'COMPLETADA' ORDER BY v.created_at DESC LIMIT 10"
-            )
-            return fallback_sql, "Listado de las últimas 10 ventas completadas en el sistema."
+            raise HTTPException(503, 'El servicio de IA no está configurado para interpretar esa consulta. Puedes usar un reporte predefinido.')
 
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=10000))
 
         prompt = f"""
 You are an expert PostgreSQL Database Architect and Business Intelligence Analyst.
@@ -314,10 +311,7 @@ Respond strictly with a JSON object in this exact format:
                 logger.warning(f"Error con modelo {m_name}: {m_err}, intentando siguiente...")
 
         if not response or not response.text:
-            canonical_fallback = cls._match_canonical_exam_query("ventas por sucursal")
-            if canonical_fallback:
-                return canonical_fallback
-            raise RuntimeError(f"No se pudo consultar el modelo de IA: {last_err}")
+            raise HTTPException(503, 'El servicio de IA no respondió. Reintenta tu consulta.')
 
         try:
             raw_text = response.text.strip()
@@ -336,12 +330,7 @@ Respond strictly with a JSON object in this exact format:
 
         except Exception as e:
             logger.error(f"Error parseando respuesta de Gemini: {e}", exc_info=True)
-            return (
-                "SELECT p.nombre AS producto, SUM(dv.cantidad) AS unidades_vendidas, SUM(dv.subtotal) AS total_ingresos_bs "
-                "FROM detalles_venta dv JOIN variantes_producto vp ON dv.variante_id = vp.id JOIN productos p ON vp.producto_id = p.id "
-                "JOIN ventas v ON dv.venta_id = v.id WHERE v.estado = 'COMPLETADA' GROUP BY p.nombre ORDER BY unidades_vendidas DESC LIMIT 10",
-                "Top 10 productos más vendidos por ingresos y volumen."
-            )
+            raise HTTPException(502, 'El servicio de IA devolvió una consulta no válida. Reintenta.')
 
     @classmethod
     def _validate_sql_security(cls, sql: str) -> str:
@@ -415,9 +404,12 @@ Respond strictly with a JSON object in this exact format:
         qty_col = None
         label_col = None
 
-        for col in columns:
+        # Counts called total_ventas are not currency. Prefer explicitly
+        # monetary columns regardless of their position in the result.
+        columns_by_priority=sorted(columns,key=lambda col: 0 if any(w in col.lower() for w in ['recaudado','ingresos','monto','_bs']) else 1)
+        for col in columns_by_priority:
             col_l = col.lower()
-            if not money_col and any(w in col_l for w in ["total_recaudado", "total_ventas", "total_ingresos", "monto_total", "ingresos", "monto_neto", "total_neto", "bs"]):
+            if not money_col and any(w in col_l for w in ["total_recaudado", "total_ingresos", "monto_total", "ingresos", "monto_neto", "total_neto", "_bs"]):
                 money_col = col
             elif not qty_col and any(w in col_l for w in ["unidades", "cantidad", "total_ventas", "pedidos", "stock", "existencia"]):
                 qty_col = col
@@ -504,10 +496,10 @@ Respond strictly with a JSON object in this exact format:
         limit: int = 100
     ) -> VoiceReportQueryResponse:
         """
-        Flujo de ejecución con transacción de solo lectura:
+        Flujo de ejecución con consultas SELECT validadas:
         1. Lenguaje natural -> SQL (con Gemini o matcher canónico).
         2. Validación estricta de seguridad.
-        3. SET TRANSACTION READ ONLY + statement_timeout = 5000.
+        3. Ámbito de empresa obligatorio y SET LOCAL statement_timeout = 5000.
         4. Serialización de filas y columnas.
         5. Generación de resumen narrativo hablado (Audio Briefing).
         """
@@ -525,20 +517,27 @@ Respond strictly with a JSON object in this exact format:
             )
 
         raw_sql, interpretation = cls._generate_sql_with_gemini(question, limit=limit)
+        from app.core.report_period import apply_report_period
+        raw_sql=apply_report_period(raw_sql,question)
         validated_sql = cls._validate_sql_security(raw_sql)
 
-        if db.info.get('tenant_scope'):
-            from app.core.tenant_sql import scope_report_sql
-            validated_sql = scope_report_sql(validated_sql,db,db.info['tenant_scope'])
-
-        if not re.search(r"\bLIMIT\s+\d+\b", validated_sql, re.IGNORECASE):
-            validated_sql = f"{validated_sql} LIMIT {limit}"
+        from app.core.tenant_sql import scope_report_sql
+        validated_sql = scope_report_sql(validated_sql,db,db.info.get('tenant_scope'))
+        # An inner LIMIT (e.g. in a subquery) is not a limit on this report.
+        import sqlglot
+        from sqlglot import exp
+        tree=sqlglot.parse_one(validated_sql,read='postgres')
+        existing=tree.args.get('limit')
+        bounded=max(1,min(int(limit),500))
+        if existing and isinstance(existing.expression,exp.Literal):
+            bounded=min(bounded,int(existing.expression.this))
+        validated_sql=tree.limit(bounded).sql(dialect='postgres')
 
         logger.info(f"Ejecutando SQL validado para reporte de voz: {validated_sql}")
 
         try:
-            # Proteger la base de datos con transacción de solo lectura y timeout de 5 segundos
-            db.execute(text("SET statement_timeout = 5000;"))
+            # SELECT is restricted by the AST allowlist; bound this transaction's execution time.
+            db.execute(text("SET LOCAL statement_timeout = 5000"))
             result = db.execute(text(validated_sql))
 
             columns = list(result.keys()) if result.returns_rows else []
@@ -573,7 +572,7 @@ Respond strictly with a JSON object in this exact format:
             db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"La consulta generada no pudo ejecutarse: {str(e)}"
+                detail="La consulta no pudo ejecutarse. Revisa los criterios e intenta nuevamente."
             )
 
     @classmethod
@@ -694,6 +693,7 @@ Respond strictly with a JSON object in this exact format:
                             cell.alignment = Alignment(horizontal="right", vertical="center")
                     else:
                         cell.value = str(val)
+                        cell.data_type = 's'
                         cell.alignment = Alignment(horizontal="left", vertical="center")
                 else:
                     cell.value = "-"

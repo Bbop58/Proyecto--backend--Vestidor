@@ -1,11 +1,14 @@
 import logging
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime,timedelta,timezone
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, asc
+from sqlalchemy import desc, asc,func
+from app.models.product_variant import ProductVariant
+from fastapi import HTTPException
+from math import isfinite
 
 from app.models.sale import Sale
 from app.models.inventory import Inventory
@@ -88,13 +91,13 @@ class CustomReportService:
             {
                 "id": "reservas",
                 "name": "Reservas Click & Collect",
-                "description": "Prendas apartadas para recojo en tienda física dentro de las 48 horas",
+                "description": "Prendas apartadas para recojo en tienda física dentro de las 24 horas",
                 "columns": [
                     {"id": "codigo_reserva", "label": "Código Reserva", "type": "string"},
                     {"id": "cliente_nombre", "label": "Cliente", "type": "string"},
                     {"id": "sucursal_nombre", "label": "Sucursal Recojo", "type": "string"},
                     {"id": "fecha_creacion", "label": "Fecha Solicitud", "type": "datetime"},
-                    {"id": "fecha_limite", "label": "Vencimiento (48 hrs)", "type": "datetime"},
+                    {"id": "fecha_limite", "label": "Vencimiento (24 hrs)", "type": "datetime"},
                     {"id": "monto_total", "label": "Monto Estimado (Bs.)", "type": "currency"},
                     {"id": "estado", "label": "Estado de Reserva", "type": "string"}
                 ],
@@ -118,13 +121,41 @@ class CustomReportService:
         tenant_id: Optional[UUID] = None
     ) -> Dict[str, Any]:
         """Ejecuta la consulta estructurada multi-columna con filtrado y ordenamiento dinámico."""
+        if not tenant_id:
+            raise HTTPException(403,'La cuenta debe pertenecer a una empresa')
         
         entities_meta = {e["id"]: e for e in cls.get_available_entities()}
         if entity not in entities_meta:
-            entity = "ventas"
+            raise HTTPException(422,'Entidad de reporte no válida')
 
         selected_meta = entities_meta[entity]
         all_cols_dict = {c["id"]: c for c in selected_meta["columns"]}
+        if any(col not in all_cols_dict for col in columns) or len(columns)!=len(set(columns)):
+            raise HTTPException(422,'Columnas de reporte no válidas o repetidas')
+        if sort_order not in ('asc','desc'):
+            raise HTTPException(422,'Orden de reporte no válido')
+        for key in ('fecha_desde','fecha_hasta'):
+            if filters.get(key):
+                try: datetime.fromisoformat(filters[key])
+                except (TypeError,ValueError): raise HTTPException(422,'Fecha de filtro no válida')
+        if filters.get('sucursal_id'):
+            try: UUID(str(filters['sucursal_id']))
+            except ValueError: raise HTTPException(422,'Sucursal de filtro no válida')
+        for key in ('monto_min','monto_max'):
+            if filters.get(key) is not None:
+                try:
+                    if not isfinite(float(filters[key])): raise ValueError()
+                except (TypeError,ValueError): raise HTTPException(422,'Importe de filtro no válido')
+        if filters.get('metodo_pago'):
+            from app.models.sale import PaymentMethod
+            if filters['metodo_pago'] not in {p.value for p in PaymentMethod}:
+                raise HTTPException(422,'Método de pago no válido')
+        if filters.get('fecha_desde') and filters.get('fecha_hasta'):
+            if filters['fecha_desde']>filters['fecha_hasta']:
+                raise HTTPException(422,'El rango de fechas está invertido')
+        if filters.get('monto_min') is not None and filters.get('monto_max') is not None:
+            if float(filters['monto_min'])>float(filters['monto_max']):
+                raise HTTPException(422,'El rango de importes está invertido')
         
         # Si no enviaron columnas, seleccionar las 5 primeras por defecto
         valid_columns = [col for col in columns if col in all_cols_dict]
@@ -149,16 +180,16 @@ class CustomReportService:
             if filters.get("fecha_hasta"):
                 try:
                     f_h = datetime.fromisoformat(filters["fecha_hasta"])
-                    query = query.filter(Sale.created_at <= f_h)
+                    query = query.filter(Sale.created_at < f_h+timedelta(days=1)) if len(filters['fecha_hasta'])==10 else query.filter(Sale.created_at <= f_h)
                 except Exception:
                     pass
             if filters.get("sucursal_id"):
                 query = query.filter(Sale.sucursal_id == UUID(str(filters["sucursal_id"])))
             if filters.get("metodo_pago"):
                 query = query.filter(Sale.metodo_pago == filters["metodo_pago"])
-            if filters.get("monto_min"):
+            if filters.get("monto_min") is not None:
                 query = query.filter(Sale.monto_total >= float(filters["monto_min"]))
-            if filters.get("monto_max"):
+            if filters.get("monto_max") is not None:
                 query = query.filter(Sale.monto_total <= float(filters["monto_max"]))
 
             # Orden
@@ -209,6 +240,13 @@ class CustomReportService:
             if filters.get("sucursal_id"):
                 query = query.filter(Inventory.sucursal_id == UUID(str(filters["sucursal_id"])))
 
+            order=desc if sort_order=='desc' else asc
+            if sort_by in ('producto_nombre','precio_base'):
+                query=query.join(ProductVariant,Inventory.variante_id==ProductVariant.id).join(Product,ProductVariant.producto_id==Product.id)
+                query=query.order_by(order(Product.nombre if sort_by=='producto_nombre' else Product.precio_base),Inventory.id)
+            else:
+                query=query.order_by(order(Inventory.stock_actual),Inventory.id)
+
             results = query.limit(200).all()
             for inv in results:
                 row = {}
@@ -239,11 +277,17 @@ class CustomReportService:
             if tenant_id:
                 query = query.filter(User.tenant_id == tenant_id)
 
+            order=desc if sort_order=='desc' else asc
+            if sort_by=='saldo_billetera':
+                query=query.outerjoin(UserWallet,(UserWallet.user_id==User.id)&(UserWallet.tenant_id==tenant_id)).order_by(order(func.coalesce(UserWallet.saldo_actual-UserWallet.saldo_retenido,0)),User.id)
+            else:
+                query=query.order_by(order(User.created_at if sort_by=='created_at' else User.full_name),User.id)
+
             results = query.limit(200).all()
             for u in results:
                 row = {}
                 wallet = db.query(UserWallet).filter(UserWallet.user_id == u.id).first()
-                saldo = float(wallet.saldo) if wallet else 0.0
+                saldo = float(wallet.saldo_actual-wallet.saldo_retenido) if wallet else 0.0
                 for col in valid_columns:
                     if col == "full_name":
                         row[col] = u.full_name
@@ -262,22 +306,34 @@ class CustomReportService:
             if tenant_id:
                 query = query.filter(Reservation.tenant_id == tenant_id)
 
+            for key in ('fecha_desde','fecha_hasta'):
+                if filters.get(key):
+                    date_value=datetime.fromisoformat(filters[key])
+                    if key=='fecha_desde':query=query.filter(Reservation.created_at>=date_value)
+                    elif len(filters[key])==10:query=query.filter(Reservation.created_at<date_value+timedelta(days=1))
+                    else:query=query.filter(Reservation.created_at<=date_value)
+            if filters.get('sucursal_id'):
+                query=query.filter(Reservation.sucursal_id==UUID(str(filters['sucursal_id'])))
+            order=desc if sort_order=='desc' else asc
+            sort_field={'monto_total':Reservation.total_estimado,'codigo_reserva':Reservation.codigo}.get(sort_by,Reservation.created_at)
+            query=query.order_by(order(sort_field),Reservation.id)
+
             results = query.limit(200).all()
             for res in results:
                 row = {}
                 for col in valid_columns:
                     if col == "codigo_reserva":
-                        row[col] = res.codigo_reserva
+                        row[col] = res.codigo
                     elif col == "cliente_nombre":
-                        row[col] = res.usuario.full_name if res.usuario else "Cliente"
+                        row[col] = res.cliente.full_name if res.cliente else "Cliente"
                     elif col == "sucursal_nombre":
                         row[col] = res.sucursal.nombre if res.sucursal else "Central"
                     elif col == "fecha_creacion":
                         row[col] = res.created_at.strftime("%d/%m/%Y %H:%M") if res.created_at else ""
                     elif col == "fecha_limite":
-                        row[col] = res.fecha_limite.strftime("%d/%m/%Y %H:%M") if res.fecha_limite else ""
+                        row[col] = res.fecha_expiracion.strftime("%d/%m/%Y %H:%M") if res.fecha_expiracion else ""
                     elif col == "monto_total":
-                        row[col] = float(res.monto_total) if res.monto_total else 0.0
+                        row[col] = float(res.total_estimado)
                     elif col == "estado":
                         row[col] = res.estado.value if hasattr(res.estado, "value") else str(res.estado)
                 rows.append(row)

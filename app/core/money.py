@@ -31,6 +31,15 @@ def catalog_price(variant, now=None):
     return money(Decimal(str(base)) + Decimal(str(variant.precio_extra)))
 
 
+def catalog_product_price(product, now=None):
+    """Informational starting price; checkout still quotes the selected variant."""
+    from types import SimpleNamespace
+    variants = [variant for variant in product.variantes if variant.activo]
+    return min(catalog_price(variant, now) for variant in variants) if variants else catalog_price(
+        SimpleNamespace(producto=product, precio_extra=0), now
+    )
+
+
 def quote(db, items, tenant_id, coupon_code=None, *, consume=False):
     subtotal = Decimal('0.00')
     rows = []

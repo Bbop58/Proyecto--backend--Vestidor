@@ -1,15 +1,15 @@
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 
 
 class ChatMessage(BaseModel):
-    role: str = Field(..., description="'user' para el mensaje del usuario, 'model' para el asistente")
-    content: str = Field(..., description="Texto del mensaje")
+    role: Literal['user','model']
+    content: str = Field(...,max_length=4000, description="Texto del mensaje")
 
 
 class ChatbotRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=1000, description="Pregunta o mensaje del usuario")
-    history: List[ChatMessage] = Field(default_factory=list, description="Historial previo de la conversación")
+    history: List[ChatMessage] = Field(default_factory=list,max_length=12, description="Historial previo de la conversación")
     tenant_slug: Optional[str] = Field(default=None, description="Slug del inquilino (ej. 'urbanstyle' o 'moda-express-tarija')")
 
 

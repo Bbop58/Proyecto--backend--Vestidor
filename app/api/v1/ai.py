@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.api.deps import get_current_user_optional
+from app.api.deps import get_current_user
 from app.schemas.ai import VirtualTryOnRequest, VirtualTryOnResponse
 from app.services.ai_tryon_service import AITryOnService
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/ai", tags=["Inteligencia Artificial"])
 def virtual_try_on(
     data: VirtualTryOnRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user_optional)
+    current_user=Depends(get_current_user)
 ):
     """
     Recibe la foto del usuario y el ID del producto que está viendo para generar una imagen

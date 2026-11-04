@@ -8,6 +8,7 @@ class ProductRecommendationResponse(BaseModel):
     nombre: str
     descripcion: Optional[str] = None
     precio_base: float
+    precio_desde: float
     categoria_nombre: str
     imagen_url: Optional[str] = None
     motivo_recomendacion: str

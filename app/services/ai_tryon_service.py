@@ -36,7 +36,7 @@ class AITryOnService:
         if not api_key:
             raise ValueError("GEMINI_API_KEY no está configurada.")
 
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(api_key=api_key, http_options={'timeout':20000})
 
         # Convertir a PIL RGB para asegurar compatibilidad de canales y formatos
         person_pil = Image.open(io.BytesIO(user_bytes)).convert("RGB")
@@ -103,16 +103,16 @@ class AITryOnService:
 
             if target_endpoint:
                 logger.info(f"Conectando a servidor dedicado IDM-VTON: {target_endpoint}")
-                client = Client(target_endpoint)
+                client = Client(target_endpoint,httpx_kwargs={'timeout':10})
             else:
                 logger.info("Conectando a Hugging Face Space IDM-VTON...")
                 try:
-                    client = Client("yisol/IDM-VTON", token=token)
+                    client = Client("yisol/IDM-VTON", token=token,httpx_kwargs={'timeout':10})
                 except Exception as conn_err:
                     logger.warning(f"Fallo conexión por nombre de espacio ({conn_err}), intentando URL directa...")
-                    client = Client("https://yisol-idm-vton.hf.space", token=token)
+                    client = Client("https://yisol-idm-vton.hf.space", token=token,httpx_kwargs={'timeout':10})
 
-            result = client.predict(
+            job = client.submit(
                 dict={
                     "background": handle_file(person_tmp.name),
                     "layers": [],
@@ -126,6 +126,11 @@ class AITryOnService:
                 seed=42,
                 api_name="/tryon"
             )
+            try:
+                result=job.result(timeout=25)
+            except Exception:
+                job.cancel()
+                raise
 
             output_image_path = result[0] if isinstance(result, (list, tuple)) else result
             if not output_image_path or not os.path.exists(output_image_path):
@@ -161,13 +166,15 @@ class AITryOnService:
                 Product.activo == True
             ).first()
 
-        if not product and request.variante_id:
+        if request.variante_id:
             variant = db.query(ProductVariant).filter(
                 ProductVariant.id == request.variante_id,
                 ProductVariant.activo == True
             ).first()
+            if not variant or (product and variant.producto_id!=product.id):
+                raise HTTPException(404,'La variante no corresponde a la prenda seleccionada')
             if variant:
-                product = db.query(Product).filter(Product.id == variant.producto_id).first()
+                product = db.query(Product).filter(Product.id == variant.producto_id,Product.activo==True).first()
 
         if not product:
             raise HTTPException(
@@ -183,7 +190,13 @@ class AITryOnService:
             user_b64 = user_raw
 
         try:
-            user_bytes = base64.b64decode(user_b64)
+            user_bytes = base64.b64decode(user_b64,validate=True)
+            if len(user_bytes)>8*1024*1024:
+                raise ValueError('Imagen demasiado grande')
+            with Image.open(io.BytesIO(user_bytes)) as image:
+                if image.width*image.height>20_000_000:
+                    raise ValueError('Resolución demasiado grande')
+                image.verify()
         except Exception as e:
             logger.warning(f"Error decodificando foto de usuario: {e}")
             raise HTTPException(
@@ -219,10 +232,16 @@ class AITryOnService:
                         logger.info(f"No se pudo descargar la imagen remota {product.imagen_url}: {e}")
 
         if not garment_bytes:
-            garment_bytes = user_bytes
+            raise HTTPException(422,'La prenda no tiene una imagen disponible para el probador')
+        try:
+            with Image.open(io.BytesIO(garment_bytes)) as image:
+                image.verify()
+        except Exception:
+            raise HTTPException(422,'La imagen de la prenda no es válida')
 
         # 4. Intentar con Gemini Flash Image (Nano Banana) primero
         res_bytes = None
+        engine = 'gemini'
         if settings.GEMINI_API_KEY:
             try:
                 logger.info(f"Iniciando vestidor virtual con Gemini Flash Image para '{product.nombre}'...")
@@ -236,6 +255,7 @@ class AITryOnService:
 
         # 5. Si Gemini no está configurado o falló, usar fallback IDM-VTON
         if not res_bytes:
+            engine = 'vton'
             try:
                 logger.info(f"Ejecutando inferencia con IDM-VTON fallback para '{product.nombre}'...")
                 res_bytes = AITryOnService._tryon_with_vton_fallback(
@@ -244,6 +264,7 @@ class AITryOnService:
                     product_name=product.nombre or "Prenda de vestir"
                 )
             except Exception as vton_err:
+                engine = 'referencial'
                 logger.warning(f"Motores externos de IA agotados o sin saldo ({vton_err}). Activando motor de contingencia visual...", exc_info=True)
                 res_bytes = AITryOnService._tryon_with_composite_fallback(
                     user_bytes=user_bytes,
@@ -252,9 +273,17 @@ class AITryOnService:
                 )
 
         # 6. Formatear salida en base64 para la aplicación móvil
+        try:
+            with Image.open(io.BytesIO(res_bytes)) as image:
+                output=io.BytesIO()
+                image.convert('RGB').save(output,format='JPEG')
+                res_bytes=output.getvalue()
+        except Exception:
+            raise HTTPException(502,'El proveedor devolvió una imagen no válida; reintenta')
         result_b64 = f"data:image/jpeg;base64,{base64.b64encode(res_bytes).decode('utf-8')}"
         logger.info(f"Vestidor virtual procesado exitosamente ({len(res_bytes)} bytes)")
-        return VirtualTryOnResponse(imagen_resultado_base64=result_b64)
+        return VirtualTryOnResponse(imagen_resultado_base64=result_b64,motor=engine,
+            es_referencial=engine=='referencial',mensaje='Vista previa referencial; no es una simulación generada por IA.' if engine=='referencial' else 'Resultado generado; el ajuste real puede variar.')
 
     @staticmethod
     def _tryon_with_composite_fallback(

@@ -5,6 +5,9 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from google import genai
 from google.genai import types
+from fastapi import HTTPException
+from app.services.role_service import RoleService
+from app.core.money import catalog_product_price
 
 from app.config import settings
 from app.models.tenant import Tenant
@@ -48,30 +51,17 @@ class ChatbotService:
         Procesa un mensaje conversacional con IA para la tienda activa.
         Inyecta el catálogo, sucursales y métricas comerciales según el rol del usuario.
         """
-        # 1. Determinar el Tenant activo
+        # Resolve an explicit, active company; a failed selection is not consent
+        # to expose whichever tenant happens to have been created first.
         tenant = None
-        if current_user and current_user.tenant:
-            tenant = current_user.tenant
-        elif tenant_slug:
-            clean_slug = tenant_slug.lower().strip()
-            slug_normalized = clean_slug.replace("-", "")
-            tenant = (
-                db.query(Tenant)
-                .filter(
-                    (Tenant.slug == clean_slug)
-                    | (Tenant.slug == slug_normalized)
-                    | (Tenant.slug.ilike(f"%{clean_slug}%"))
-                )
-                .first()
-            )
-            if not tenant:
-                if "moda" in clean_slug:
-                    tenant = db.query(Tenant).filter(Tenant.slug.ilike("%moda%")).first()
-                elif "urban" in clean_slug:
-                    tenant = db.query(Tenant).filter(Tenant.slug.ilike("%urban%")).first()
-
-        if not tenant:
-            tenant = db.query(Tenant).filter(Tenant.activo == True).order_by(Tenant.created_at.asc()).first()
+        if current_user:
+            tenant = db.query(Tenant).filter_by(id=current_user.tenant_id,activo=True).first()
+        elif tenant_slug and tenant_slug.strip():
+            tenant = db.query(Tenant).filter_by(slug=tenant_slug.lower().strip(),activo=True).first()
+        else:
+            raise HTTPException(400,'Selecciona una empresa para consultar el asistente')
+        if tenant is None:
+            raise HTTPException(404,'Empresa no disponible')
 
         tenant_name = tenant.nombre if tenant else "FICCT Store"
         tenant_slug_val = tenant.slug if tenant else "urbanstyle"
@@ -82,9 +72,7 @@ class ChatbotService:
         user_role_name = "Cliente"
         if current_user and current_user.role:
             user_role_name = current_user.role.name or "Cliente"
-            role_lower = user_role_name.lower()
-            if any(r in role_lower for r in ["admin", "superadmin", "administrador", "gerente", "cajero", "encargado"]):
-                is_staff_user = True
+            is_staff_user = 'ventas.reports' in RoleService.get_permission_codes(db,current_user.role_id)
 
         # 3. Recopilar datos de catálogo y sucursales
         products_info = []
@@ -98,7 +86,7 @@ class ChatbotService:
             for p in products:
                 tallas = list(set([v.talla for v in p.variantes if v.activo and v.talla]))
                 colores = list(set([v.color for v in p.variantes if v.activo and v.color]))
-                precio_str = f"{float(p.precio_oferta):.2f} Bs. (Oferta)" if p.en_oferta and p.precio_oferta else f"{float(p.precio_base):.2f} Bs."
+                precio_str = f"Desde {catalog_product_price(p):.2f} Bs. (según variante; cotización final en caja)"
                 products_info.append(
                     f"- {p.nombre}: {precio_str}. "
                     f"Tallas: {', '.join(tallas) or 'Única'}. Colores: {', '.join(colores) or 'Varios'}."
@@ -182,7 +170,7 @@ class ChatbotService:
             try:
                 wallet = db.query(UserWallet).filter(UserWallet.user_id == current_user.id).first()
                 if wallet:
-                    user_wallet_balance = float(wallet.saldo or 0.0)
+                    user_wallet_balance = float(wallet.saldo_actual-wallet.saldo_retenido)
             except Exception as e:
                 logger.warning(f"Error cargando billetera para chatbot: {e}")
 
@@ -197,8 +185,8 @@ class ChatbotService:
                     .all()
                 )
                 for res in reservas:
-                    fecha_exp = res.fecha_limite.strftime("%d/%m/%Y %H:%M") if res.fecha_limite else "48 horas"
-                    user_reservations_info.append(f"- Reserva #{res.codigo_reserva} (Expira: {fecha_exp})")
+                    fecha_exp = res.fecha_expiracion.strftime("%d/%m/%Y %H:%M")
+                    user_reservations_info.append(f"- Reserva #{res.codigo} (Expira: {fecha_exp})")
             except Exception as e:
                 logger.warning(f"Error cargando reservas para chatbot: {e}")
         else:
@@ -206,7 +194,7 @@ class ChatbotService:
 
         catalog_text = "\n".join(products_info) if products_info else "Catálogo disponible en tienda."
         branches_text = "\n".join(branches_info) if branches_info else "Sucursales disponibles en red."
-        delivery_text = "\n".join(delivery_info) if delivery_info else "Envíos disponibles según zona (15 a 25 Bs)."
+        delivery_text = "\n".join(delivery_info) if delivery_info else "No hay tarifas de envío configuradas; consulta disponibilidad con la tienda."
         user_sales_text = "\n".join(user_sales_info) if user_sales_info else "No registra compras previas aún."
         user_favs_text = "\n".join(user_favs_info) if user_favs_info else "No tiene prendas marcadas como favoritas."
         user_reservations_text = "\n".join(user_reservations_info) if user_reservations_info else "No tiene reservas activas pendientes de recojo."
@@ -226,10 +214,10 @@ class ChatbotService:
 
             system_instruction = f"""
 Eres "FICCT Bot", el Asistente Ejecutivo Inteligente y Asesor Oficial de Operaciones para la empresa "{tenant_name}".
-Estás interactuando directamente con {current_user.full_name} ({current_user.email}), quien es {user_role_name.upper()} con plenos privilegios administrativos de la empresa.
+Estás interactuando con {current_user.full_name}, quien tiene permiso explícito para consultar reportes de esta empresa.
 
 AUTORIZACIÓN Y ACCESO A DATOS:
-- El usuario es ADMINISTRADOR AUTORIZADO. TIENE ACCESO TOTAL Y OFICIAL a todos los datos comerciales, financieros, de facturación, inventario, ventas y reportes de la empresa.
+- El usuario puede consultar exclusivamente las métricas de esta empresa que se incluyen aquí. El chat no modifica datos ni concede permisos adicionales.
 - REGLA ESTRICTA: NUNCA le digas que tu acceso a las ventas globales o finanzas está restringido por seguridad. Tienes acceso completo a todas las métricas que te proporcionamos a continuación y DEBES responder a cualquier consulta sobre ventas, ingresos o inventario de inmediato.
 
 MÉTRICAS Y ESTADÍSTICAS DEL NEGOCIO EN TIEMPO REAL ({tenant_name}):
@@ -276,7 +264,7 @@ DATOS DEL NEGOCIO ({tenant_name}):
   * Si la nueva prenda tiene mayor precio, se abona la diferencia en efectivo o PayPal.
   * Si la prenda es de menor valor, la diferencia se abona como saldo a favor en la Billetera Virtual del cliente.
 - Métodos de Pago Oficiales: Efectivo en caja de tienda física, Pago QR, Tarjeta y PayPal Checkout en dólares para compras digitales.
-- Sistema Click & Collect (Reservas): El cliente puede apartar prendas desde la web o celular y tiene 48 horas para recogerlas en sucursal.
+- Sistema Click & Collect (Reservas): El cliente puede apartar prendas desde la web o celular y tiene 24 horas para recogerlas en sucursal.
 
 DATOS PRIVADOS DEL CLIENTE ACTUAL:
 - Identidad: {user_role_context}
@@ -496,7 +484,7 @@ DIRECTIVAS CONVERSACIONALES:
             )
 
         if any(w in msg for w in ["sucursal", "tienda", "donde", "ubicacion", "direccion"]):
-            b_list = "\n".join(branches[:3]) if branches else "Nuestras sucursales atienden de 09:00 a 20:00."
+            b_list = "\n".join(branches[:3]) if branches else "No hay sucursales activas disponibles."
             return (
                 f"Actualmente **{tenant_name}** cuenta con las siguientes sucursales activas:\n\n"
                 f"{b_list}\n\n"
@@ -524,7 +512,7 @@ DIRECTIVAS CONVERSACIONALES:
             return (
                 "¡El servicio **Click & Collect** es muy sencillo! Eliges tu prenda favorita en la Web o App Móvil, "
                 "seleccionas la sucursal de recojo y generas tu reserva. El encargado de tienda prepara tu prenda "
-                "y tienes hasta **48 horas** para retirarla y pagarla en caja."
+                "y tienes hasta **24 horas** para retirarla y pagarla en caja."
             )
 
         sample_prods = "\n".join(products[:3]) if products else "Variedad en prendas casuales y formales."

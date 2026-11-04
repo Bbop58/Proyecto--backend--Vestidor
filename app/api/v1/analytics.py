@@ -122,7 +122,7 @@ def get_markdown_recommendations(
     "/markdown-recommendations/{product_id}/apply",
     response_model=ApplyMarkdownResponse,
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(require_permission("ventas.reports"))],
+    dependencies=[Depends(require_permission("productos.update"))],
     summary="Aprobar o programar oferta sugerida por Machine Learning sobre un producto"
 )
 def apply_markdown_recommendation(
@@ -149,7 +149,7 @@ def apply_markdown_recommendation(
 @router.post(
     "/markdown-recommendations/{product_id}/dismiss",
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(require_permission("ventas.reports"))],
+    dependencies=[Depends(require_permission("productos.update"))],
     summary="Descartar recomendación de oferta y conservar precio regular"
 )
 def dismiss_markdown_recommendation(
@@ -175,7 +175,7 @@ def dismiss_markdown_recommendation(
     "/markdown-recommendations/auto-apply-all",
     response_model=List[ApplyMarkdownResponse],
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(require_permission("ventas.reports"))],
+    dependencies=[Depends(require_permission("productos.update"))],
     summary="Piloto automático: aplicar masivamente todas las ofertas recomendadas por ML"
 )
 def auto_apply_all_markdown(
@@ -189,9 +189,9 @@ def auto_apply_all_markdown(
     tenant_id = _resolve_tenant_id(db, current_user)
     recs = MLAnalyticsService.get_markdown_recommendations(db, tenant_id)
     applied = []
-    for r in recs:
-        if r.estado != "ACTIVA":
-            try:
+    try:
+        for r in recs:
+            if r.estado != "ACTIVA":
                 res = MLAnalyticsService.apply_markdown_recommendation(
                     db=db,
                     tenant_id=tenant_id,
@@ -201,9 +201,15 @@ def auto_apply_all_markdown(
                         fecha_inicio=r.fecha_inicio_sugerida,
                         fecha_fin=r.fecha_fin_sugerida,
                         motivo=f"Piloto automático ML ({r.descuento_sugerido_pct:.0f}% OFF)"
-                    )
+                    ),
+                    _commit=False
                 )
                 applied.append(res)
-            except Exception:
-                pass
+        db.commit()
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(422,str(error))
+    except Exception:
+        db.rollback()
+        raise
     return applied

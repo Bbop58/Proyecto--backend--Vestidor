@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Literal
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -12,6 +12,8 @@ class SyncItemCreate(BaseModel):
 
 
 class SyncOperationItemRequest(BaseModel):
+    fecha_hora_esperada: Optional[datetime] = None
+    supersedes_operation_id: Optional[uuid.UUID] = None
     codigo_cupon: Optional[str] = Field(None, max_length=50)
     client_operation_id: uuid.UUID = Field(..., description="UUID único generado por el dispositivo offline (Web/Flutter)")
     operation_type: str = Field(default="VENTA_CONTADO_OFFLINE", description="'VENTA_CONTADO_OFFLINE' o 'RESERVA_OFFLINE'")
@@ -28,12 +30,15 @@ class SyncOperationItemRequest(BaseModel):
 
 
 class SyncBatchRequest(BaseModel):
-    operations: List[SyncOperationItemRequest] = Field(..., description="Lote de operaciones offline a sincronizar")
+    operations: List[SyncOperationItemRequest] = Field(..., min_length=1, max_length=100, description="Lote de operaciones offline a sincronizar")
 
 
 class SyncOperationResult(BaseModel):
     client_operation_id: uuid.UUID
-    status: str  # 'CONFIRMADA', 'RECHAZADA_POR_STOCK', 'CONFLICTO'
+    operation_type: Optional[str] = None
+    entity_type: Optional[Literal['VENTA','RESERVA']] = None
+    retryable: bool = False
+    status: Literal['CONFIRMADA','RECHAZADA_POR_STOCK','CONFLICTO','REINTENTAR']  # 'CONFIRMADA', 'RECHAZADA_POR_STOCK', 'CONFLICTO'
     is_duplicate: bool = False
     receipt_number: Optional[str] = None
     server_entity_id: Optional[uuid.UUID] = None
@@ -56,7 +61,7 @@ class SyncHistoryItemResponse(BaseModel):
     id: uuid.UUID
     client_operation_id: uuid.UUID
     tenant_id: uuid.UUID
-    branch_id: uuid.UUID
+    branch_id: Optional[uuid.UUID]
     operation_type: str
     sync_status: str
     client_created_at: datetime

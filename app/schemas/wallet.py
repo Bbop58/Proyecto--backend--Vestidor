@@ -94,7 +94,7 @@ class OfflineOrderPayload(BaseModel):
 
 
 class BatchOfflineSyncRequest(BaseModel):
-    orders: List[OfflineOrderPayload] = Field(..., min_length=1)
+    orders: List[OfflineOrderPayload] = Field(..., min_length=1, max_length=100)
 
 
 class BatchOfflineSyncResponse(BaseModel):
@@ -102,6 +102,7 @@ class BatchOfflineSyncResponse(BaseModel):
     exitosas: int
     fallidas: int
     nuevo_saldo: float
+    saldo_retenido: float
     nuevo_nonce: int
     nueva_firma: str
     detalles: List[Dict[str, Any]]

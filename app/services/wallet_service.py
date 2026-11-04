@@ -138,7 +138,14 @@ class WalletService:
     @staticmethod
     @commercial_transaction
     def sync_offline_orders_batch(db, user_id, tenant_id, orders):
-        WalletService._lock_user(db, user_id, tenant_id)  # User -> branches -> wallet throughout.
+        from types import SimpleNamespace
+        from app.models.sync_operation import SyncOperation
+        from app.services.sync_service import SyncService
+        from app.services.audit_service import AuditService
+        # Shared operation locks precede user/branch locks in both sync channels.
+        for key in sorted({o.client_operation_id for o in orders},key=str):
+            SyncService.lock_keys(db,SimpleNamespace(client_operation_id=key,supersedes_operation_id=None))
+        actor=WalletService._lock_user(db, user_id, tenant_id)
         for branch_id in sorted({o.sucursal_id for o in orders}, key=str):
             branch = db.query(Branch).filter_by(id=branch_id, tenant_id=tenant_id, activa=True).first()
             if not branch:
@@ -146,13 +153,48 @@ class WalletService:
             lock_branch(db, branch_id)
         wallet = WalletService._locked_wallet(db, user_id, tenant_id)
         results = []; successful = failed = 0
+        def remember(order,digest,result):
+            row=db.execute(select(SyncOperation.__table__.c.id).where(SyncOperation.__table__.c.client_operation_id==order.client_operation_id)).first()
+            if row:return
+            # Never bind an existing foreign ledger identifier to the current account.
+            foreign=db.execute(select(WalletTransaction.__table__.c.wallet_id).where(
+                WalletTransaction.__table__.c.client_operation_id==order.client_operation_id)).first()
+            if foreign and foreign.wallet_id!=wallet.id:return
+            db.add(SyncOperation(client_operation_id=order.client_operation_id,tenant_id=tenant_id,
+                branch_id=order.sucursal_id,user_id=user_id,operation_type='COMPRA_BILLETERA_OFFLINE',
+                client_created_at=datetime.now(timezone.utc),request_fingerprint=digest,
+                sync_status='CONFIRMADA' if result['status']=='CONFIRMADA' else 'CONFLICTO',
+                entity_id=result.get('server_entity_id'),response_payload=result,error_detail=result.get('error_detail')))
+            AuditService.record(db,f"SYNC_BILLETERA {order.client_operation_id} {result['status']}",'Sincronización Offline',actor)
         for order in orders:
             digest = WalletService.fingerprint(order.model_dump(mode='json', exclude={'fecha_local','fecha_orden'}))
             try:
+                decision=db.query(SyncOperation).filter_by(client_operation_id=order.client_operation_id,
+                    tenant_id=tenant_id,user_id=user_id).first()
+                claimed=db.execute(select(SyncOperation.__table__.c.id).where(
+                    SyncOperation.__table__.c.client_operation_id==order.client_operation_id)).first()
+                if claimed:
+                    if not decision or decision.operation_type!='COMPRA_BILLETERA_OFFLINE' or decision.request_fingerprint!=digest:
+                        raise HTTPException(409,'La clave de operación no corresponde a esta compra')
+                    cached=dict(decision.response_payload or {})
+                    if decision.sync_status=='CONFIRMADA':
+                        if not db.query(Sale.id).filter_by(id=decision.entity_id,tenant_id=tenant_id,cliente_id=user_id).first():
+                            raise HTTPException(409,'Falta la venta original; requiere conciliación')
+                        if not WalletService._existing(db,order.client_operation_id,wallet,digest):
+                            raise HTTPException(409,'Falta el movimiento original; requiere conciliación')
+                    results.append(cached)
+                    if cached.get('status')=='CONFIRMADA':successful+=1
+                    else:failed+=1
+                    continue
                 existing = WalletService._existing(db, order.client_operation_id, wallet, digest)
                 if existing:
-                    results.append(dict(client_operation_id=str(order.client_operation_id), status='CONFIRMADA',
-                        estado='YA_PROCESADA', receipt_number=existing.referencia_externa, numero_recibo=existing.referencia_externa))
+                    sale_id=(existing.metadatos or {}).get('sale_id')
+                    if not sale_id or not db.query(Sale.id).filter_by(id=sale_id,tenant_id=tenant_id,cliente_id=user_id).first():
+                        raise HTTPException(409,'La operación antigua requiere conciliación con su venta')
+                    replay=dict(client_operation_id=str(order.client_operation_id), status='CONFIRMADA',
+                        estado='YA_PROCESADA', receipt_number=existing.referencia_externa, numero_recibo=existing.referencia_externa,
+                        server_entity_id=sale_id)
+                    remember(order,digest,replay);results.append(replay)
                     successful += 1
                     continue
                 pricing = quote(db, order.items, tenant_id, getattr(order, 'codigo_cupon', None))
@@ -168,8 +210,8 @@ class WalletService:
                         raise HTTPException(400, 'COMPENSADA_POR_STOCK')
             except HTTPException as error:
                 code = error.detail if error.detail in ('RECHAZADA_POR_SOBREGIRO','COMPENSADA_POR_STOCK') else 'CONFLICTO'
-                results.append(dict(client_operation_id=str(order.client_operation_id), status=code, estado=code,
-                                    error_detail=error.detail, mensaje=error.detail))
+                rejection=dict(client_operation_id=str(order.client_operation_id),status=code,estado=code,error_detail=error.detail,mensaje=error.detail)
+                remember(order,digest,rejection);results.append(rejection)
                 failed += 1
                 continue
             pricing = quote(db, order.items, tenant_id, getattr(order, 'codigo_cupon', None), consume=True)
@@ -199,10 +241,11 @@ class WalletService:
                 metadatos={'sale_id': str(sale.id), 'request_hash': digest}))
             db.flush()
             successful += 1
-            results.append(dict(client_operation_id=str(order.client_operation_id), status='CONFIRMADA', estado='CONFIRMADA',
-                receipt_number=sale.numero_recibo, numero_recibo=sale.numero_recibo, nuevo_saldo=float(wallet.saldo_actual)))
+            confirmed=dict(client_operation_id=str(order.client_operation_id), status='CONFIRMADA', estado='CONFIRMADA',
+                receipt_number=sale.numero_recibo, numero_recibo=sale.numero_recibo, server_entity_id=str(sale.id), nuevo_saldo=float(wallet.saldo_actual))
+            remember(order,digest,confirmed);results.append(confirmed)
         db.commit(); db.refresh(wallet)
-        return dict(procesadas=len(orders), exitosas=successful, fallidas=failed, nuevo_saldo=float(wallet.saldo_actual),
+        return dict(procesadas=len(orders), exitosas=successful, fallidas=failed, nuevo_saldo=float(wallet.saldo_actual), saldo_retenido=float(wallet.saldo_retenido),
             nuevo_nonce=wallet.nonce_secuencia, nueva_firma=wallet.firma_balance, detalles=results, results=results)
 
     @staticmethod

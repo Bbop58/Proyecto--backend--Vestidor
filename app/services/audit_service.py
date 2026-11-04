@@ -10,6 +10,17 @@ logger = logging.getLogger(__name__)
 
 class AuditService:
     @staticmethod
+    def record(db: Session, action: str, module: str, user: User):
+        """Strict audit inside the caller's transaction; never commits or swallows failure."""
+        entry = AuditLog(tenant_id=user.tenant_id, user_id=user.id,
+            user_name=user.full_name, user_email=user.email,
+            user_role=user.role.name if user.role else 'sin_rol',
+            action=action[:100], module=module[:50], ip_address='127.0.0.1')
+        db.add(entry)
+        db.flush()
+        return entry
+
+    @staticmethod
     def log(
         db: Session,
         action: str,

@@ -71,7 +71,9 @@ class ReservationService:
     def create_reservation(
         db: Session,
         data: ReservationCreate,
-        cliente_id: uuid.UUID
+        cliente_id: uuid.UUID,
+        _commit: bool = True,
+        _expires_at=None
     ) -> dict:
         # Serialize the per-customer active limit across different branches.
         user = db.query(User).filter_by(id=cliente_id, is_active=True).with_for_update(of=User).first()
@@ -120,7 +122,9 @@ class ReservationService:
 
         # 4. Generar cÃ³digo Ãºnico
         codigo = f"RES-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
-        fecha_expiracion = now + timedelta(hours=24)
+        fecha_expiracion = min(_expires_at, now+timedelta(hours=24)) if _expires_at else now+timedelta(hours=24)
+        if fecha_expiracion <= now or esperada > fecha_expiracion:
+            raise HTTPException(400, "La reserva venció o la recogida supera su plazo original")
 
         # 5. Crear cabecera de reserva
         reserva = Reservation(
@@ -199,6 +203,9 @@ class ReservationService:
             db.add(detalle)
 
         reserva.total_estimado = total_estimado
+        if not _commit:
+            db.flush()
+            return ReservationService._format_reservation_response(reserva)
         db.commit()
         db.refresh(reserva)
 

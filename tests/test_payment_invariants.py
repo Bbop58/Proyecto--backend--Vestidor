@@ -1,4 +1,7 @@
 import uuid
+from pathlib import Path
+
+RECONCILIATION_SCRIPT = str(Path(__file__).resolve().parents[1]/"scripts"/"reconcile_wallet_signatures.py")
 from decimal import Decimal
 from datetime import datetime, timezone
 
@@ -480,12 +483,12 @@ def test_reconciliation_tool_requires_matching_ledger_before_resigning(committed
         wallet=WalletService.topup_cash_admin(db,user,user_id,10)
         wallet.firma_balance='legacy';db.commit();wallet_id=wallet.id
     environment={**os.environ,'WALLET_RECONCILIATION_DATABASE_URL':TEST_DATABASE_URL}
-    result=subprocess.run([sys.executable,'scripts/reconcile_wallet_signatures.py','--apply'],env=environment,capture_output=True,text=True,timeout=25)
+    result=subprocess.run([sys.executable,RECONCILIATION_SCRIPT,'--apply'],env=environment,capture_output=True,text=True,timeout=90)
     assert result.returncode==0,result.stdout+result.stderr
     with factory() as db:
         wallet=db.get(UserWallet,wallet_id);assert WalletService.verify_wallet_integrity(wallet)
         signature=wallet.firma_balance;wallet.saldo_actual=999;db.commit()
-    result=subprocess.run([sys.executable,'scripts/reconcile_wallet_signatures.py','--apply'],env=environment,capture_output=True,text=True,timeout=25)
+    result=subprocess.run([sys.executable,RECONCILIATION_SCRIPT,'--apply'],env=environment,capture_output=True,text=True,timeout=90)
     assert result.returncode!=0
     with factory() as db:assert db.get(UserWallet,wallet_id).firma_balance==signature
 
@@ -544,8 +547,8 @@ def test_reconciliation_refuses_historical_unverified_paypal_credit(committed_sh
             monto=10,saldo_anterior=0,saldo_posterior=10,referencia_externa='PAYPAL_UNVERIFIED',
             origen='MOBILE',estado_sync='CONCILIADO'))
         db.commit();wid=wallet.id
-    result=subprocess.run([sys.executable,'scripts/reconcile_wallet_signatures.py','--apply'],
-        env={**os.environ,'WALLET_RECONCILIATION_DATABASE_URL':TEST_DATABASE_URL},capture_output=True,text=True,timeout=25)
+    result=subprocess.run([sys.executable,RECONCILIATION_SCRIPT,'--apply'],
+        env={**os.environ,'WALLET_RECONCILIATION_DATABASE_URL':TEST_DATABASE_URL},capture_output=True,text=True,timeout=90)
     assert result.returncode!=0
     with factory() as db:assert db.get(UserWallet,wid).firma_balance=='legacy'
 

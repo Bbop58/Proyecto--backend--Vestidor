@@ -136,7 +136,9 @@ class SaleService:
         data: PresencialSaleCreate,
         cajero_id: Optional[uuid.UUID] = None,
         actor_id: Optional[uuid.UUID] = None,
-        _payment_intent: Optional[PaymentIntent] = None
+        _payment_intent: Optional[PaymentIntent] = None,
+        _commit: bool = True,
+        _created_at=None
     ) -> dict:
         tenant_id = SaleService._actor_tenant(db, actor_id or cajero_id)
         SaleService._validate_scope(db, data, tenant_id, data.cliente_id)
@@ -159,7 +161,8 @@ class SaleService:
                 raise HTTPException(status_code=404, detail="Cliente no encontrado o inactivo")
 
         now = utc_now()
-        numero_recibo = f"VTA-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+        prefix = "VTA-OFF" if not _commit else "VTA"
+        numero_recibo = f"{prefix}-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
         # Determinar tipo de venta (si no hay cajero y es PayPal/QR se considera DIGITAL)
         sale_type = SaleType.DIGITAL if not cajero_id and data.pago.metodo in [PaymentMethod.PAYPAL, PaymentMethod.QR] else SaleType.PRESENCIAL
@@ -306,7 +309,12 @@ class SaleService:
             venta.monto_recibido = recibido
             venta.cambio = recibido - monto_total
 
+        if _created_at is not None:
+            venta.created_at = _created_at
         SaleService._attach_payment(venta, _payment_intent)
+        if not _commit:
+            db.flush()
+            return SaleService._format_sale_response(venta)
         db.commit()
         db.refresh(venta)
 

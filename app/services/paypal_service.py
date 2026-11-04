@@ -68,7 +68,7 @@ class PayPalService:
     @classmethod
     def _headers(cls, client_id=None, client_secret=None, mode=None, request_id=None):
         headers = {'Authorization': 'Bearer '+cls.get_access_token(client_id, client_secret, mode),
-                   'Content-Type': 'application/json'}
+                   'Content-Type': 'application/json', 'Prefer': 'return=representation'}
         if request_id:
             headers['PayPal-Request-Id'] = str(request_id)
         return headers
@@ -111,6 +111,11 @@ class PayPalService:
         try:
             result = cls._request(cls._get_base_url(mode)+f'/v2/checkout/orders/{order_id}/capture', 'POST',
                 cls._headers(client_id, client_secret, mode, request_id), {})
+            if result.get('status') == 'COMPLETED':
+                # Capture responses may omit purchase-unit reconciliation fields.
+                # Read the same order, then let the flow verify custom_id, amount,
+                # currency and capture identity. Never issue a second charge here.
+                result = cls.get_order_details(order_id, client_id, client_secret, mode)
         except ProviderError as error:
             if error.provider_code not in ('ORDER_ALREADY_CAPTURED','ORDER_COMPLETED_DONE'):
                 raise

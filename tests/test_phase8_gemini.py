@@ -34,6 +34,29 @@ def test_defaults_try_the_live_validated_text_model_first(monkeypatch):
     assert calls==['gemini-3.6-flash']
 
 
+@pytest.mark.parametrize('expression,alias,expected,forbidden',[
+    ('SUM(v.monto_total)','total_ventas','37.50 Bolivianos','unidades'),
+    ('COUNT(v.id)','total_ventas','2 registros','Bolivianos'),
+    ('SUM(d.cantidad)','cantidad','3 unidades','Bolivianos'),
+    ('COUNT(v.id)','monto_total','2 registros','Bolivianos'),
+])
+def test_speech_uses_sql_metric_not_the_alias(expression,alias,expected,forbidden):
+    amount=37.5 if expression.startswith('SUM(v.monto') else 3 if 'cantidad' in expression else 2
+    summary=VoiceReportService._build_speech_summary('consulta','',
+        ['metodo_pago',alias],[{'metodo_pago':'EFECTIVO',alias:amount}],
+        sql=f'SELECT v.metodo_pago, {expression} AS {alias} FROM ventas v GROUP BY v.metodo_pago')
+    assert expected in summary
+    assert forbidden not in summary
+
+
+def test_speech_handles_unquoted_sql_alias_folded_by_postgres():
+    summary=VoiceReportService._build_speech_summary('consulta','',
+        ['metodo_pago','total_ventas'],[{'metodo_pago':'EFECTIVO','total_ventas':37.5}],
+        sql='SELECT v.metodo_pago, SUM(v.monto_total) AS TOTAL_VENTAS FROM ventas v GROUP BY v.metodo_pago')
+    assert '37.50 Bolivianos' in summary
+    assert 'unidades' not in summary
+
+
 def test_voice_tries_available_configured_backup_after_overload(monkeypatch):
     monkeypatch.setattr(settings,'VOICE_GEMINI_API_KEY','unit-test-only')
     monkeypatch.setattr(settings,'GEMINI_VOICE_MODELS','gemini-3.5-flash-lite,gemini-3.8-flash')

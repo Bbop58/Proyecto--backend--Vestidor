@@ -391,7 +391,8 @@ Respond strictly with a JSON object in this exact format:
         question: str,
         interpretation: str,
         columns: List[str],
-        rows: List[Dict[str, Any]]
+        rows: List[Dict[str, Any]],
+        sql: Optional[str] = None,
     ) -> str:
         """
         Genera un resumen narrativo de alto nivel (Audio Briefing) optimizado
@@ -419,9 +420,18 @@ Respond strictly with a JSON object in this exact format:
             elif not label_col and any(w in col_l for w in ["producto", "sucursal", "nombre", "categoria", "cliente", "periodo"]):
                 label_col = col
 
+        qty_unit = 'unidades'
+        if sql:
+            from app.core.report_metrics import metric_units
+            units = metric_units(sql)
+            money_col = next((col for col in columns if units.get(col.lower()) == 'Bolivianos'), None)
+            qty_col = next((col for col in columns if units.get(col.lower()) in ('unidades', 'registros')), None)
+            if qty_col:
+                qty_unit = units[qty_col.lower()]
+
         # Si aún no tenemos label_col, tomar la primera columna
         if not label_col and columns:
-            label_col = columns[0]
+            label_col = next((col for col in columns if isinstance(rows[0].get(col), str)), None)
 
         summary_parts = []
 
@@ -458,8 +468,8 @@ Respond strictly with a JSON object in this exact format:
                 val = r.get(qty_col)
                 if isinstance(val, (int, float)):
                     total_qty += int(val)
-            if total_qty > 0 and ("unidades" in qty_col.lower() or "cantidad" in qty_col.lower()):
-                summary_parts.append(f"Se registraron {total_qty:,} unidades en total.")
+            if total_qty > 0 and (sql or "unidades" in qty_col.lower() or "cantidad" in qty_col.lower()):
+                summary_parts.append(f"Se registraron {total_qty:,} {qty_unit} en total.")
 
         # 3. Elementos líderes o destacados
         if label_col and total_rows > 0:
@@ -469,7 +479,7 @@ Respond strictly with a JSON object in this exact format:
             if money_col and top_1.get(money_col) is not None:
                 top_1_val = f" con {float(top_1.get(money_col, 0)):,.2f} Bolivianos"
             elif qty_col and top_1.get(qty_col) is not None:
-                top_1_val = f" con {top_1.get(qty_col)} unidades"
+                top_1_val = f" con {top_1.get(qty_col)} {qty_unit}"
 
             if top_1_name:
                 if total_rows > 1:
@@ -479,7 +489,7 @@ Respond strictly with a JSON object in this exact format:
                     if money_col and top_2.get(money_col) is not None:
                         top_2_val = f" ({float(top_2.get(money_col, 0)):,.2f} Bolivianos)"
                     elif qty_col and top_2.get(qty_col) is not None:
-                        top_2_val = f" ({top_2.get(qty_col)} unidades)"
+                        top_2_val = f" ({top_2.get(qty_col)} {qty_unit})"
 
                     summary_parts.append(f"El puesto principal lo lidera {top_1_name}{top_1_val}, seguido por {top_2_name}{top_2_val}.")
                 else:
@@ -554,7 +564,7 @@ Respond strictly with a JSON object in this exact format:
                     rows.append(row_dict)
 
             elapsed_ms = round((time.time() - start_time) * 1000, 2)
-            speech_summary = cls._build_speech_summary(question, interpretation, columns, rows)
+            speech_summary = cls._build_speech_summary(question, interpretation, columns, rows, sql=validated_sql)
             logger.info(f"Reporte de voz ejecutado con éxito: {len(rows)} filas en {elapsed_ms}ms")
 
             return VoiceReportQueryResponse(

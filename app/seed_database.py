@@ -804,12 +804,14 @@ def seed_product_exchanges(db, tenant_urban, branches_map, users_map):
     print(f"  [OK] Sembrado cambio de prenda de prueba: {numero_cambio} (Diferencia: {diff} Bs.)")
 
 
-def seed_all():
+def seed_all(db=None):
     print("==================================================")
     print("Iniciando Sembrado Completo de la Base de Datos...")
     print("==================================================")
 
-    db = SessionLocal()
+    owns_session = db is None
+    if owns_session:
+        db = SessionLocal()
     try:
         seed_permissions(db, include_seasons=False)
         # 1.5. Sembrar Planes de Suscripción y Empresas Multitenant
@@ -2053,18 +2055,23 @@ def seed_all():
             users_map=users_map
         )
 
-        db.commit()
+        if owns_session:
+            db.commit()
+        else:
+            db.flush()
 
         print("\n==================================================")
         print(" [SUCCESS] BASE DE DATOS POBLADA EXITOSAMENTE! ")
         print("==================================================")
 
     except Exception as e:
-        db.rollback()
+        if owns_session:
+            db.rollback()
         print(f"\n[ERROR] Falló el sembrado de base de datos: {e}")
         raise e
     finally:
-        db.close()
+        if owns_session:
+            db.close()
 
 
 if __name__ == "__main__":

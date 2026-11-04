@@ -76,7 +76,7 @@ def test_indirect_foreign_category_is_rejected_atomically(client,db_session,shop
     assert response.status_code in (400,403,404),response.text
     db_session.refresh(va.producto)
     assert va.producto.categoria_id==before
-    assert va.producto.nombre=='a'
+    assert va.producto.nombre=='Product a'
 
 
 def test_shared_roles_are_read_only_and_custom_roles_are_owned(client,db_session,shops):

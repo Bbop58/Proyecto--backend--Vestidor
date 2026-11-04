@@ -423,6 +423,65 @@ def test_last_unit_is_allocated_once_across_real_transactions(committed_shop,ope
         assert db.query(Sale).count()+db.query(Reservation).count()<=(0 if operations==('receive','receive') else 1)
 
 
+@pytest.mark.parametrize('holder', ['reservation', 'wallet'])
+def test_user_serialization_does_not_block_sale_foreign_key(committed_shop, monkeypatch, holder):
+    """A customer mutex must allow FK key-share locks from an unrelated sale."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from sqlalchemy import text
+    from app.models.branch import Branch
+    from app.models.user import User
+    from app.services.wallet_service import WalletService
+    import app.services.reservation_service as reservation_module
+    user_id, variant_id, branch_id, _ = committed_shop[0]
+    factory = committed_shop[1]
+    user_locked, sale_finished = Event(), Event()
+    original_lock = reservation_module.lock_branch
+
+    def delayed_branch(db, branch):
+        user_locked.set()
+        assert sale_finished.wait(15)
+        return original_lock(db, branch)
+
+    monkeypatch.setattr(reservation_module, 'lock_branch', delayed_branch)
+
+    def hold_user():
+        with factory() as db:
+            if holder == 'wallet':
+                user = db.get(User, user_id)
+                WalletService._lock_user(db, user_id, user.tenant_id)
+                user_locked.set()
+                assert sale_finished.wait(15)
+                db.rollback()
+                return 'released'
+            try:
+                ReservationService.create_reservation(db, ReservationCreate(
+                    sucursal_id=branch_id,
+                    fecha_hora_esperada=datetime.now(timezone.utc)+timedelta(hours=1),
+                    items=[dict(variante_id=variant_id, cantidad=1)]), user_id)
+                return 'reserved'
+            except HTTPException as error:
+                assert error.status_code == 400
+                return 'rejected'
+
+    def sell():
+        try:
+            with factory() as db:
+                db.execute(text("SET LOCAL lock_timeout = '3s'"))
+                SaleService.create_presencial_sale(db, sale_data(
+                    db.get(Branch, branch_id), db.get(ProductVariant, variant_id)), user_id)
+                return 'sold'
+        finally:
+            sale_finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = pool.submit(hold_user)
+        assert user_locked.wait(15)
+        sale = pool.submit(sell)
+        assert sale.result(timeout=15) == 'sold'
+        assert pending.result(timeout=15) == ('released' if holder == 'wallet' else 'rejected')
+
+
 @pytest.mark.parametrize('operation',['cancel','exchange'])
 def test_concurrent_reversals_cannot_return_same_prenda_twice(committed_shop,operation):
     from concurrent.futures import ThreadPoolExecutor

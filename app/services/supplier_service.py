@@ -76,7 +76,7 @@ class SupplierService:
             supplier.contacto = supplier_in.contacto.strip() if supplier_in.contacto else None
         if supplier_in.telefono is not None:
             supplier.telefono = supplier_in.telefono.strip() if supplier_in.telefono else None
-        if supplier_in.email is not None:
+        if 'email' in supplier_in.model_fields_set:
             supplier.email = str(supplier_in.email).strip().lower() if supplier_in.email else None
         if supplier_in.direccion is not None:
             supplier.direccion = supplier_in.direccion.strip() if supplier_in.direccion else None

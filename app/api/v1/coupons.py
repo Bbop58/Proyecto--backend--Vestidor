@@ -14,7 +14,7 @@ from app.schemas.coupon import (
     CouponValidateRequest,
     CouponValidateResponse,
 )
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_permission
 
 router = APIRouter(prefix="/coupons", tags=["Cupones y Ofertas"])
 
@@ -34,7 +34,8 @@ def list_coupons(
     return db.query(Coupon).filter(Coupon.tenant_id == tenant_id).order_by(Coupon.created_at.desc()).all()
 
 
-@router.post("", response_model=CouponResponse, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo cupón")
+@router.post("", response_model=CouponResponse, status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission("productos.update"))], summary="Crear un nuevo cupón")
 def create_coupon(
     payload: CouponCreate,
     db: Session = Depends(get_db),

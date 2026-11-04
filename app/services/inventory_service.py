@@ -312,6 +312,8 @@ class InventoryService:
             .filter(
                 Inventory.activo == True,
                 ProductVariant.activo == True,
+                Product.activo == True,
+                Branch.activa == True,
             )
         )
 
@@ -335,7 +337,8 @@ class InventoryService:
             variante = inv.variante
             producto = variante.producto
             sucursal = inv.sucursal
-            precio = float(producto.precio_base) + float(variante.precio_extra)
+            from app.core.money import catalog_price
+            precio = float(catalog_price(variante))
             results.append({
                 "producto_id": producto.id,
                 "producto_nombre": producto.nombre,

@@ -45,7 +45,9 @@ class WalletService:
 
     @staticmethod
     def _lock_user(db, user_id, tenant_id):
-        user = db.query(User).filter_by(id=user_id, tenant_id=tenant_id, is_active=True).with_for_update(of=User).first()
+        # Serialize customer operations without blocking foreign-key checks on
+        # sales/notifications; this mutex does not change the user's key.
+        user = db.query(User).filter_by(id=user_id, tenant_id=tenant_id, is_active=True).with_for_update(of=User, key_share=True).first()
         if not user:
             raise HTTPException(404, 'Cliente no disponible en esta empresa')
         return user

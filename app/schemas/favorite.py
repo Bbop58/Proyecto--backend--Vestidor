@@ -2,6 +2,7 @@ import uuid
 from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from datetime import datetime
+from app.schemas.product import ProductResponse
 
 class FavoriteCreate(BaseModel):
     product_id: uuid.UUID
@@ -12,6 +13,7 @@ class FavoriteResponse(BaseModel):
     product_id: uuid.UUID
     tenant_id: uuid.UUID
     created_at: datetime
+    producto: Optional[ProductResponse] = None
     # Product summary info
     product_nombre: Optional[str] = None
     precio_base: Optional[float] = None

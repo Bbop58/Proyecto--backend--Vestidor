@@ -24,6 +24,7 @@ class FavoriteService:
             
             result.append(
                 FavoriteResponse(
+                    producto=p,
                     id=f.id,
                     user_id=f.user_id,
                     product_id=f.product_id,
@@ -57,6 +58,7 @@ class FavoriteService:
         )
         if existing:
             return FavoriteResponse(
+                producto=product,
                 id=existing.id,
                 user_id=existing.user_id,
                 product_id=existing.product_id,
@@ -88,6 +90,7 @@ class FavoriteService:
         )
 
         return FavoriteResponse(
+            producto=product,
             id=fav.id,
             user_id=fav.user_id,
             product_id=fav.product_id,

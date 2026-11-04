@@ -123,10 +123,10 @@ class NotificationService:
 
     @staticmethod
     def mark_all_as_read(db: Session, user_id: uuid.UUID) -> int:
-        updated = (
-            db.query(Notification)
+        notifications = (db.query(Notification)
             .filter(Notification.user_id == user_id, Notification.is_read == False)
-            .update({Notification.is_read: True})
-        )
+            .with_for_update(of=Notification).all())
+        for notification in notifications:
+            notification.is_read = True
         db.commit()
-        return updated
+        return len(notifications)

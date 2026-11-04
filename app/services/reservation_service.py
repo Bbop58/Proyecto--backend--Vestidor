@@ -76,7 +76,9 @@ class ReservationService:
         _expires_at=None
     ) -> dict:
         # Serialize the per-customer active limit across different branches.
-        user = db.query(User).filter_by(id=cliente_id, is_active=True).with_for_update(of=User).first()
+        # PostgreSQL NO KEY UPDATE still serializes the customer's reservation
+        # limit, while allowing FK KEY SHARE checks by concurrent cash sales.
+        user = db.query(User).filter_by(id=cliente_id, is_active=True).with_for_update(of=User, key_share=True).first()
         if not user:
             raise HTTPException(404, "Cliente no disponible")
         lock_branch(db, data.sucursal_id)
@@ -171,7 +173,8 @@ class ReservationService:
                 )
 
             # Precio
-            precio_unitario = Decimal(str(variant.producto.precio_base)) + Decimal(str(variant.precio_extra))
+            from app.core.money import catalog_price
+            precio_unitario = catalog_price(variant)
             subtotal = precio_unitario * item.cantidad
             total_estimado += subtotal
 

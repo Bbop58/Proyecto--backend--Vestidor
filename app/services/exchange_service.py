@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime, timezone, date
 from decimal import Decimal
-from collections import defaultdict
+from collections import defaultdict, Counter
+from app.core.commercial_transaction import commercial_transaction, lock_branch
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -147,11 +148,14 @@ class ExchangeService:
         items_resp: List[VerifyReceiptItemResponse] = []
         hay_disponibles = False
 
-        for det in venta.detalles:
+        sold = Counter()
+        for detail in venta.detalles:
+            sold[detail.variante_id] += detail.cantidad
+        for det in {d.variante_id: d for d in venta.detalles}.values():
             var = det.variante
             prod = var.producto if var else None
             ya_cambiada = cantidades_cambiadas[det.variante_id]
-            disponible = max(0, det.cantidad - ya_cambiada)
+            disponible = max(0, sold[det.variante_id] - ya_cambiada)
 
             if disponible > 0:
                 hay_disponibles = True
@@ -162,7 +166,7 @@ class ExchangeService:
                 talla=var.talla if var else "-",
                 color=var.color if var else "-",
                 sku=var.sku if var else "-",
-                cantidad_comprada=det.cantidad,
+                cantidad_comprada=sold[det.variante_id],
                 cantidad_ya_cambiada=ya_cambiada,
                 cantidad_disponible_cambio=disponible,
                 precio_unitario=float(det.precio_unitario)
@@ -197,6 +201,7 @@ class ExchangeService:
         )
 
     @staticmethod
+    @commercial_transaction
     def create_exchange(
         db: Session,
         data: ProductExchangeCreate,
@@ -212,6 +217,8 @@ class ExchangeService:
                 detail=f"Recibo de venta '{data.numero_recibo}' no encontrado."
             )
 
+        lock_branch(db, venta.sucursal_id)
+        db.refresh(venta)
         if venta.estado != SaleStatus.COMPLETADA:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -240,6 +247,13 @@ class ExchangeService:
 
         # Mapear precios y cantidades de la venta original
         detalles_venta_map = {d.variante_id: d for d in venta.detalles}
+        quantities_sold = Counter()
+        for detail in venta.detalles:
+            quantities_sold[detail.variante_id] += detail.cantidad
+        # Different historic prices for the same variant need explicit allocation.
+        for detail in venta.detalles:
+            if detail.precio_unitario != detalles_venta_map[detail.variante_id].precio_unitario:
+                raise HTTPException(409, "La venta contiene precios distintos para una variante; requiere conciliación")
 
         # 4. Procesar y validar cada par de prenda (devuelta vs entregada)
         items_a_procesar = []
@@ -262,7 +276,7 @@ class ExchangeService:
 
             det_orig = detalles_venta_map[var_id]
             ya_cambiada = cantidades_cambiadas[var_id]
-            disponible = det_orig.cantidad - ya_cambiada
+            disponible = quantities_sold[var_id] - ya_cambiada
 
             if cant_solic > disponible:
                 var_db = det_orig.variante
@@ -271,6 +285,10 @@ class ExchangeService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Cantidad solicitada para cambio de {sku} ({cant_solic}) excede el remanente disponible ({disponible})."
                 )
+
+        outgoing = Counter()
+        for item in data.items:
+            outgoing[item.variante_entregada_id] += item.cantidad_entregada
 
         # 5. Validar disponibilidad de stock de las prendas entregadas en la sucursal
         for item in data.items:
@@ -298,7 +316,7 @@ class ExchangeService:
             ).first()
 
             stock_disponible = (inv_entregada.stock_actual - inv_entregada.stock_reservado) if inv_entregada else 0
-            if stock_disponible < item.cantidad_entregada:
+            if not inv_entregada or not inv_entregada.activo or stock_disponible < outgoing[item.variante_entregada_id]:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=(

@@ -1,5 +1,8 @@
 import uuid
 import logging
+from decimal import Decimal, ROUND_HALF_UP
+from collections import Counter
+from app.core.commercial_transaction import commercial_transaction, lock_branch
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -45,6 +48,7 @@ class SaleService:
             raise HTTPException(status_code=404, detail="Sucursal no encontrada o inactiva")
         if cliente_id and not db.query(User.id).filter_by(id=cliente_id,tenant_id=tenant_id,is_active=True).first():
             raise HTTPException(status_code=404, detail="Cliente no encontrado o inactivo")
+        lock_branch(db, branch.id)
         # Validate the whole payload before adding a header or changing any stock.
         for item in data.items:
             variant = db.query(ProductVariant).filter_by(id=item.variante_id,activo=True).first()
@@ -100,8 +104,8 @@ class SaleService:
             "referencia_pago": venta.referencia_pago,
             "monto_total": float(venta.monto_total),
             "total": float(venta.monto_total),
-            "impuesto_iva": float(getattr(venta, "impuesto_iva", 0) or round(float(venta.monto_total) * 0.13, 2)),
-            "monto_neto": float(getattr(venta, "monto_neto", 0) or round(float(venta.monto_total) * 0.87, 2)),
+            "impuesto_iva": float(venta.impuesto_iva if venta.impuesto_iva is not None else round(float(venta.monto_total) * 0.13, 2)),
+            "monto_neto": float(venta.monto_neto if venta.monto_neto is not None else round(float(venta.monto_total) * 0.87, 2)),
             "monto_recibido": float(venta.monto_recibido) if venta.monto_recibido is not None else None,
             "cambio": float(venta.cambio) if venta.cambio is not None else 0.0,
             "nota": venta.nota,
@@ -112,6 +116,7 @@ class SaleService:
         }
 
     @staticmethod
+    @commercial_transaction
     def create_presencial_sale(
         db: Session,
         data: PresencialSaleCreate,
@@ -139,6 +144,28 @@ class SaleService:
         # Determinar tipo de venta (si no hay cajero y es PayPal/QR se considera DIGITAL)
         sale_type = SaleType.DIGITAL if not cajero_id and data.pago.metodo in [PaymentMethod.PAYPAL, PaymentMethod.QR] else SaleType.PRESENCIAL
 
+        reservations = {}
+        expected_client = data.cliente_id
+        for reservation_id in sorted({i.reserva_id for i in data.items if i.reserva_id}, key=str):
+            reservation = db.query(Reservation).filter_by(id=reservation_id).populate_existing().first()
+            if (not reservation or not reservation.activo or
+                    reservation.estado not in (ReservationStatus.PENDIENTE, ReservationStatus.PREPARADA) or
+                    reservation.fecha_expiracion <= now):
+                raise HTTPException(400, "La reserva no está vigente para su liquidación")
+            if expected_client and reservation.cliente_id != expected_client:
+                raise HTTPException(400, "Todas las reservas deben pertenecer al mismo cliente")
+            expected_client = reservation.cliente_id
+            requested = Counter()
+            reserved = Counter()
+            for item in data.items:
+                if item.reserva_id == reservation_id:
+                    requested[item.variante_id] += item.cantidad
+            for detail in reservation.detalles:
+                reserved[detail.variante_id] += detail.cantidad
+            if requested != reserved:
+                raise HTTPException(400, "La venta debe liquidar todos los detalles y cantidades de la reserva")
+            reservations[reservation_id] = reservation
+
         # 3. Crear cabecera de venta
         venta = Sale(
             tenant_id=branch.tenant_id,
@@ -158,7 +185,7 @@ class SaleService:
         db.add(venta)
         db.flush()
 
-        monto_total = 0.0
+        monto_total = Decimal("0.00")
 
         # 4. Procesar cada ítem
         for item in data.items:
@@ -186,24 +213,12 @@ class SaleService:
 
             # Caso A: Viene de una Reserva
             if item.reserva_id:
-                reserva = db.query(Reservation).filter(Reservation.id == item.reserva_id).first()
-                if not reserva:
-                    raise HTTPException(status_code=404, detail="Reserva asociada no encontrada")
-                if reserva.sucursal_id != data.sucursal_id:
-                    raise HTTPException(status_code=400, detail="La reserva no pertenece a esta sucursal")
-                if reserva.estado not in [ReservationStatus.PREPARADA, ReservationStatus.PENDIENTE]:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"La reserva {reserva.codigo} no está lista para ser cobrada (estado: {reserva.estado.value})"
-                    )
-
-                # Si la venta no tenía cliente asignado, asociar al cliente de la reserva
-                if not venta.cliente_id and reserva.cliente_id:
+                reserva = reservations[item.reserva_id]
+                if not venta.cliente_id:
                     venta.cliente_id = reserva.cliente_id
-
-                # Descontar de stock_reservado
-                inv.stock_reservado = max(0, inv.stock_reservado - item.cantidad)
-                reserva.estado = ReservationStatus.COMPLETADA
+                if inv.stock_reservado < item.cantidad or inv.stock_actual < item.cantidad:
+                    raise HTTPException(409, "El inventario no concuerda con la reserva")
+                inv.stock_reservado -= item.cantidad
             else:
                 # Caso B: Venta directa de mostrador -> validar stock disponible
                 if inv.stock_disponible < item.cantidad:
@@ -214,14 +229,14 @@ class SaleService:
 
             # Descontar stock actual
             stock_antes = inv.stock_actual
-            inv.stock_actual = max(0, inv.stock_actual - item.cantidad)
+            inv.stock_actual -= item.cantidad
 
             # Registrar movimiento de salida por venta
             mov = InventoryMovement(
                 tenant_id=tenant_id,
                 inventario_id=inv.id,
                 tipo=MovementType.SALIDA_VENTA,
-                cantidad=-item.cantidad,
+                cantidad=item.cantidad,
                 stock_antes=stock_antes,
                 stock_despues=inv.stock_actual,
                 referencia=numero_recibo,
@@ -235,6 +250,7 @@ class SaleService:
             if precio_unit is None:
                 precio_unit = float(variant.producto.precio_base) + float(variant.precio_extra)
 
+            precio_unit = Decimal(str(precio_unit)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             subtotal = precio_unit * item.cantidad
             monto_total += subtotal
 
@@ -249,20 +265,26 @@ class SaleService:
             )
             db.add(detalle)
 
+        for reservation in reservations.values():
+            reservation.estado = ReservationStatus.COMPLETADA
+
         # 5. Validar pago en efectivo, cambio y cálculo de impuestos (13% IVA y 87% Ganancia neta)
-        iva = round(monto_total * 0.13, 2)
+        iva = (monto_total * Decimal("0.13")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         neto = round(monto_total - iva, 2)
+        venta.monto_subtotal = monto_total
         venta.monto_total = monto_total
         venta.impuesto_iva = iva
         venta.monto_neto = neto
 
         if data.pago.metodo == PaymentMethod.EFECTIVO and data.pago.monto_recibido is not None:
-            if data.pago.monto_recibido < monto_total:
+            recibido = Decimal(str(data.pago.monto_recibido)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if recibido < monto_total:
                 raise HTTPException(
                     status_code=400,
                     detail=f"El monto recibido ({data.pago.monto_recibido} Bs.) es menor al total ({monto_total} Bs.)"
                 )
-            venta.cambio = data.pago.monto_recibido - monto_total
+            venta.monto_recibido = recibido
+            venta.cambio = recibido - monto_total
 
         db.commit()
         db.refresh(venta)
@@ -285,6 +307,7 @@ class SaleService:
         return SaleService._format_sale_response(venta)
 
     @staticmethod
+    @commercial_transaction
     def create_digital_sale(
         db: Session,
         data: DigitalSaleCreate,
@@ -315,7 +338,7 @@ class SaleService:
         db.add(venta)
         db.flush()
 
-        monto_total = 0.0
+        monto_total = Decimal("0.00")
         for item in data.items:
             variant = db.query(ProductVariant).filter(
                 ProductVariant.id == item.variante_id,
@@ -334,13 +357,13 @@ class SaleService:
                 raise HTTPException(status_code=400, detail=f"Stock insuficiente para {variant.producto.nombre}")
 
             stock_antes = inv.stock_actual
-            inv.stock_actual = max(0, inv.stock_actual - item.cantidad)
+            inv.stock_actual -= item.cantidad
 
             mov = InventoryMovement(
                 tenant_id=tenant_id,
                 inventario_id=inv.id,
                 tipo=MovementType.SALIDA_VENTA,
-                cantidad=-item.cantidad,
+                cantidad=item.cantidad,
                 stock_antes=stock_antes,
                 stock_despues=inv.stock_actual,
                 referencia=numero_recibo,
@@ -350,6 +373,7 @@ class SaleService:
             db.add(mov)
 
             precio_unit = float(variant.producto.precio_base) + float(variant.precio_extra)
+            precio_unit = Decimal(str(precio_unit)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             subtotal = precio_unit * item.cantidad
             monto_total += subtotal
 
@@ -362,8 +386,9 @@ class SaleService:
             )
             db.add(detalle)
 
-        iva = round(monto_total * 0.13, 2)
+        iva = (monto_total * Decimal("0.13")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         neto = round(monto_total - iva, 2)
+        venta.monto_subtotal = monto_total
         venta.monto_total = monto_total
         venta.impuesto_iva = iva
         venta.monto_neto = neto
@@ -427,6 +452,7 @@ class SaleService:
         return [SaleService._format_sale_response(v) for v in ventas]
 
     @staticmethod
+    @commercial_transaction
     def cancel_sale(
         db: Session,
         venta_id: uuid.UUID,
@@ -437,6 +463,12 @@ class SaleService:
         venta = db.query(Sale).filter(Sale.id == venta_id, Sale.tenant_id == tenant_id).first()
         if not venta:
             raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+        lock_branch(db, venta.sucursal_id)
+        db.refresh(venta)
+        from app.models.product_exchange import ProductExchange
+        if db.query(ProductExchange.id).filter_by(venta_id=venta.id).first():
+            raise HTTPException(409, "No se puede anular una venta con cambios de prendas; requiere conciliación")
 
         if venta.estado != SaleStatus.COMPLETADA:
             raise HTTPException(
@@ -451,6 +483,8 @@ class SaleService:
                 Inventory.variante_id == detalle.variante_id
             ).first()
 
+            if not inv:
+                raise HTTPException(409, "Falta el inventario necesario para anular la venta")
             if inv:
                 stock_antes = inv.stock_actual
                 inv.stock_actual += detalle.cantidad
@@ -467,6 +501,11 @@ class SaleService:
                 )
                 db.add(mov)
 
+        for reservation_id in {d.reserva_id for d in venta.detalles if d.reserva_id}:
+            reservation = db.query(Reservation).filter_by(id=reservation_id).first()
+            if reservation:
+                reservation.estado = ReservationStatus.CANCELADA
+                reservation.fecha_recogida = None
         venta.estado = SaleStatus.CANCELADA
         venta.motivo_cancelacion = motivo
         db.commit()

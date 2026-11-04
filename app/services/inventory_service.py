@@ -11,6 +11,7 @@ Responsabilidades:
 """
 from typing import List, Optional
 import uuid
+from app.core.commercial_transaction import commercial_transaction, lock_branch
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -131,6 +132,7 @@ class InventoryService:
     # ─────────────────────────────── RECEPTION ────────────────────────────────
 
     @staticmethod
+    @commercial_transaction
     def receive_products(
         db: Session,
         data: ReceptionCreate,
@@ -147,6 +149,7 @@ class InventoryService:
         if not branch:
             raise HTTPException(status_code=404, detail="Sucursal no encontrada o inactiva")
 
+        lock_branch(db, data.sucursal_id)
         items_procesados = 0
         for item in data.productos:
             # Validar variante
@@ -188,12 +191,14 @@ class InventoryService:
     # ─────────────────────────────── ADJUSTMENT ───────────────────────────────
 
     @staticmethod
+    @commercial_transaction
     def adjust_stock(
         db: Session,
         data: StockAdjustment,
         usuario_id: Optional[uuid.UUID] = None
     ) -> Inventory:
         inv = InventoryService.get_inventory_item(db, data.inventario_id)
+        lock_branch(db, inv.sucursal_id)
         nuevo_stock = inv.stock_actual + data.cantidad
 
         if nuevo_stock < 0:

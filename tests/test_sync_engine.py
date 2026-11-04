@@ -240,7 +240,8 @@ def test_sync_single_sale_success(client: TestClient, db_session: Session, sync_
         InventoryMovement.referencia == res["receipt_number"]
     ).first()
     assert mov is not None
-    assert mov.cantidad == -2
+    assert mov.cantidad == 2
+    assert mov.stock_antes - mov.stock_despues == mov.cantidad
     assert mov.tipo == MovementType.SALIDA_VENTA
 
 

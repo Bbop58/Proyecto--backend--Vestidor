@@ -1,4 +1,9 @@
 import uuid
+from decimal import Decimal
+from app.core.commercial_transaction import commercial_transaction, lock_branch
+from app.models.user import User
+from app.models.sale import Sale, SaleStatus
+from app.models.sale_detail import SaleDetail
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -62,11 +67,17 @@ class ReservationService:
         }
 
     @staticmethod
+    @commercial_transaction
     def create_reservation(
         db: Session,
         data: ReservationCreate,
         cliente_id: uuid.UUID
     ) -> dict:
+        # Serialize the per-customer active limit across different branches.
+        user = db.query(User).filter_by(id=cliente_id, is_active=True).with_for_update(of=User).first()
+        if not user:
+            raise HTTPException(404, "Cliente no disponible")
+        lock_branch(db, data.sucursal_id)
         # 1. Validar sucursal
         branch = db.query(Branch).filter(Branch.id == data.sucursal_id, Branch.activa == True).first()
         if not branch:
@@ -98,6 +109,15 @@ class ReservationService:
                 detail="La fecha y hora esperada de recogida debe ser en el futuro."
             )
 
+        if esperada > now + timedelta(hours=24):
+            raise HTTPException(400, "La recogida debe estar dentro de las próximas 24 horas")
+
+        totals = {}
+        for item in data.items:
+            totals[item.variante_id] = totals.get(item.variante_id, 0) + item.cantidad
+        if any(quantity > 3 for quantity in totals.values()):
+            raise HTTPException(400, "Máximo 3 unidades por variante en una reserva")
+
         # 4. Generar cÃ³digo Ãºnico
         codigo = f"RES-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
         fecha_expiracion = now + timedelta(hours=24)
@@ -118,7 +138,7 @@ class ReservationService:
         db.add(reserva)
         db.flush()
 
-        total_estimado = 0.0
+        total_estimado = Decimal("0.00")
 
         # 6. Validar y procesar cada Ã­tem
         for item in data.items:
@@ -147,7 +167,7 @@ class ReservationService:
                 )
 
             # Precio
-            precio_unitario = float(variant.producto.precio_base) + float(variant.precio_extra)
+            precio_unitario = Decimal(str(variant.producto.precio_base)) + Decimal(str(variant.precio_extra))
             subtotal = precio_unitario * item.cantidad
             total_estimado += subtotal
 
@@ -188,7 +208,7 @@ class ReservationService:
                 db=db,
                 user_id=cliente_id,
                 title="Reserva Registrada â³",
-                message=f"Tu reserva #{reserva.codigo_reserva} fue registrada con Ã©xito por Bs {total_estimado:.2f}. Tienes 48h de vigencia una vez que estÃ© preparada.",
+                message=f"Tu reserva #{reserva.codigo} fue registrada con Ã©xito por Bs {total_estimado:.2f}. La reserva vence en 24 horas desde su creación.",
                 type="RESERVATION_EXPIRING",
                 reference_id=str(reserva.id)
             )
@@ -239,6 +259,7 @@ class ReservationService:
         return [ReservationService._format_reservation_response(r) for r in reservas]
 
     @staticmethod
+    @commercial_transaction
     def cancel_reservation(
         db: Session,
         reserva_id: uuid.UUID,
@@ -248,6 +269,8 @@ class ReservationService:
         reserva = db.query(Reservation).filter(Reservation.id == reserva_id).first()
         if not reserva:
             raise HTTPException(status_code=404, detail="Reserva no encontrada")
+        lock_branch(db, reserva.sucursal_id)
+        db.refresh(reserva)
 
         if not is_staff and reserva.cliente_id != user_id:
             raise HTTPException(status_code=403, detail="No tienes permiso para cancelar esta reserva")
@@ -264,8 +287,12 @@ class ReservationService:
                 Inventory.sucursal_id == reserva.sucursal_id,
                 Inventory.variante_id == detalle.variante_id
             ).first()
+            if not inv:
+                raise HTTPException(409, "Falta el inventario de la reserva")
             if inv:
-                inv.stock_reservado = max(0, inv.stock_reservado - detalle.cantidad)
+                if inv.stock_reservado < detalle.cantidad:
+                    raise HTTPException(409, "El inventario no concuerda con la reserva")
+                inv.stock_reservado -= detalle.cantidad
                 mov = InventoryMovement(
                     tenant_id=getattr(reserva, "tenant_id", None),
                     inventario_id=inv.id,
@@ -285,6 +312,7 @@ class ReservationService:
         return ReservationService._format_reservation_response(reserva)
 
     @staticmethod
+    @commercial_transaction
     def prepare_reservation(
         db: Session,
         reserva_id: uuid.UUID,
@@ -293,6 +321,8 @@ class ReservationService:
         reserva = db.query(Reservation).filter(Reservation.id == reserva_id).first()
         if not reserva:
             raise HTTPException(status_code=404, detail="Reserva no encontrada")
+        lock_branch(db, reserva.sucursal_id)
+        db.refresh(reserva)
 
         if reserva.estado != ReservationStatus.PENDIENTE:
             raise HTTPException(
@@ -318,7 +348,7 @@ class ReservationService:
                 db=db,
                 user_id=reserva.cliente_id,
                 title="Â¡Tu reserva estÃ¡ lista para recoger! ðŸ“¦",
-                message=f"Tu reserva #{reserva.codigo_reserva} ya estÃ¡ preparada en {sucursal_nombre}. Puedes pasar a retirarla.",
+                message=f"Tu reserva #{reserva.codigo} ya estÃ¡ preparada en {sucursal_nombre}. Puedes pasar a retirarla.",
                 type="RESERVATION_READY",
                 reference_id=str(reserva.id)
             )
@@ -329,6 +359,7 @@ class ReservationService:
 
 
     @staticmethod
+    @commercial_transaction
     def pickup_reservation(
         db: Session,
         reserva_id: uuid.UUID,
@@ -337,13 +368,19 @@ class ReservationService:
         reserva = db.query(Reservation).filter(Reservation.id == reserva_id).first()
         if not reserva:
             raise HTTPException(status_code=404, detail="Reserva no encontrada")
+        lock_branch(db, reserva.sucursal_id)
+        db.refresh(reserva)
 
-        if reserva.estado != ReservationStatus.PREPARADA:
+        if reserva.estado != ReservationStatus.COMPLETADA:
             raise HTTPException(
                 status_code=400,
-                detail=f"Solo se pueden recoger reservas en estado PREPARADA (estado actual: {reserva.estado.value})"
+                detail="La reserva debe liquidarse en caja antes de confirmar su recogida"
             )
 
+        paid_sale = (db.query(Sale.id).join(SaleDetail).filter(
+            SaleDetail.reserva_id == reserva.id, Sale.estado == SaleStatus.COMPLETADA).first())
+        if not paid_sale:
+            raise HTTPException(409, "La reserva no tiene una venta vigente")
         reserva.estado = ReservationStatus.RECOGIDA
         reserva.fecha_recogida = utc_now()
         db.commit()
@@ -351,44 +388,30 @@ class ReservationService:
         return ReservationService._format_reservation_response(reserva)
 
     @staticmethod
+    @commercial_transaction
     def expire_pending_reservations(db: Session) -> dict:
         now = utc_now()
-        expired_list = (
-            db.query(Reservation)
-            .filter(
-                Reservation.estado == ReservationStatus.PENDIENTE,
-                Reservation.fecha_expiracion < now
-            )
-            .all()
-        )
-
+        expired_list = (db.query(Reservation).filter(
+            Reservation.estado.in_([ReservationStatus.PENDIENTE, ReservationStatus.PREPARADA]),
+            Reservation.fecha_expiracion <= now).order_by(Reservation.id).all())
+        for branch_id in sorted({r.sucursal_id for r in expired_list}, key=str):
+            lock_branch(db, branch_id)
         count = 0
         for reserva in expired_list:
+            db.refresh(reserva)
+            if reserva.estado not in (ReservationStatus.PENDIENTE, ReservationStatus.PREPARADA):
+                continue
             for detalle in reserva.detalles:
-                inv = db.query(Inventory).filter(
-                    Inventory.sucursal_id == reserva.sucursal_id,
-                    Inventory.variante_id == detalle.variante_id
-                ).first()
-                if inv:
-                    inv.stock_reservado = max(0, inv.stock_reservado - detalle.cantidad)
-                    mov = InventoryMovement(
-                        tenant_id=inv.tenant_id,
-                        inventario_id=inv.id,
-                        tipo=MovementType.LIBERACION_RESERVA,
-                        cantidad=detalle.cantidad,
-                        stock_antes=inv.stock_actual,
-                        stock_despues=inv.stock_actual,
-                        referencia=reserva.codigo,
-                        nota="LiberaciÃ³n automÃ¡tica por expiraciÃ³n de reserva",
-                        usuario_id=None
-                    )
-                    db.add(mov)
-
+                inv = db.query(Inventory).filter_by(sucursal_id=reserva.sucursal_id,
+                                                    variante_id=detalle.variante_id).first()
+                if not inv or inv.stock_reservado < detalle.cantidad:
+                    raise HTTPException(409, "El inventario no concuerda con la reserva")
+                inv.stock_reservado -= detalle.cantidad
+                db.add(InventoryMovement(tenant_id=inv.tenant_id, inventario_id=inv.id,
+                    tipo=MovementType.LIBERACION_RESERVA, cantidad=detalle.cantidad,
+                    stock_antes=inv.stock_actual, stock_despues=inv.stock_actual,
+                    referencia=reserva.codigo, nota="Expiración de reserva", usuario_id=None))
             reserva.estado = ReservationStatus.EXPIRADA
             count += 1
-
         db.commit()
-        return {
-            "total_expiradas": count,
-            "message": f"Se procesaron {count} reserva(s) expirada(s)."
-        }
+        return {"total_expiradas": count, "message": f"Se procesaron {count} reserva(s) expirada(s)."}

@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, UniqueConstraint, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -30,6 +30,7 @@ class Inventory(Base):
 
     __table_args__ = (
         UniqueConstraint("sucursal_id", "variante_id", name="uq_inventario_sucursal_variante"),
+        CheckConstraint("stock_actual >= 0 AND stock_reservado >= 0 AND stock_reservado <= stock_actual AND stock_minimo >= 0", name="ck_inventario_stock_consistente"),
     )
 
     # Relationships
@@ -40,7 +41,7 @@ class Inventory(Base):
     @property
     def stock_disponible(self) -> int:
         """Stock disponible para nuevas reservas o ventas."""
-        return max(0, self.stock_actual - self.stock_reservado)
+        return self.stock_actual - self.stock_reservado
 
     @property
     def alerta(self) -> str | None:

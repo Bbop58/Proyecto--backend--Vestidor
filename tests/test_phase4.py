@@ -120,9 +120,8 @@ def test_phase4_complete_flow(client: TestClient, db_session: Session):
 
     # ==================== 8. PICKUP RESERVATION (STAFF) ====================
     pickup_resp = client.patch(f"/api/v1/reservas/{reserva_id}/recoger", headers=admin_headers)
-    assert pickup_resp.status_code == 200
-    assert pickup_resp.json()["estado"] == "RECOGIDA"
-    assert pickup_resp.json()["fecha_recogida"] is not None
+    # A prepared reservation still needs checkout; rejecting delivery preserves its hold.
+    assert pickup_resp.status_code == 400
 
     # ==================== 9. CANCELLATION FLOW ====================
     # Create second reservation for 3 units

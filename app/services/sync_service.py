@@ -1,4 +1,5 @@
 import uuid
+from app.core.commercial_transaction import lock_branch
 from datetime import datetime, timezone, date
 from decimal import Decimal
 from typing import List, Optional
@@ -102,6 +103,7 @@ class SyncService:
                 total_rejected += 1
                 continue
 
+            lock_branch(db, branch.id)
             branch_id = branch.id
             branch_nombre = branch.nombre
 
@@ -109,13 +111,16 @@ class SyncService:
             insufficient_stock_error: Optional[str] = None
             inventories_to_update = []
 
+            requested = {}
             for item in op.items:
+                requested[item.variante_id] = requested.get(item.variante_id, 0) + item.cantidad
+            for item in sorted(op.items, key=lambda row: str(row.variante_id)):
                 inv = db.query(Inventory).filter(
                     Inventory.variante_id == item.variante_id,
                     Inventory.sucursal_id == branch_id
                 ).with_for_update().first()
 
-                if not inv or inv.stock_disponible < item.cantidad:
+                if not inv or not inv.activo or inv.stock_disponible < requested[item.variante_id]:
                     disponible = inv.stock_disponible if inv else 0
                     insufficient_stock_error = (
                         f"Stock insuficiente para la prenda variante {item.variante_id}: "
@@ -170,8 +175,11 @@ class SyncService:
             # ── PASO 4: Confirmar Venta, Descontar Stock y Crear Kardex ──
             try:
                 # 4.1 Descontar stock
+                stock_steps = []
                 for inv, item in inventories_to_update:
+                    before = inv.stock_actual
                     inv.stock_actual -= item.cantidad
+                    stock_steps.append((before, inv.stock_actual))
 
                 # 4.2 Generar número de recibo oficial
                 short_uuid = str(uuid.uuid4())[:6].upper()
@@ -210,7 +218,7 @@ class SyncService:
                 db.flush()
 
                 # 4.5 Detalles de Venta y Movimientos de Inventario (Kardex)
-                for inv, item in inventories_to_update:
+                for (inv, item), (before, after) in zip(inventories_to_update, stock_steps):
                     item_precio = Decimal(str(item.precio_unitario))
                     subtotal = item_precio * item.cantidad
                     det = SaleDetail(
@@ -226,9 +234,9 @@ class SyncService:
                         tenant_id=tenant_id,
                         inventario_id=inv.id,
                         tipo=MovementType.SALIDA_VENTA,
-                        cantidad=-item.cantidad,
-                        stock_antes=inv.stock_actual + item.cantidad,
-                        stock_despues=inv.stock_actual,
+                        cantidad=item.cantidad,
+                        stock_antes=before,
+                        stock_despues=after,
                         referencia=numero_recibo,
                         nota=f"Sincronización de venta offline {numero_recibo}",
                         usuario_id=current_user.id,

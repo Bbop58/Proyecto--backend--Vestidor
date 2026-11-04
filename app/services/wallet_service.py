@@ -1,4 +1,5 @@
 import uuid
+from app.core.commercial_transaction import commercial_transaction, lock_branch
 import hmac
 import hashlib
 import logging
@@ -212,6 +213,7 @@ class WalletService:
         return wallet
 
     @staticmethod
+    @commercial_transaction
     def sync_offline_orders_batch(
         db: Session,
         user_id: uuid.UUID,
@@ -222,6 +224,8 @@ class WalletService:
         Procesa el lote de compras offline realizadas con Billetera Virtual en modo Store-and-Forward.
         Garantiza atomicidad con SELECT FOR UPDATE, idempotencia estricta por UUID y conciliación contable.
         """
+        for branch_id in sorted({order.sucursal_id for order in orders}, key=str):
+            lock_branch(db, branch_id)
         wallet = db.query(UserWallet).filter(
             UserWallet.user_id == user_id,
             UserWallet.tenant_id == tenant_id
@@ -229,6 +233,9 @@ class WalletService:
 
         if not wallet:
             wallet = WalletService.get_or_create_wallet(db, user_id, tenant_id)
+            for branch_id in sorted({order.sucursal_id for order in orders}, key=str):
+                lock_branch(db, branch_id)
+            wallet = db.query(UserWallet).filter_by(id=wallet.id).populate_existing().with_for_update().one()
 
         exitosas = 0
         fallidas = 0
@@ -272,13 +279,16 @@ class WalletService:
             stock_insuficiente = False
             items_procesables = []
 
+            requested = {}
+            for item in ord_data.items:
+                requested[item.variante_id] = requested.get(item.variante_id, 0) + item.cantidad
             for item in ord_data.items:
                 inv = db.query(Inventory).filter(
                     Inventory.sucursal_id == ord_data.sucursal_id,
                     Inventory.variante_id == item.variante_id
                 ).first()
 
-                if not inv or inv.stock_actual < item.cantidad:
+                if not inv or not inv.activo or inv.stock_disponible < requested[item.variante_id]:
                     stock_insuficiente = True
                     break
                 items_procesables.append((inv, item))
@@ -334,13 +344,13 @@ class WalletService:
             # Descontar stock y registrar salidas
             for inv, itm in items_procesables:
                 stock_antes = inv.stock_actual
-                inv.stock_actual = max(0, inv.stock_actual - itm.cantidad)
+                inv.stock_actual -= itm.cantidad
 
                 mov = InventoryMovement(
                     tenant_id=tenant_id,
                     inventario_id=inv.id,
                     tipo=MovementType.SALIDA_VENTA,
-                    cantidad=-itm.cantidad,
+                    cantidad=itm.cantidad,
                     stock_antes=stock_antes,
                     stock_despues=inv.stock_actual,
                     referencia=num_recibo,

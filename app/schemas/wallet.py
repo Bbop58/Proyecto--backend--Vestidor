@@ -80,6 +80,7 @@ class OfflineOrderItem(BaseModel):
 
 
 class OfflineOrderPayload(BaseModel):
+    offline_authorization: Optional[str]=Field(None,max_length=4096)
     codigo_cupon: Optional[str] = Field(None, max_length=50)
     client_operation_id: uuid.UUID = Field(..., description="UUIDv4 único generado offline por la app móvil")
     sucursal_id: uuid.UUID

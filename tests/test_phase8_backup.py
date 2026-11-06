@@ -13,9 +13,10 @@ from tests.test_tenant_sales import shops
 
 
 @pytest.fixture(autouse=True)
-def explicit_platform_operator(monkeypatch,shops):
+def commercial_restore_permission(monkeypatch,shops):
     from app.config import settings
-    monkeypatch.setattr(settings,'PLATFORM_ADMIN_USER_IDS',[str(shops['a'][0].id)])
+    # SaaS S1 explicitly moves private restore to an authorized company actor.
+    monkeypatch.setattr(settings,'PLATFORM_ADMIN_USER_IDS',[])
 
 
 def payload(db,user):
@@ -70,6 +71,27 @@ def test_restore_bad_reference_rolls_back_without_partial_changes(db_session,sho
     assert db_session.get(Product,va.producto_id).nombre!='Must not persist'
 
 
+def test_restore_cannot_rewind_platform_state_or_upgrade_old_format(db_session,shops):
+    from app.models.tenant import Tenant
+    a,_,_=shops['a'];backup=payload(db_session,a)
+    db_session.connection().execute(Tenant.__table__.update().where(Tenant.id==a.tenant_id).values(platform_revision=7))
+    db_session.commit()
+    BackupService.restore_backup(db_session,backup,a)
+    assert db_session.get(Tenant,a.tenant_id).platform_revision==7
+    legacy=copy.deepcopy(backup);legacy['version']='4.0.0'
+    with pytest.raises(HTTPException) as error:BackupService.restore_backup(db_session,legacy,a)
+    assert error.value.status_code==409
+
+
+def test_restore_cannot_reinstate_subscription_terms(db_session,shops):
+    a,_,_=shops['a'];backup=payload(db_session,a)
+    # Even a recomputed checksum cannot grant another year through a backup.
+    backup['data']['reference_subscriptions'][0]['fecha_vencimiento']='2099-12-31'
+    checksum(backup)
+    with pytest.raises(HTTPException) as error:BackupService.restore_backup(db_session,backup,a)
+    assert error.value.status_code==409
+
+
 def test_restore_preserves_wallet_signature_and_ledger(db_session,shops):
     from app.services.wallet_service import WalletService
     from app.models.user_wallet import UserWallet
@@ -95,7 +117,7 @@ def test_restore_failure_during_audit_rolls_back_every_table(db_session,shops,mo
     assert db_session.get(Product,va.producto_id).nombre=='Latest good data'
 
 
-def test_restore_endpoint_keeps_platform_permission_and_company_scope(client,db_session,shops):
+def test_restore_endpoint_keeps_company_permission_and_scope(client,db_session,shops):
     from tests.test_tenant_contract import headers
     a,_,_=shops['a'];b,_,_=shops['b']
     backup=payload(db_session,a)

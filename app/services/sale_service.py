@@ -52,7 +52,9 @@ class SaleService:
         if not actor or not actor.tenant_id:
             raise HTTPException(status_code=403, detail="La cuenta debe pertenecer a una empresa")
         if not db.query(Tenant.id).filter(Tenant.id == actor.tenant_id, Tenant.activo == True).first():
-            raise HTTPException(status_code=403, detail="Empresa inactiva o no disponible")
+            proof=db.info.get('contract_reconciliation')
+            if not proof or proof[:2]!=(actor.id,actor.tenant_id):
+                raise HTTPException(status_code=403, detail="Empresa inactiva o no disponible")
         return actor.tenant_id
 
     @staticmethod

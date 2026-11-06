@@ -87,7 +87,7 @@ class ReservationService:
         if not branch:
             raise HTTPException(status_code=404, detail="Sucursal no encontrada o inactiva")
 
-        # 2. Validar lÃ­mite de reservas activas (mÃ¡ximo 5)
+        # 2. Validar límite de reservas activas (máximo 5)
         active_count = db.query(Reservation).filter(
             Reservation.cliente_id == cliente_id,
             Reservation.estado.in_([ReservationStatus.PENDIENTE, ReservationStatus.PREPARADA]),
@@ -96,7 +96,7 @@ class ReservationService:
         if active_count >= 5:
             raise HTTPException(
                 status_code=400,
-                detail="Has alcanzado el lÃ­mite mÃ¡ximo de 5 reservas activas simultÃ¡neas."
+                detail="Has alcanzado el límite máximo de 5 reservas activas simultáneas."
             )
 
         now = utc_now()
@@ -122,7 +122,7 @@ class ReservationService:
         if any(quantity > 3 for quantity in totals.values()):
             raise HTTPException(400, "Máximo 3 unidades por variante en una reserva")
 
-        # 4. Generar cÃ³digo Ãºnico
+        # 4. Generar código único
         codigo = f"RES-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
         fecha_expiracion = min(_expires_at, now+timedelta(hours=24)) if _expires_at else now+timedelta(hours=24)
         if fecha_expiracion <= now or esperada > fecha_expiracion:
@@ -146,7 +146,7 @@ class ReservationService:
 
         total_estimado = Decimal("0.00")
 
-        # 6. Validar y procesar cada Ã­tem
+        # 6. Validar y procesar cada ítem
         for item in data.items:
             variant = db.query(ProductVariant).filter(
                 ProductVariant.id == item.variante_id,
@@ -217,8 +217,8 @@ class ReservationService:
             NotificationService.create(
                 db=db,
                 user_id=cliente_id,
-                title="Reserva Registrada â³",
-                message=f"Tu reserva #{reserva.codigo} fue registrada con Ã©xito por Bs {total_estimado:.2f}. La reserva vence en 24 horas desde su creación.",
+                title="Reserva Registrada ⏳",
+                message=f"Tu reserva #{reserva.codigo} fue registrada con éxito por Bs {total_estimado:.2f}. La reserva vence en 24 horas desde su creación.",
                 type="RESERVATION_EXPIRING",
                 reference_id=str(reserva.id)
             )
@@ -311,7 +311,7 @@ class ReservationService:
                     stock_antes=inv.stock_actual,
                     stock_despues=inv.stock_actual,
                     referencia=reserva.codigo,
-                    nota="LiberaciÃ³n de stock por cancelaciÃ³n de reserva",
+                    nota="Liberación de stock por cancelación de reserva",
                     usuario_id=user_id
                 )
                 db.add(mov)
@@ -357,8 +357,8 @@ class ReservationService:
             NotificationService.create(
                 db=db,
                 user_id=reserva.cliente_id,
-                title="Â¡Tu reserva estÃ¡ lista para recoger! ðŸ“¦",
-                message=f"Tu reserva #{reserva.codigo} ya estÃ¡ preparada en {sucursal_nombre}. Puedes pasar a retirarla.",
+                title="¡Tu reserva está lista para recoger! 📦",
+                message=f"Tu reserva #{reserva.codigo} ya está preparada en {sucursal_nombre}. Puedes pasar a retirarla.",
                 type="RESERVATION_READY",
                 reference_id=str(reserva.id)
             )

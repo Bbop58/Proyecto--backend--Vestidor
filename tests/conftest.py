@@ -59,9 +59,30 @@ def db_session() -> Generator[Session, None, None]:
 
 
 @pytest.fixture
-def client(db_session: Session) -> Generator[TestClient, None, None]:
+def client(db_session: Session,request) -> Generator[TestClient, None, None]:
     def override_get_db():
         try:
+            # Explicit contractual setup for historical HTTP suites, which
+            # predate S3. Never run in product or in SaaS/entitlement tests.
+            module=request.module.__name__.split('.')[-1]
+            if (not module.startswith('test_saas_') and request.node.name!='test_subscription_query_does_not_provision_a_free_plan'
+                    and not db_session.info.get('historical_contract_ready')):
+                from app.models import Tenant,Subscription,SubscriptionPlan
+                from app.core.plan_catalog_ddl import ensure_legacy_versions
+                from app.core.subscription_contract_ddl import ensure_legacy_terms
+                from datetime import date,timedelta
+                from sqlalchemy import select
+                connection=db_session.connection()
+                companies=connection.execute(select(Tenant.id).where(Tenant.es_operadora.is_(False))).scalars().all()
+                for company_id in companies:
+                    if not connection.execute(select(Subscription.id).where(Subscription.tenant_id==company_id)).first():
+                        plan=SubscriptionPlan(codigo='HTTP_FIXTURE_'+str(company_id).replace('-',''),nombre='Explicit HTTP test contract',
+                            max_sucursales=20,precio_mensual_bob=0,permite_reportes_ia=True,permite_offline=True)
+                        db_session.add(plan);db_session.flush()
+                        db_session.add(Subscription(tenant_id=company_id,plan_id=plan.id,estado='ACTIVA',
+                            fecha_inicio=date.today(),fecha_vencimiento=date.today()+timedelta(days=30)))
+                db_session.flush();ensure_legacy_versions(connection);ensure_legacy_terms(connection)
+                db_session.commit();db_session.info['historical_contract_ready']=True
             yield db_session
         except Exception:
             db_session.rollback()
@@ -71,6 +92,7 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
                 db_session.rollback()
             db_session.info.pop("tenant_scope",None)
             db_session.info.pop("actor_id",None)
+            db_session.info.pop("platform_actor_id",None)
 
     fastapi_app.dependency_overrides[get_db] = override_get_db
     with TestClient(fastapi_app) as test_client:
@@ -121,6 +143,10 @@ def explicit_company_for_historical_tests(request,monkeypatch):
     db.add(plan);db.flush()
     db.add(Subscription(tenant_id=tenant.id,plan_id=plan.id,estado="ACTIVA",
         fecha_inicio=date.today(),fecha_vencimiento=date.today()+timedelta(days=30)))
+    db.flush()
+    from app.core.plan_catalog_ddl import ensure_legacy_versions
+    from app.core.subscription_contract_ddl import ensure_legacy_terms
+    ensure_legacy_versions(db.connection());ensure_legacy_terms(db.connection())
     db.commit()
     from app.models.season import Season
     from app.seed_permissions import SEASONS_SEED

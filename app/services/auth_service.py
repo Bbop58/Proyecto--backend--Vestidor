@@ -24,14 +24,27 @@ from app.core.exceptions import (
 
 class AuthService:
     @staticmethod
+    def _validate_access_scope(user):
+        from app.core.access_policy import resolve_access_scope, AccessScope
+        if resolve_access_scope(user) == AccessScope.DENIED:
+            raise HTTPException(403, 'Cuenta de plataforma no habilitada o contexto inválido')
+
+    @staticmethod
     def register(db: Session, register_in: RegisterRequest) -> Tuple[User, str, str]:
         from app.models.tenant import Tenant
         tenant = db.query(Tenant).filter_by(id=register_in.tenant_id,activo=True).first()
         if not tenant:
             raise HTTPException(404,"Empresa no disponible")
+        if tenant.es_operadora:
+            raise HTTPException(403, 'El registro público no crea operadores de plataforma')
         existing_user = UserService.get_by_email(db, register_in.email)
         if existing_user:
             raise UserAlreadyExistsException()
+        from types import SimpleNamespace
+        from app.services.entitlement_service import EntitlementService
+        from uuid import uuid4
+        EntitlementService.check(db,SimpleNamespace(id=uuid4(),tenant_id=tenant.id,tenant=tenant,
+            is_active=True,role=None,is_verified=False))
         
         user_create = UserCreate(
             tenant_id=register_in.tenant_id,
@@ -42,8 +55,12 @@ class AuthService:
         user = UserService.create(db, user_create)
         
         from app.models.tenant import Tenant
-        if not user.tenant_id or not db.query(Tenant.id).filter_by(id=user.tenant_id,activo=True).first():
-            raise HTTPException(403,"La cuenta debe pertenecer a una empresa activa")
+        if not user.tenant_id or not user.tenant:
+            raise HTTPException(403,'La cuenta debe pertenecer a una empresa')
+        from app.services.entitlement_service import EntitlementService
+        if not user.tenant.activo and not EntitlementService.can_recover(user):
+            raise HTTPException(403,'La empresa está suspendida; no hay acceso comercial')
+        AuthService._validate_access_scope(user)
         access_token_data = create_access_token(subject=str(user.id), tenant_id=user.tenant_id)
         refresh_token_data = create_refresh_token(subject=str(user.id), tenant_id=user.tenant_id)
         
@@ -65,8 +82,12 @@ class AuthService:
             raise InactiveUserException()
         
         from app.models.tenant import Tenant
-        if not user.tenant_id or not db.query(Tenant.id).filter_by(id=user.tenant_id,activo=True).first():
-            raise HTTPException(403,"La cuenta debe pertenecer a una empresa activa")
+        if not user.tenant_id or not user.tenant:
+            raise HTTPException(403,'La cuenta debe pertenecer a una empresa')
+        from app.services.entitlement_service import EntitlementService
+        if not user.tenant.activo and not EntitlementService.can_recover(user):
+            raise HTTPException(403,'La empresa está suspendida; no hay acceso comercial')
+        AuthService._validate_access_scope(user)
         access_token_data = create_access_token(subject=str(user.id), tenant_id=user.tenant_id)
         refresh_token_data = create_refresh_token(subject=str(user.id), tenant_id=user.tenant_id)
         
@@ -94,10 +115,14 @@ class AuthService:
                 raise CredentialsException(detail="Usuario no encontrado o inactivo")
             
             from app.models.tenant import Tenant
-            if not user.tenant_id or not db.query(Tenant.id).filter_by(id=user.tenant_id,activo=True).first():
-                raise HTTPException(403,"La cuenta debe pertenecer a una empresa activa")
+            if not user.tenant_id or not user.tenant:
+                raise HTTPException(403,'La cuenta debe pertenecer a una empresa')
+            from app.services.entitlement_service import EntitlementService
+            if not user.tenant.activo and not EntitlementService.can_recover(user):
+                raise HTTPException(403,'La empresa está suspendida; no hay acceso comercial')
             if payload.get("tenant_id") != str(user.tenant_id):
                 raise CredentialsException(detail="La sesión no corresponde a la empresa actual")
+            AuthService._validate_access_scope(user)
             # Blacklist the old refresh token
             exp_timestamp = payload.get("exp")
             expires_at = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)

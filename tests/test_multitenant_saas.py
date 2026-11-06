@@ -98,7 +98,7 @@ def saas_setup(db_session: Session):
         full_name="Admin UrbanStyle",
         role_id=admin_role.id,
         tenant_id=tenant_1.id,
-        is_active=True
+        is_active=True, is_verified=True
     )
     user_2 = User(
         email="admin@modaexpress.com",
@@ -106,7 +106,7 @@ def saas_setup(db_session: Session):
         full_name="Admin Moda Express",
         role_id=admin_role.id,
         tenant_id=tenant_2.id,
-        is_active=True
+        is_active=True, is_verified=True
     )
     db_session.add(user_1)
     db_session.add(user_2)
@@ -163,6 +163,9 @@ def saas_setup(db_session: Session):
     db_session.add(prod_u)
     db_session.add(prod_m)
 
+    db_session.flush()
+    from app.core.plan_catalog_ddl import ensure_legacy_versions
+    ensure_legacy_versions(db_session.connection())
     db_session.commit()
 
     return {
@@ -302,33 +305,14 @@ def test_subscription_management_and_upgrade(client: TestClient, saas_setup):
     assert "BASICO" in plan_codes
     assert "PROFESIONAL" in plan_codes
 
-    # 3. Upgrade to PROFESIONAL
+    # S3: old clients cannot activate a plan without quote/acceptance/decision.
     resp_change = client.post(
         "/api/v1/subscriptions/change-plan",
         json={"plan_codigo": "PROFESIONAL"},
         headers=headers_moda
     )
-    assert resp_change.status_code == 200
-    upgraded = resp_change.json()
-    assert upgraded["plan"]["codigo"] == "PROFESIONAL"
-    assert upgraded["sucursales_maximas"] == 10
-    assert upgraded["permite_reportes_ia"] is True
-
-    # 4. Now create 3rd branch - should succeed!
-    payload = {
-        "nombre": "Moda Express 3ra Sucursal",
-        "ciudad": "Tarija",
-        "direccion": "Av. Las Panosas #500",
-        "telefono": "65432100",
-        "activa": True
-    }
-    resp_b3 = client.post("/api/v1/sucursales", json=payload, headers=headers_moda)
-    assert resp_b3.status_code == 201
-    assert resp_b3.json()["nombre"] == "Moda Express 3ra Sucursal"
-
-    # 5. Now query AI feature - should not return 403!
-    query_payload = {
-        "transcripcion": "¿Cuáles son las prendas más vendidas del mes?"
-    }
-    resp_ai = client.post("/api/v1/reportes-voz/query", json=query_payload, headers=headers_moda)
-    assert resp_ai.status_code != 403
+    assert resp_change.status_code == 409,resp_change.text
+    unchanged=client.get('/api/v1/subscriptions/current',headers=headers_moda).json()
+    assert unchanged['plan']['codigo']=='BASICO'
+    assert unchanged['fecha_vencimiento']==curr_data['fecha_vencimiento']
+    assert unchanged['sucursales_maximas']==2 and unchanged['permite_reportes_ia'] is False

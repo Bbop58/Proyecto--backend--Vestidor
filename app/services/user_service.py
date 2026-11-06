@@ -75,8 +75,15 @@ class UserService:
         from app.schemas.user import UserResponse
         from app.services.role_service import RoleService
         res = UserResponse.model_validate(user)
-        if user.role_id:
+        if not user.is_platform_admin:
+            from app.services.entitlement_service import EntitlementService
+            entitlement=EntitlementService.resolve(db,user)
+            res.service_restricted=entitlement['service_restricted']
+            res.subscription_capabilities=entitlement['features']
+        if user.role_id and not user.is_platform_admin:
             res.permissions = RoleService.get_permission_codes(db, user.role_id)
+            if not user.tenant.activo:
+                res.permissions=[code for code in res.permissions if code=='subscriptions.manage']
         if user.tenant:
             res.tenant_name = user.tenant.nombre
             res.tenant_logo_url = user.tenant.logo_url

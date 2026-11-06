@@ -10,7 +10,7 @@ from app.services.user_service import UserService
 from app.services.auth_service import AuthService
 from app.services.role_service import RoleService
 from app.services.audit_service import AuditService
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import get_current_user, get_authenticated_identity, require_permission
 from app.models.user import User
 
 router = APIRouter(prefix="/users", tags=["Usuarios"])
@@ -40,7 +40,7 @@ def list_users(
     summary="Obtener perfil del usuario autenticado"
 )
 def get_me(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_authenticated_identity),
     db: Session = Depends(get_db)
 ):
     return build_user_response(current_user, db)
@@ -53,7 +53,7 @@ def get_me(
 )
 def update_me(
     user_update: UserUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_authenticated_identity),
     db: Session = Depends(get_db)
 ):
     updated_user = UserService.update(db, current_user, user_update)
@@ -67,7 +67,7 @@ def update_me(
 )
 def change_my_password(
     change_pwd_in: ChangePasswordRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_authenticated_identity),
     db: Session = Depends(get_db)
 ):
     AuthService.change_password(db, current_user, change_pwd_in)

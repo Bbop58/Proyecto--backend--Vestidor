@@ -139,7 +139,7 @@ class WalletService:
 
     @staticmethod
     @commercial_transaction
-    def sync_offline_orders_batch(db, user_id, tenant_id, orders):
+    def sync_offline_orders_batch(db, user_id, tenant_id, orders, _online=False):
         from types import SimpleNamespace
         from app.models.sync_operation import SyncOperation
         from app.services.sync_service import SyncService
@@ -148,6 +148,10 @@ class WalletService:
         for key in sorted({o.client_operation_id for o in orders},key=str):
             SyncService.lock_keys(db,SimpleNamespace(client_operation_id=key,supersedes_operation_id=None))
         actor=WalletService._lock_user(db, user_id, tenant_id)
+        from app.services.entitlement_service import EntitlementService
+        if _online:EntitlementService.check(db,actor)
+        if not db.query(UserWallet.id).filter_by(user_id=user_id,tenant_id=tenant_id).first():
+            EntitlementService.check(db,actor,None if _online else 'offline')
         for branch_id in sorted({o.sucursal_id for o in orders}, key=str):
             branch = db.query(Branch).filter_by(id=branch_id, tenant_id=tenant_id, activa=True).first()
             if not branch:
@@ -169,7 +173,7 @@ class WalletService:
                 entity_id=result.get('server_entity_id'),response_payload=result,error_detail=result.get('error_detail')))
             AuditService.record(db,f"SYNC_BILLETERA {order.client_operation_id} {result['status']}",'Sincronización Offline',actor)
         for order in orders:
-            digest = WalletService.fingerprint(order.model_dump(mode='json', exclude={'fecha_local','fecha_orden'}))
+            digest = WalletService.fingerprint(order.model_dump(mode='json', exclude={'fecha_local','fecha_orden','offline_authorization'}))
             try:
                 decision=db.query(SyncOperation).filter_by(client_operation_id=order.client_operation_id,
                     tenant_id=tenant_id,user_id=user_id).first()
@@ -199,6 +203,15 @@ class WalletService:
                     remember(order,digest,replay);results.append(replay)
                     successful += 1
                     continue
+                from app.services.role_service import RoleService
+                if 'reservas.create' not in RoleService.get_permission_codes(db,actor.role_id):
+                    raise HTTPException(403,'La cuenta no tiene permiso para comprar')
+                if not _online:
+                    try:EntitlementService.reconcile(db,actor,order.client_operation_id,'WALLET','COMPRA_BILLETERA_OFFLINE',order.offline_authorization)
+                    except HTTPException as error:
+                        results.append(dict(client_operation_id=str(order.client_operation_id),status='REINTENTAR',
+                            estado='REVISION_REQUERIDA',requires_review=True,retryable=False,error_detail=str(error.detail)))
+                        failed+=1;continue
                 pricing = quote(db, order.items, tenant_id, getattr(order, 'codigo_cupon', None))
                 if money(order.monto_total) != pricing['total']:
                     raise HTTPException(409, 'El importe no coincide con los precios del servidor')

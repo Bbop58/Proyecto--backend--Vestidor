@@ -30,7 +30,7 @@ def test_fresh_rebuilds_legacy_schema_seeds_twice_and_authenticates():
         connection.execute(text('ALTER TABLE roles DROP COLUMN tenant_id CASCADE'))
     result=reset_demo_database(test_engine)
     assert result['tables_changed_on_repeat']==[]
-    assert len(result['checks'])==18
+    assert len(result['checks'])==26  # 18 commercial + 8 SaaS invariants
     assert not any(result['checks'].values())
     with test_engine.connect() as connection:
         assert connection.execute(text("SELECT to_regclass('runtime_demo_probe')")).scalar() is None
@@ -75,3 +75,30 @@ def test_reset_requires_explicit_url_before_any_connection(monkeypatch):
     monkeypatch.delenv('DATABASE_URL',raising=False)
     monkeypatch.setattr(reset,'create_engine',lambda *a,**kw:pytest.fail('Must not connect'))
     assert reset.main(['--confirm-disposable-demo'])==2
+
+
+def test_optional_operator_collision_rolls_back_previous_schema_and_data():
+    import uuid
+    from scripts.reset_demo_database import reset_demo_database
+    commercial_id=uuid.uuid5(uuid.NAMESPACE_URL,'fashionstore:demo:user:admin@urbanstyle.com')
+    with test_engine.begin() as connection:
+        connection.execute(text('CREATE TABLE operator_rollback_probe(id integer)'))
+        connection.execute(text('INSERT INTO operator_rollback_probe VALUES (73)'))
+    try:
+        with pytest.raises(ValueError):
+            reset_demo_database(test_engine,commercial_id,'Synthetic-OnlyS6Password!')
+        with test_engine.connect() as connection:
+            assert connection.execute(text('SELECT id FROM operator_rollback_probe')).scalar_one()==73
+            assert connection.execute(text('SELECT count(*) FROM users')).scalar_one()==0
+    finally:
+        with test_engine.begin() as connection:
+            connection.execute(text('DROP TABLE IF EXISTS operator_rollback_probe'))
+
+
+def test_optional_operator_requires_password_before_starting_reset():
+    import uuid
+    from types import SimpleNamespace
+    from scripts.reset_demo_database import reset_demo_database
+    engine=SimpleNamespace(dialect=SimpleNamespace(name='postgresql'),
+                           begin=lambda:pytest.fail('Invalid operator must not start destructive DDL'))
+    with pytest.raises(ValueError):reset_demo_database(engine,uuid.uuid4(),None)

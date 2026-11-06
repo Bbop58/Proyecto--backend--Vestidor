@@ -15,7 +15,7 @@ from app.schemas.user import UserResponse
 from app.services.auth_service import AuthService
 from app.services.user_service import UserService
 from app.services.audit_service import AuditService
-from app.api.deps import get_current_token_payload, get_current_user
+from app.api.deps import get_current_token_payload, get_current_user, get_authenticated_identity
 from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["Autenticacion"])
@@ -125,7 +125,7 @@ def logout(
 )
 def change_password(
     change_pwd_in: ChangePasswordRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_authenticated_identity),
     db: Session = Depends(get_db)
 ):
     AuthService.change_password(db, current_user, change_pwd_in)

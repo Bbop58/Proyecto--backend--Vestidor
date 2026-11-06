@@ -23,8 +23,12 @@ from app.models.product_exchange import ProductExchange
 from app.models.product_exchange_detail import ProductExchangeDetail
 
 from app.models.tenant import Tenant
+from app.models.platform_audit_log import PlatformAuditLog
 from app.models.subscription_plan import SubscriptionPlan
+from app.models.subscription_plan_version import SubscriptionPlanVersion
 from app.models.subscription import Subscription
+from app.models.subscription_change_request import SubscriptionChangeRequest
+from app.models.subscription_term import SubscriptionTerm
 from app.models.sync_operation import SyncOperation
 from app.models.favorite import Favorite
 from app.models.delivery_rate import DeliveryRate
@@ -36,8 +40,12 @@ __all__ = [
     "PaymentIntent",
     "Base",
     "Tenant",
+    "PlatformAuditLog",
     "SubscriptionPlan",
+    "SubscriptionPlanVersion",
     "Subscription",
+    "SubscriptionChangeRequest",
+    "SubscriptionTerm",
     "SyncOperation",
     "Coupon",
     "User",

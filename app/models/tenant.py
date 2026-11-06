@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Boolean, DateTime
+from sqlalchemy import Column, String, Boolean, DateTime, Integer, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -28,8 +28,13 @@ class Tenant(Base):
     paypal_client_secret = Column(String(255), nullable=True)
     paypal_mode = Column(String(20), default="sandbox", nullable=True)
     activo = Column(Boolean, default=True, nullable=False)
+    es_operadora = Column(Boolean, default=False, server_default='false', nullable=False)
+    platform_revision = Column(Integer, default=0, server_default='0', nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships
     subscriptions = relationship("Subscription", back_populates="tenant", cascade="all, delete-orphan", lazy="selectin")
+
+    __table_args__ = (Index('uq_tenants_single_operator', 'es_operadora', unique=True,
+                           postgresql_where=text('es_operadora = true')),)

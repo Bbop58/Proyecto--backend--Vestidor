@@ -26,6 +26,9 @@ class BackupService:
 
     @classmethod
     def create_backup(cls, db, current_user=None):
+        from app.core.access_policy import resolve_access_scope, AccessScope
+        if current_user and resolve_access_scope(current_user) != AccessScope.COMPANY:
+            raise HTTPException(403, 'Solo una identidad comercial puede exportar su empresa')
         payload=export_snapshot(db)
         if current_user:
             AuditService.record(db,'Copia de seguridad de empresa generada','Backups',current_user)

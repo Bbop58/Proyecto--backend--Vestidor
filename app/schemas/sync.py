@@ -12,6 +12,7 @@ class SyncItemCreate(BaseModel):
 
 
 class SyncOperationItemRequest(BaseModel):
+    offline_authorization: Optional[str]=Field(None,max_length=4096)
     fecha_hora_esperada: Optional[datetime] = None
     supersedes_operation_id: Optional[uuid.UUID] = None
     codigo_cupon: Optional[str] = Field(None, max_length=50)
@@ -34,6 +35,7 @@ class SyncBatchRequest(BaseModel):
 
 
 class SyncOperationResult(BaseModel):
+    requires_review: bool=False
     client_operation_id: uuid.UUID
     operation_type: Optional[str] = None
     entity_type: Optional[Literal['VENTA','RESERVA']] = None

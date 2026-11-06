@@ -3,7 +3,7 @@ from typing import List
 from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.api.deps import require_permission, get_current_user
+from app.api.deps import require_permission, get_current_user, require_plan_feature
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.ml.ml_service import MLAnalyticsService
@@ -18,7 +18,7 @@ from app.schemas.analytics import (
     ApplyMarkdownResponse
 )
 
-router = APIRouter(prefix="/analytics", tags=["Analítica Inteligente con Machine Learning"])
+router = APIRouter(prefix="/analytics", tags=["Analítica Inteligente con Machine Learning"], dependencies=[Depends(require_plan_feature("analitica_avanzada"))])
 
 
 def _resolve_tenant_id(db: Session, current_user: User) -> UUID:

@@ -331,8 +331,9 @@ def test_database_rejects_invalid_stock(db_session,shops,actual,reserved,minimum
 @pytest.fixture
 def committed_shop():
     """Committed independent connections for concurrency, unlike savepoint fixtures."""
-    from sqlalchemy import select, delete
-    from tests.conftest import test_engine, TestingSessionLocal
+    from sqlalchemy import text
+    from sqlalchemy.orm import sessionmaker
+    from tests.conftest import test_engine
     from app.database import Base
     from app.models.tenant import Tenant
     from app.models.user import User
@@ -340,16 +341,21 @@ def committed_shop():
     from app.models.category import Category
     from app.models.product import Product
     from app.models.role import Role
-    tables=list(Base.metadata.sorted_tables)
-    with test_engine.connect() as connection:
-        before={t.name:set(connection.execute(select(t.c.id)).scalars()) for t in tables if 'id' in t.c}
+    schema='commercial_concurrency_'+uuid.uuid4().hex
+    with test_engine.begin() as connection:connection.execute(text('CREATE SCHEMA '+schema))
+    engine=test_engine.execution_options(schema_translate_map={None:schema})
+    TestingSessionLocal=sessionmaker(bind=engine)
     try:
+        Base.metadata.create_all(engine)
         with TestingSessionLocal() as db:
             key=uuid.uuid4().hex
             tenant=Tenant(nombre=key,razon_social=key,nit_rut=key,slug=key,activo=True)
             db.add(tenant);db.flush()
             role=Role(name=key,tenant_id=tenant.id)
             db.add(role);db.flush()
+            from app.models.permission import Permission
+            buy=Permission(code='reservas.create',module='Reservas',method='POST',path='/reservas')
+            db.add(buy);role.permissions.append(buy)
             user=User(email=f'{key}@example.com',full_name='Concurrent',hashed_password='unused',tenant_id=tenant.id,role_id=role.id,is_active=True)
             category=Category(nombre=key,tenant_id=tenant.id,activa=True)
             branch=Branch(nombre=key,tenant_id=tenant.id,ciudad='SC',direccion='Test',activa=True)
@@ -359,16 +365,23 @@ def committed_shop():
             variant=ProductVariant(producto_id=product.id,sku=key,talla='M',color='Azul',precio_extra=0,activo=True)
             db.add(variant);db.flush()
             inventory=Inventory(tenant_id=tenant.id,sucursal_id=branch.id,variante_id=variant.id,stock_actual=1,stock_reservado=0,activo=True)
-            db.add(inventory);db.commit()
+            db.add(inventory)
+            from app.models import SubscriptionPlan,Subscription
+            from app.core.billing_calendar import business_today
+            from app.core.plan_catalog_ddl import ensure_legacy_versions
+            from app.core.subscription_contract_ddl import ensure_legacy_terms
+            plan=SubscriptionPlan(codigo='CONCURRENT',nombre='Explicit concurrent test contract',max_sucursales=20,
+                precio_mensual_bob=0,permite_offline=True,permite_reportes_ia=True)
+            db.add(plan);db.flush()
+            db.add(Subscription(tenant_id=tenant.id,plan_id=plan.id,estado='ACTIVA',
+                fecha_inicio=business_today(),fecha_vencimiento=business_today()+timedelta(days=30)))
+            db.flush();ensure_legacy_versions(db.connection());ensure_legacy_terms(db.connection());db.commit()
             ids=(user.id,variant.id,branch.id,inventory.id)
         yield ids,TestingSessionLocal
     finally:
-        # No other tests run concurrently on this disposable schema.
+        # Only this fixture's isolated test schema is removed, including immutable history.
         with test_engine.begin() as connection:
-            for table in reversed(tables):
-                if 'id' not in table.c: continue
-                created=set(connection.execute(select(table.c.id)).scalars())-before[table.name]
-                if created: connection.execute(delete(table).where(table.c.id.in_(created)))
+            connection.execute(text('DROP SCHEMA '+schema+' CASCADE'))
 
 
 @pytest.mark.parametrize('operations',[('sale','sale'),('sale','digital'),('reserve','sale'),('reserve','reserve'),('adjust','sale'),('receive','receive')])

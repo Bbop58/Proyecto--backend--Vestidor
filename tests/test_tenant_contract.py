@@ -218,7 +218,7 @@ def test_subscription_query_does_not_provision_a_free_plan(client,db_session,sho
     a,_,_=shops['a']
     before=db_session.query(Subscription).count()
     response=client.get('/api/v1/subscriptions/current',headers=headers(a))
-    assert response.status_code==403,response.text
+    assert response.status_code==404,response.text
     assert db_session.query(Subscription).count()==before
 
 
@@ -262,20 +262,20 @@ def test_public_company_directory_never_exposes_provider_secrets(client,db_sessi
     assert 'audit-dummy-not-a-credential' not in response.text
 
 
-def test_platform_grant_is_server_configured_and_visible_in_profile(client,db_session,shops,monkeypatch):
+def test_platform_uuid_alone_cannot_grant_platform_or_commercial_fallback(client,db_session,shops,monkeypatch):
     from app.config import settings
     a,_,_=shops['a']
     monkeypatch.setattr(settings,'PLATFORM_ADMIN_USER_IDS',[str(a.id)])
     response=client.get('/api/v1/users/me',headers=headers(a))
-    assert response.status_code==200,response.text
-    assert response.json()['is_platform_admin'] is True
+    # S1 supersedes the old mixed admin/platform contract: UUID alone is not
+    # sufficient without the reserved role and the operator company.
+    assert response.status_code==403,response.text
     overview=client.get('/api/v1/subscriptions/admin/tenants-overview',headers=headers(a))
-    assert overview.status_code==200,overview.text
-    assert overview.json()['total_tenants']==2
+    assert overview.status_code==403,overview.text
     from tests.test_tenant_sales import payload
     _,variant,branches=shops['b']
     purchase=client.post('/api/v1/ventas/digital',headers=headers(a),json=payload(branches[0],variant,True))
-    assert purchase.status_code==404,purchase.text
+    assert purchase.status_code==403,purchase.text
 
 
 def test_public_or_short_jwt_keys_are_rejected():
@@ -330,7 +330,8 @@ def test_all_commercial_models_have_an_ownership_boundary():
     from app.core.tenant_scope import predicates
     owned=predicates(uuid.uuid4())
     unscoped={mapper.class_.__name__ for mapper in Base.registry.mappers if mapper.class_ not in owned}
-    assert unscoped=={'TokenBlacklist','Permission','SubscriptionPlan'}
+    # SaaS audit is global platform metadata, never part of a commercial graph.
+    assert unscoped=={'TokenBlacklist','Permission','SubscriptionPlan','SubscriptionPlanVersion','PlatformAuditLog'}
 
 
 def test_deferred_relationship_foreign_key_cannot_bypass_scope(db_session,shops):

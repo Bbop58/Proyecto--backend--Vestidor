@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import require_permission, get_current_user
+from app.api.deps import require_permission, get_current_user, get_history_user
 from app.models.sale import SaleType, SaleStatus
 from app.schemas.sale import (
     PresencialSaleCreate,
@@ -113,7 +113,7 @@ def create_digital_sale(
 )
 def get_my_purchases(
     db: Session = Depends(get_db),
-    current_user=Depends(get_sales_user)
+    current_user=Depends(get_history_user)
 ):
     """Retorna las compras digitales del cliente que realiza la petición."""
     return SaleService.get_sales(

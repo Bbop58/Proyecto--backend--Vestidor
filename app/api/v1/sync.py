@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import get_current_user, require_permission, get_current_tenant
+from app.api.deps import get_current_user, require_permission, get_current_tenant, get_history_user
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.schemas.sync import (
@@ -38,8 +38,7 @@ router = APIRouter(prefix="/sync", tags=["Motor de Sincronización Offline e Ide
 def sync_offline_batch(
     batch_request: SyncBatchRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    tenant: Tenant = Depends(get_current_tenant)
+    current_user: User = Depends(get_history_user)
 ):
     """
     Recibe un lote de ventas o reservas offline desde la Web PWA o la aplicación móvil Flutter.
@@ -52,7 +51,7 @@ def sync_offline_batch(
         db=db,
         batch_request=batch_request,
         current_user=current_user,
-        tenant_id=tenant.id
+        tenant_id=current_user.tenant_id
     )
 
 
@@ -79,7 +78,7 @@ def get_sync_history(
 
 
 @router.get('/operations/{operation_id}', summary='Consultar el resultado propio antes de reintentar')
-def own_operation(operation_id: uuid.UUID, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def own_operation(operation_id: uuid.UUID, db: Session = Depends(get_db), current_user=Depends(get_history_user)):
     from app.models.sync_operation import SyncOperation
     row=db.query(SyncOperation).filter_by(client_operation_id=operation_id,
         user_id=current_user.id,tenant_id=current_user.tenant_id).first()
@@ -90,7 +89,7 @@ def own_operation(operation_id: uuid.UUID, db: Session = Depends(get_db), curren
 
 
 @router.post('/recovery/preview', summary='Verificar propietario de filas antiguas sin aplicarlas ni modificar la fuente')
-def recovery_preview(payload: RecoveryBatch, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def recovery_preview(payload: RecoveryBatch, db: Session = Depends(get_db), current_user=Depends(get_history_user)):
     from app.models.branch import Branch
     from app.schemas.sync import SyncOperationItemRequest
     from app.schemas.wallet import OfflineOrderPayload
@@ -136,9 +135,24 @@ def recovery_preview(payload: RecoveryBatch, db: Session = Depends(get_db), curr
                     if own and not (own.metadatos or {}).get('request_hash'):
                         raise ValueError('Movimiento monetario antiguo sin trazabilidad: requiere conciliación')
                 if not own:raise ValueError('Identificador no disponible para esta cuenta')
+            if not claimed:
+                from app.services.entitlement_service import EntitlementService
+                EntitlementService.reconcile(db,current_user,op.client_operation_id,entry.channel,
+                    op.operation_type if entry.channel=='SYNC' else 'COMPRA_BILLETERA_OFFLINE',op.offline_authorization)
             results.append({'index':index,'client_operation_id':str(op.client_operation_id),'eligible':True,
                 'reason':'Propietario y empresa verificados; la aplicación validará precios y estado al sincronizar'})
         except Exception:
             results.append({'index':index,'client_operation_id':str(raw.get('client_operation_id','')),
                 'eligible':False,'reason':'Propietario, formato, historial o empresa no verificables; conserva/exporta para revisión'})
     return {'results':results}
+
+
+class OfflineAuthorizationRequest(BaseModel):
+    channel: Literal['SYNC','WALLET']
+    count: int=Field(10,ge=1,le=20,strict=True)
+
+
+@router.post('/authorizations')
+def authorize_offline(body: OfflineAuthorizationRequest,db: Session=Depends(get_db),current_user=Depends(get_current_user)):
+    from app.services.entitlement_service import EntitlementService
+    return EntitlementService.authorize_offline(db,current_user,body.channel,body.count)

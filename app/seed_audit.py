@@ -62,4 +62,6 @@ CHECKS = {
 
 
 def reconcile(connection):
-    return {name: connection.execute(text(sql)).scalar_one() for name, sql in CHECKS.items()}
+    from app.saas_integrity import CHECKS as SAAS_CHECKS
+    return {name: connection.execute(text(sql)).scalar_one()
+            for name,sql in {**CHECKS,**{'saas_'+k:v for k,v in SAAS_CHECKS.items()}}.items()}

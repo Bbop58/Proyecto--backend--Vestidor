@@ -11,6 +11,12 @@ from app.models.permission import Permission
 from app.models.season import Season
 
 PERMISSIONS_SEED = [
+    {"code":"subscriptions.manage","module":"Suscripciones","method":"POST",
+     "path":"/api/v1/subscriptions/requests","description":"Gestionar contrato de empresa propia"},
+    {"code":"backups.download","module":"Respaldos","method":"GET",
+     "path":"/api/v1/backups/download","description":"Descargar respaldo de la empresa propia"},
+    {"code":"backups.restore","module":"Respaldos","method":"POST",
+     "path":"/api/v1/backups/restore","description":"Restaurar respaldo de la empresa propia"},
     # Módulo Usuarios
     {
         "code": "users.list",

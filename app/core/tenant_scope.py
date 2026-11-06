@@ -32,6 +32,22 @@ def predicates(tenant_id):
 
 @event.listens_for(Session,'do_orm_execute')
 def isolate_queries(state):
+    from app.models.platform_audit_log import PlatformAuditLog
+    actor = state.session.info.get('platform_actor_id')
+    mappers = {mapper.class_ for mapper in state.all_mappers}
+    if actor:
+        from app.models import User, Tenant, Role, Permission, TokenBlacklist, Subscription, SubscriptionPlan, SubscriptionPlanVersion
+        allowed = {User,Tenant,Role,Permission,TokenBlacklist,Subscription,SubscriptionPlan,SubscriptionPlanVersion,PlatformAuditLog}
+        from sqlalchemy.sql import visitors
+        from sqlalchemy.sql.schema import Table
+        tables = {node.name for node in visitors.iterate(state.statement) if isinstance(node,Table)}
+        allowed_tables = {model.__tablename__ for model in allowed} | {'role_permissions'}
+        if (not state.is_select or not state.is_orm_statement or not mappers <= allowed
+                or not tables <= allowed_tables):
+            raise HTTPException(403, 'El contexto de plataforma no permite consultas comerciales')
+        state.statement = state.statement.options(with_loader_criteria(User,User.id==actor,include_aliases=True))
+    elif PlatformAuditLog in mappers and state.session.info.get('tenant_scope'):
+        raise HTTPException(403, 'La auditoría SaaS no pertenece al negocio')
     tenant = state.session.info.get('tenant_scope')
     if not tenant:
         return
@@ -53,6 +69,25 @@ def isolate_queries(state):
 
 @event.listens_for(Session,'before_flush')
 def isolate_writes(db, context, instances):
+    from app.models.platform_audit_log import PlatformAuditLog
+    from app.models.user import User
+    actor = db.info.get('platform_actor_id')
+    if actor:
+        for obj in list(db.new)+list(db.dirty)+list(db.deleted):
+            if isinstance(obj,PlatformAuditLog) and obj in db.new:
+                continue
+            if isinstance(obj,User) and obj.id==actor and obj not in db.new and obj not in db.deleted:
+                changed={a.key for a in inspect(obj).attrs if a.history.has_changes()}
+                if changed <= {'full_name','email','hashed_password','updated_at'}:
+                    if 'email' in changed:
+                        from sqlalchemy import select
+                        duplicate=db.connection().execute(select(User.id).where(User.email==obj.email,User.id!=actor)).first()
+                        if duplicate:
+                            db.info['scope_violation']=True
+                            raise HTTPException(400,'El correo electrónico ya está registrado')
+                    continue
+            raise HTTPException(403, 'La plataforma no puede escribir datos del negocio')
+        return
     tenant = db.info.get('tenant_scope')
     if not tenant:
         return
@@ -65,8 +100,18 @@ def isolate_writes(db, context, instances):
     with db.no_autoflush:
         for obj in list(db.new)+list(db.dirty)+list(db.deleted):
             cls = type(obj)
+            from app.models.tenant import Tenant
+            from app.core.access_policy import PLATFORM_ROLE
+            if isinstance(obj,PlatformAuditLog):
+                reject(403,'La auditoría SaaS requiere una identidad de plataforma')
+            if cls.__name__ in {'SubscriptionTerm','SubscriptionChangeRequest'}:
+                reject(403,'El contrato requiere un procedimiento explícito verificado')
+            if isinstance(obj,Tenant) and (obj.es_operadora or inspect(obj).attrs.es_operadora.history.has_changes()):
+                reject(403,'Una empresa no puede convertirse en operadora')
+            if isinstance(obj,Role) and obj.name == PLATFORM_ROLE:
+                reject(403,'El rol de plataforma no puede administrarse desde una empresa')
             if cls not in scoped:
-                if cls.__name__ in {'Permission','SubscriptionPlan'}:
+                if cls.__name__ in {'Permission','SubscriptionPlan','SubscriptionPlanVersion'}:
                     if obj in db.new or obj in db.deleted or db.is_modified(obj,include_collections=False):
                         reject(403,'La configuración global requiere administración de plataforma')
                 continue

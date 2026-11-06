@@ -18,9 +18,7 @@ from app.core.security import get_password_hash
 def journey(db_session,shops):
     admin,variant,branches=shops['a']
     variant.producto.nombre='Camisa Journey';variant.producto.categoria.nombre='Categoria Base'
-    plan=SubscriptionPlan(codigo='JOURNEY',nombre='Journey',max_sucursales=20,precio_mensual_bob=100,activo=True,permite_offline=True,permite_reportes_ia=True)
-    db_session.add(plan);db_session.flush()
-    db_session.add(Subscription(tenant_id=admin.tenant_id,plan_id=plan.id,estado='ACTIVA',fecha_vencimiento=date.today()+timedelta(days=365)))
+    # shops already supplies an explicit current contract; do not create a second subscription.
     customer=User(email='journey@example.com',full_name='Journey Customer',tenant_id=admin.tenant_id,
         role_id=db_session.query(Role).filter_by(name='cliente').one().id,hashed_password=get_password_hash('JourneyTest123!'),is_active=True)
     db_session.add(customer);db_session.commit()

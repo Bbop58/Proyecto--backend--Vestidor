@@ -30,5 +30,10 @@ class User(Base):
 
     @property
     def is_platform_admin(self):
-        from app.config import settings
-        return str(self.id) in settings.PLATFORM_ADMIN_USER_IDS
+        from app.core.access_policy import resolve_access_scope, AccessScope
+        return resolve_access_scope(self) == AccessScope.PLATFORM
+
+    @property
+    def access_scope(self):
+        from app.core.access_policy import resolve_access_scope
+        return resolve_access_scope(self).value

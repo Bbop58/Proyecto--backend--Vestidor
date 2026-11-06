@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone, date
-from sqlalchemy import Column, String, Text, Date, DateTime, ForeignKey
+from sqlalchemy import Column, String, Text, Date, DateTime, ForeignKey,Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -12,6 +12,8 @@ def utc_now():
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
+    __contract_metadata__=True
+    __table_args__=(Index('uq_subscription_tenant','tenant_id',unique=True),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)

@@ -22,7 +22,9 @@ class SubscriptionPlan(Base):
     permite_offline = Column(Boolean, default=True, nullable=False)
     precio_mensual_bob = Column(Numeric(10, 2), default=0.00, nullable=False)
     activo = Column(Boolean, default=True, nullable=False)
+    catalog_managed = Column(Boolean,default=False,server_default='false',nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     subscriptions = relationship("Subscription", back_populates="plan", lazy="selectin")
+    versions = relationship('SubscriptionPlanVersion',lazy='select',passive_deletes=True)

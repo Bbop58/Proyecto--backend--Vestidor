@@ -30,7 +30,8 @@ class PaymentFlowService:
     @staticmethod
     def credentials(db, user):
         from app.api.v1.payments import _resolve_tenant_paypal
-        return _resolve_tenant_paypal(db=db, user=user)
+        # Ownership is validated before recovery, even when the company is suspended.
+        return _resolve_tenant_paypal(db=db, tenant_id=user.tenant_id)
 
     @staticmethod
     def merchant(creds):
@@ -94,6 +95,8 @@ class PaymentFlowService:
     @classmethod
     def create(cls, db, user, data, *, purpose='SALE'):
         try:
+            from app.services.entitlement_service import EntitlementService
+            licensed=EntitlementService.check(db,user)
             SaleService._actor_tenant(db, user.id)
             creds = cls.credentials(db, user)
             unresolved = (db.query(PaymentIntent).filter(
@@ -145,7 +148,8 @@ class PaymentFlowService:
                     cliente_id=sale.cliente_id if purpose == 'SALE' else user.id,
                     sucursal_id=sale.sucursal_id if purpose == 'SALE' else None,
                     state='CREATING', amount_bob=amount, amount_usd=usd, exchange_rate=rate,
-                    merchant_key=cls.merchant(creds), provider_mode=creds['mode'], payload={'request': payload, 'input_hash': input_hash})
+                    merchant_key=cls.merchant(creds), provider_mode=creds['mode'], payload={'request': payload, 'input_hash': input_hash,
+                        'license_term_id':str(licensed['term']['id'])})
                 db.add(intent)
                 db.commit()  # Recovery identity exists before a network effect.
                 intent = db.query(PaymentIntent).filter_by(id=key).with_for_update().one()
@@ -231,6 +235,10 @@ class PaymentFlowService:
             if purpose == 'SALE' and supplied and supplied.cliente_id and supplied.cliente_id != user.id and not can_sell:
                 raise HTTPException(403, 'El cliente debe operar con su propia cuenta')
             intent = cls.owned(db, user, order_id, purpose)
+            from app.services.entitlement_service import EntitlementService
+            can_capture=EntitlementService.payment_recovery(db,user,intent)
+            if not can_capture and intent.state not in ('APPLIED','CAPTURED','CAPTURING','REFUND_PENDING','REFUNDED'):
+                raise HTTPException(409,'REVISION_REQUERIDA: pago sin autorización contractual previa; no se inicia un cargo')
             creds = cls.credentials(db, user)
             if cls.merchant(creds) != intent.merchant_key:
                 raise HTTPException(409, 'La cuenta de cobro cambió; requiere conciliación')
@@ -269,6 +277,7 @@ class PaymentFlowService:
             if intent.state == 'CAPTURING':
                 raw = PayPalService.get_order_details(order_id, **{k:v for k,v in creds.items() if k != 'brand_name'})
                 if raw.get('status') != 'COMPLETED':
+                    if not can_capture:raise HTTPException(409,'REVISION_REQUERIDA: solo se permite conciliar una captura ya realizada')
                     if purpose == 'SALE': cls.validate_sale(db, user, original)
                     result = PayPalService.capture_order(order_id,
                         request_id=request_key(intent, 'capture'), **{k:v for k,v in creds.items() if k != 'brand_name'})
@@ -293,9 +302,15 @@ class PaymentFlowService:
                         raise HTTPException(403, 'La cuenta ya no tiene autorización de caja')
                     data = PresencialSaleCreate.model_validate(intent.payload['request']['sale'])
                     data.pago.referencia = f'PAYPAL_{intent.capture_id}'
-                    SaleService.create_presencial_sale(db, data,
-                        cajero_id=user.id if intent.payload['request']['staff'] else None,
-                        actor_id=user.id, _payment_intent=intent)
+                    previous = db.info.get('contract_reconciliation')
+                    db.info['contract_reconciliation'] = (user.id, user.tenant_id, intent.id)
+                    try:
+                        SaleService.create_presencial_sale(db, data,
+                            cajero_id=user.id if intent.payload['request']['staff'] else None,
+                            actor_id=user.id, _payment_intent=intent)
+                    finally:
+                        if previous is None: db.info.pop('contract_reconciliation', None)
+                        else: db.info['contract_reconciliation'] = previous
                 else:
                     from app.services.wallet_service import WalletService
                     WalletService.topup_paypal(db, user.id, user.tenant_id, order_id,

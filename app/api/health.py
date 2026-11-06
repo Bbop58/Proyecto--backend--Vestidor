@@ -14,7 +14,8 @@ def schema_compatible(connection):
         'SELECT table_name,column_name FROM information_schema.columns WHERE table_schema=current_schema()'
     ))}
     expected={(table.name,column.name) for table in Base.metadata.tables.values() for column in table.columns}
-    return bool(expected) and expected <= found
+    from app.saas_integrity import schema_problems
+    return bool(expected) and expected <= found and not any(schema_problems(connection).values())
 
 
 @router.get('/health/ready',tags=['Health'])

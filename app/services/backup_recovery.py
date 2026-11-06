@@ -10,7 +10,7 @@ from sqlalchemy import Date, DateTime, Enum, Numeric, select, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 ALIASES = {'variantes_producto':'variantes','user_wallets':'billeteras'}
-VERSION = '4.0.0'
+VERSION = '4.4.0'
 
 
 def serialize(value):
@@ -27,12 +27,34 @@ def digest(data):
 def models_for(tenant):
     from app.core.tenant_scope import predicates
     return {ALIASES.get(model.__tablename__,model.__tablename__):(model,condition)
-            for model,condition in predicates(tenant).items()}
+            for model,condition in predicates(tenant).items() if not getattr(model,'__contract_metadata__',False)}
+
+
+def contract_references(connection,tenant):
+    from app.models.subscription import Subscription
+    from app.models.subscription_term import SubscriptionTerm
+    from app.models.subscription_change_request import SubscriptionChangeRequest
+    return {'reference_'+model.__tablename__:[dict(row) for row in connection.execute(
+        select(model.__table__).where(model.tenant_id==tenant)).mappings()]
+        for model in (Subscription,SubscriptionTerm,SubscriptionChangeRequest)}
+
+
+def catalog_references(connection,contracts):
+    from app.models.subscription_plan import SubscriptionPlan
+    from app.models.subscription_plan_version import SubscriptionPlanVersion
+    version_ids={row['version_id'] for key in ('reference_subscription_terms','reference_subscription_change_requests')
+                 for row in contracts[key] if row['version_id']}
+    versions=[dict(r) for r in connection.execute(select(SubscriptionPlanVersion.__table__)
+        .where(SubscriptionPlanVersion.id.in_(version_ids))).mappings()]
+    plan_ids={r['plan_id'] for r in contracts['reference_subscriptions']}|{r['plan_id'] for r in versions}
+    plans=[dict(r) for r in connection.execute(select(SubscriptionPlan.__table__).where(SubscriptionPlan.id.in_(plan_ids))).mappings()]
+    return {'reference_plans':plans,'reference_plan_versions':versions}
 
 
 def lock_tables(connection,models,mode):
     # Identifiers are exclusively local ORM metadata, never backup input.
-    names={model.__tablename__ for model,_ in models.values()}|{'role_permissions','permissions','subscription_plans'}
+    names={model.__tablename__ for model,_ in models.values()}|{'role_permissions','permissions','subscription_plans',
+        'subscriptions','subscription_terms','subscription_change_requests','subscription_plan_versions'}
     quote=connection.dialect.identifier_preparer.quote
     connection.execute(text("SET LOCAL lock_timeout = '5s'"))
     connection.execute(text("SET LOCAL statement_timeout = '30s'"))
@@ -40,6 +62,8 @@ def lock_tables(connection,models,mode):
 
 
 def export_snapshot(db):
+    if db.info.get('platform_actor_id'):
+        raise HTTPException(403, 'La plataforma no puede exportar datos comerciales')
     from app.models.role_permission import role_permissions
     from app.models.permission import Permission
     from app.models.subscription_plan import SubscriptionPlan
@@ -52,8 +76,8 @@ def export_snapshot(db):
     data['role_permissions']=[dict(row) for row in connection.execute(select(role_permissions).where(role_permissions.c.role_id.in_(role_ids))).mappings()]
     # Shared dependencies are references only; restore can never change them.
     data['reference_permissions']=[dict(row) for row in connection.execute(select(Permission.__table__)).mappings()]
-    plan_ids={row['plan_id'] for row in data.get('subscriptions',[])}
-    data['reference_plans']=[dict(row) for row in connection.execute(select(SubscriptionPlan.__table__).where(SubscriptionPlan.id.in_(plan_ids))).mappings()]
+    data.update(contract_references(connection,tenant))
+    data.update(catalog_references(connection,data))
     return {'system':'FashionStore','version':VERSION,'scope':'tenant','tenant_id':str(tenant),
             'created_at':datetime.now(timezone.utc).isoformat(),'data':data,
             'checksum_sha256':digest(data),'total_records':sum(len(rows) for rows in data.values())}
@@ -103,8 +127,11 @@ def restore_snapshot(db,backup,user):
     from app.services.wallet_service import WalletService
     from app.services.audit_service import AuditService
     tenant=db.info.get('tenant_scope')
-    if not user or not user.is_platform_admin:
-        raise HTTPException(403,'La restauración requiere administración de plataforma')
+    from app.core.access_policy import resolve_access_scope, AccessScope
+    from app.services.role_service import RoleService
+    if (not user or resolve_access_scope(user) != AccessScope.COMPANY
+            or 'backups.restore' not in RoleService.get_permission_codes(db,user.role_id)):
+        raise HTTPException(403,'La restauración requiere permiso de la empresa')
     if not tenant or user.tenant_id!=tenant or not isinstance(backup,dict) or backup.get('tenant_id')!=str(tenant):
         raise HTTPException(403,'El respaldo no pertenece a la empresa de esta sesión')
     if backup.get('version')!=VERSION or backup.get('scope')!='tenant':
@@ -112,8 +139,13 @@ def restore_snapshot(db,backup,user):
     data=backup.get('data')
     if not isinstance(data,dict) or not backup.get('checksum_sha256') or digest(data)!=backup['checksum_sha256']:
         raise HTTPException(400,'El checksum del respaldo es obligatorio y debe coincidir')
+    if any(row.get('es_operadora') for row in data.get('tenants',[]) if isinstance(row,dict)):
+        raise HTTPException(403,'Un respaldo comercial no puede aprovisionar una operadora')
+    if any(row.get('name') == 'superadmin_plataforma' for row in data.get('roles',[]) if isinstance(row,dict)):
+        raise HTTPException(403,'Un respaldo comercial no puede aprovisionar operadores')
     models=models_for(tenant)
-    if set(data)!=set(models)|{'role_permissions','reference_permissions','reference_plans'}:
+    if set(data)!=set(models)|{'role_permissions','reference_permissions','reference_plans',
+        'reference_subscriptions','reference_subscription_terms','reference_subscription_change_requests','reference_plan_versions'}:
         raise HTTPException(400,'El respaldo está incompleto o contiene tablas no permitidas')
     if any(not isinstance(rows,list) for rows in data.values()) or sum(len(rows) for rows in data.values())>50000:
         raise HTTPException(400,'El respaldo excede los límites o contiene tablas no válidas')
@@ -123,7 +155,22 @@ def restore_snapshot(db,backup,user):
     connection=db.connection()
     try:
         lock_tables(connection,models,'EXCLUSIVE')
-        for key,model in [('reference_permissions',Permission),('reference_plans',SubscriptionPlan)]:
+        # Platform-owned state is never rolled back by a commercial snapshot.
+        tenant_table=tables['tenants']
+        current_tenant=connection.execute(select(tenant_table).where(tenant_table.c.id==tenant)).mappings().one()
+        for row in rows['tenants']:
+            for field in ('activo','es_operadora','platform_revision'):
+                row[field]=current_tenant[field]
+        by_id=lambda items: sorted(items,key=lambda row:str(row['id']))
+        for key,current in contract_references(connection,tenant).items():
+            if digest(by_id(data[key]))!=digest(by_id(json.loads(json.dumps(current,default=serialize)))):
+                raise HTTPException(409,'El contrato cambió; genera un respaldo nuevo sin restaurar condiciones anteriores')
+        from app.models.subscription_plan_version import SubscriptionPlanVersion
+        expected_catalog=catalog_references(connection,contract_references(connection,tenant))
+        for key,expected_rows in expected_catalog.items():
+            if digest(by_id(data[key]))!=digest(by_id(json.loads(json.dumps(expected_rows,default=serialize)))):
+                raise HTTPException(409,'Las revisiones centrales cambiaron; genera un respaldo nuevo sin importar catálogo')
+        for key,model in [('reference_permissions',Permission),('reference_plans',SubscriptionPlan),('reference_plan_versions',SubscriptionPlanVersion)]:
             supplied=[convert_row(model.__table__,row) for row in data[key]]
             for row in supplied:
                 existing=connection.execute(select(model.__table__).where(model.id==row['id'])).mappings().first()

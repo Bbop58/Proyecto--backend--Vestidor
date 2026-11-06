@@ -25,7 +25,7 @@ def get_backup_stats(
 @router.get("/download", summary="Generar y descargar copia de seguridad del sistema")
 def download_backup(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("roles.create"))
+    current_user: User = Depends(require_permission("backups.download"))
 ):
     """
     Genera un snapshot consistente de la empresa autenticada con checksum SHA-256
@@ -50,15 +50,15 @@ def download_backup(
 async def restore_system(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("roles.create"))
+    current_user: User = Depends(require_permission("backups.restore"))
 ):
     """
     Recibe un archivo de respaldo .json generado previamente, valida su integridad
     y restaura la empresa autenticada en una transacción atómica.
     """
-    from app.api.v1.subscriptions import is_platform_superadmin
-    if not is_platform_superadmin(current_user):
-        raise HTTPException(403,"La restauración de empresa requiere administración de plataforma")
+    from app.core.access_policy import resolve_access_scope, AccessScope
+    if resolve_access_scope(current_user) != AccessScope.COMPANY:
+        raise HTTPException(403,"La restauración requiere permiso del negocio y ámbito de empresa")
     if not (file.filename or '').endswith(".json"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

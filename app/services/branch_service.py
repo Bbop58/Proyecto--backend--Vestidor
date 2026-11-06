@@ -9,6 +9,32 @@ from app.schemas.branch import BranchCreate, BranchUpdate
 
 class BranchService:
     @staticmethod
+    def _check_quota(db,tenant_id,reactivating_id=None):
+        from sqlalchemy import select,func
+        from app.models.subscription_plan import SubscriptionPlan
+        from app.models.subscription_plan_version import SubscriptionPlanVersion
+        from app.services.subscription_contract_service import SubscriptionContractService as Contracts
+        connection=db.connection();Contracts.lock_company(connection,tenant_id)
+        if reactivating_id and connection.execute(select(Branch.activa).where(Branch.id==reactivating_id,Branch.tenant_id==tenant_id)).scalar_one():
+            return
+        sub=Contracts._subscription(connection,tenant_id)
+        from types import SimpleNamespace
+        from app.models.tenant import Tenant
+        from app.services.entitlement_service import EntitlementService
+        if not sub:raise HTTPException(403,'Falta un período contratado vigente')
+        effective=EntitlementService.check(db,SimpleNamespace(id=None,tenant_id=tenant_id,
+            tenant=db.get(Tenant,tenant_id),is_active=True,role=None))
+        current=effective['term']
+        plan_query=select(SubscriptionPlan.nombre,SubscriptionPlan.max_sucursales)
+        if current and current['version_id']:
+            plan_query=plan_query.join(SubscriptionPlanVersion,SubscriptionPlanVersion.plan_id==SubscriptionPlan.id).where(SubscriptionPlanVersion.id==current['version_id'])
+        else:plan_query=plan_query.where(SubscriptionPlan.id==sub['plan_id'])
+        plan=connection.execute(plan_query).one()
+        cap=current['max_sucursales'] if current else plan.max_sucursales
+        active=connection.execute(select(func.count(Branch.id)).where(Branch.tenant_id==tenant_id,Branch.activa.is_(True))).scalar_one()
+        if active>=cap:raise HTTPException(400,f"Límite de sucursales alcanzado: el contrato vigente '{plan.nombre}' permite {cap} sucursales activas")
+
+    @staticmethod
     def get_all(db: Session, activa_only: bool = False, tenant_id: Optional[uuid.UUID] = None) -> List[Branch]:
         query = db.query(Branch)
         if tenant_id:
@@ -40,20 +66,8 @@ class BranchService:
                 detail="El nombre de la sucursal contiene caracteres inválidos"
             )
 
-        # Validación del límite de sucursales según el plan de suscripción del tenant
-        if tenant_id:
-            from app.models.subscription import Subscription
-            sub = db.query(Subscription).filter(
-                Subscription.tenant_id == tenant_id,
-                Subscription.estado == "ACTIVA"
-            ).first()
-            if sub and sub.plan:
-                active_count = db.query(Branch).filter(Branch.tenant_id == tenant_id, Branch.activa == True).count()
-                if active_count >= sub.plan.max_sucursales:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Límite de sucursales alcanzado: Su plan '{sub.plan.nombre}' solo permite hasta {sub.plan.max_sucursales} sucursales activas. Actualice al Plan Profesional para habilitar más sucursales."
-                    )
+        if tenant_id and branch_in.activa:
+            BranchService._check_quota(db,tenant_id)
 
         existing = BranchService.get_by_name(db, nombre, tenant_id=tenant_id)
         if existing:
@@ -83,6 +97,9 @@ class BranchService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Sucursal no encontrada"
             )
+
+        if branch_in.activa is True and not branch.activa:
+            BranchService._check_quota(db,branch.tenant_id,branch.id)
 
         if branch_in.nombre is not None:
             nombre = branch_in.nombre.strip()
@@ -117,6 +134,8 @@ class BranchService:
                 detail="Sucursal no encontrada"
             )
 
+        from app.services.subscription_contract_service import SubscriptionContractService
+        SubscriptionContractService.lock_company(db.connection(),branch.tenant_id)
         # Regla de negocio: soft delete
         branch.activa = False
         db.commit()

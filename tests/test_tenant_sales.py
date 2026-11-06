@@ -20,7 +20,7 @@ from app.models.reservation import Reservation, ReservationStatus
 
 
 @pytest.fixture
-def shops(db_session):
+def shops(db_session,request):
     db=db_session
     seed(db)
     role=db.query(Role).filter_by(name='admin').one()
@@ -42,6 +42,21 @@ def shops(db_session):
             db.add(Inventory(tenant_id=t.id,sucursal_id=branch.id,variante_id=v.id,stock_actual=10,stock_reservado=0,activo=True))
             branches.append(branch)
         result[key]=(user,v,branches)
+    # S4: these historical commercial fixtures represent licensed companies,
+    # not an implicit product fallback when no subscription exists.
+    from app.models.subscription_plan import SubscriptionPlan
+    from app.models.subscription import Subscription
+    from app.core.plan_catalog_ddl import ensure_legacy_versions
+    from app.core.subscription_contract_ddl import ensure_legacy_terms
+    from datetime import date
+    for key,(user,_,_) in result.items():
+        if request.node.name=='test_subscription_query_does_not_provision_a_free_plan':continue
+        plan=SubscriptionPlan(codigo='SHOP_TEST_'+key,nombre='Explicit shop test contract',max_sucursales=20,
+            precio_mensual_bob=0,permite_reportes_ia=True,permite_offline=True)
+        db.add(plan);db.flush()
+        db.add(Subscription(tenant_id=user.tenant_id,plan_id=plan.id,estado='ACTIVA',
+            fecha_inicio=date.today(),fecha_vencimiento=date.today()+timedelta(days=30)))
+    db.flush();ensure_legacy_versions(db.connection());ensure_legacy_terms(db.connection())
     db.commit()
     return result
 

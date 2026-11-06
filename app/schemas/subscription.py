@@ -18,6 +18,16 @@ class SubscriptionPlanResponse(BaseModel):
     activo: bool
 
 
+class SubscriptionOfferResponse(SubscriptionPlanResponse):
+    version_id: uuid.UUID
+    revision: int
+    moneda: str
+    periodicidad: str
+    features: dict[str,bool]
+    es_gratuito: bool
+    origen: str
+
+
 class TenantInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,9 +51,18 @@ class TenantInfo(BaseModel):
     plan_nombre: Optional[str] = None
 
 
+class EffectiveSubscriptionPlanResponse(SubscriptionPlanResponse):
+    precio_mensual_bob: Optional[float]=None
+
+
 class CurrentSubscriptionResponse(BaseModel):
     tenant: TenantInfo
-    plan: SubscriptionPlanResponse
+    plan: EffectiveSubscriptionPlanResponse
+    estado_efectivo: str='SIN_PERIODO_VIGENTE'
+    service_restricted: bool=True
+    features: dict[str,bool]={}
+    term_id: Optional[uuid.UUID]=None
+    origen: Optional[str]=None
     estado: str
     fecha_inicio: date
     fecha_vencimiento: date

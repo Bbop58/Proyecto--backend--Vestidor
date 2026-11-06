@@ -7,10 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.config import settings
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import get_current_user, require_permission, get_history_user
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.schemas.wallet import (
+    OfflineOrderPayload,
     WalletResponse,
     WalletTransactionResponse,
     PayPalTopupRequest,
@@ -27,6 +28,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/wallet", tags=["Billetera Virtual / Fondos Offline"])
 
 
+@router.post('/pay',response_model=BatchOfflineSyncResponse)
+def pay_online(order: OfflineOrderPayload,db: Session=Depends(get_db),current_user: User=Depends(get_current_user)):
+    # Explicit online checkout needs a current period, not the offline benefit.
+    return WalletService.sync_offline_orders_batch(db,current_user.id,current_user.tenant_id,[order],_online=True)
+
+
 @router.get(
     "/me",
     response_model=WalletResponse,
@@ -34,7 +41,7 @@ router = APIRouter(prefix="/wallet", tags=["Billetera Virtual / Fondos Offline"]
 )
 def get_my_wallet(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_history_user)
 ):
     try:
         tenant_id = current_user.tenant_id
@@ -58,7 +65,7 @@ def get_my_wallet(
 def get_my_wallet_history(
     limit: int = Query(30, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_history_user)
 ):
     try:
         tenant_id = current_user.tenant_id
@@ -100,7 +107,7 @@ def topup_with_paypal(
 def sync_offline_wallet_orders(
     data: BatchOfflineSyncRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_history_user)
 ):
     tenant_id = current_user.tenant_id
 

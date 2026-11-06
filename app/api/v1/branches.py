@@ -3,7 +3,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, status, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.api.deps import require_permission, get_current_user, get_current_subscription
+from app.api.deps import require_permission, get_current_user, get_current_subscription, get_subscription_manager
 from app.models.user import User
 from app.schemas.branch import BranchCreate, BranchUpdate, BranchResponse
 from app.services.branch_service import BranchService
@@ -83,3 +83,13 @@ def delete_branch(
     db: Session = Depends(get_db)
 ):
     return BranchService.soft_delete(db, branch_id)
+
+
+@router.post('/{branch_id}/deactivate',response_model=BranchResponse)
+def remediate_branch(branch_id: uuid.UUID,db: Session=Depends(get_db),actor=Depends(get_subscription_manager)):
+    from app.services.role_service import RoleService
+    from app.services.entitlement_service import EntitlementService,Purpose
+    from fastapi import HTTPException
+    if 'sucursales.delete' not in RoleService.get_permission_codes(db,actor.role_id):raise HTTPException(403,'Sin permiso para desactivar sucursales')
+    EntitlementService.check(db,actor,purpose=Purpose.REMEDIATE_LIMIT)
+    return BranchService.soft_delete(db,branch_id)

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.api.deps import require_permission, get_current_user
+from app.api.deps import require_permission, get_current_user, get_history_user
 from app.models.reservation import ReservationStatus
 from app.schemas.reservation import (
     ReservationCreate,
@@ -48,7 +48,7 @@ def create_reservation(
 )
 def get_my_reservations(
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_history_user)
 ):
     return ReservationService.get_client_reservations(db, cliente_id=current_user.id)
 

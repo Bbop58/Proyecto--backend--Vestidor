@@ -99,7 +99,6 @@ class SyncService:
         results=[]
         for op in batch_request.operations:
             try:
-                SaleService._actor_tenant(db,current_user.id)
                 if current_user.tenant_id!=tenant_id:raise HTTPException(403,'Empresa no disponible')
                 cls.lock_keys(db,op)
                 digest=cls.fingerprint(op)
@@ -129,6 +128,12 @@ class SyncService:
                 from app.models.wallet_transaction import WalletTransaction
                 if db.execute(select(WalletTransaction.__table__.c.id).where(WalletTransaction.__table__.c.client_operation_id==op.client_operation_id)).first():
                     results.append(cls.result(op,'CONFLICTO',error='Identificador no disponible para esta operación'))
+                    db.rollback();continue
+                from app.services.entitlement_service import EntitlementService
+                try:
+                    EntitlementService.reconcile(db,current_user,op.client_operation_id,'SYNC',op.operation_type,op.offline_authorization)
+                except HTTPException as error:
+                    results.append(cls.result(op,'REINTENTAR',error=str(error.detail)).model_copy(update={'requires_review':True,'retryable':False}))
                     db.rollback();continue
                 branch=db.query(Branch).filter_by(id=op.sucursal_id,tenant_id=tenant_id,activa=True).first()
                 try:
@@ -167,7 +172,12 @@ class SyncService:
                         payload=PresencialSaleCreate(sucursal_id=op.sucursal_id,cliente_id=op.cliente_id,
                             items=[SaleItemCreate(variante_id=i.variante_id,cantidad=i.cantidad,precio_unitario=i.precio_unitario) for i in op.items],
                             pago=PaymentInfo(metodo=op.metodo_pago,monto_recibido=received),nota=op.notas,codigo_cupon=op.codigo_cupon)
-                        entity=SaleService.create_presencial_sale(db,payload,current_user.id,_commit=False,_created_at=local)
+                        previous=db.info.get('contract_reconciliation')
+                        db.info['contract_reconciliation']=(current_user.id,tenant_id,op.client_operation_id)
+                        try:entity=SaleService.create_presencial_sale(db,payload,current_user.id,_commit=False,_created_at=local)
+                        finally:
+                            if previous is None:db.info.pop('contract_reconciliation',None)
+                            else:db.info['contract_reconciliation']=previous
                         receipt=entity['numero_recibo']
                     record=SyncOperation(client_operation_id=op.client_operation_id,tenant_id=tenant_id,
                         branch_id=branch.id,user_id=current_user.id,operation_type=op.operation_type,

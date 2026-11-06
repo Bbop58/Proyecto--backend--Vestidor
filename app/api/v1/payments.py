@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.config import settings
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_history_user
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.branch import Branch
@@ -350,7 +350,7 @@ def capture_paypal_order(
 
 
 @router.get('/paypal/orders/{order_id}/status', summary='Consultar estado conciliado de una orden propia')
-def paypal_order_status(order_id: str, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def paypal_order_status(order_id: str, db: Session = Depends(get_db), current_user=Depends(get_history_user)):
     from app.models.payment_intent import PaymentIntent
     row = db.query(PaymentIntent).filter_by(provider_order_id=order_id, tenant_id=current_user.tenant_id,
                                           user_id=current_user.id).first()
@@ -358,3 +358,13 @@ def paypal_order_status(order_id: str, db: Session = Depends(get_db), current_us
         raise HTTPException(404, 'Orden no disponible')
     return {'order_id': row.provider_order_id, 'state': row.state, 'purpose': row.purpose,
             'monto_bob': row.amount_bob, 'monto_usd': row.amount_usd, 'refund_id': row.refund_id}
+
+
+@router.post('/paypal/orders/{order_id}/resume', summary='Conciliar una orden propia previamente iniciada')
+def resume_paypal_order(order_id: str, db: Session = Depends(get_db), current_user=Depends(get_history_user)):
+    from app.models.payment_intent import PaymentIntent
+    from app.services.payment_flow_service import PaymentFlowService
+    row = db.query(PaymentIntent).filter_by(provider_order_id=order_id,
+        tenant_id=current_user.tenant_id, user_id=current_user.id).first()
+    if not row: raise HTTPException(404, 'Orden no disponible')
+    return PaymentFlowService.capture(db, current_user, order_id, purpose=row.purpose)

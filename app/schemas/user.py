@@ -44,6 +44,9 @@ class UserResponse(UserBase):
     is_active: bool
     is_verified: bool
     is_platform_admin: bool = False
+    access_scope: str = 'COMPANY'
+    service_restricted: bool=False
+    subscription_capabilities: dict[str,bool]={}
     role: Optional[RoleResponse] = None
     permissions: List[str] = []
     tenant_id: Optional[uuid.UUID] = None

@@ -32,6 +32,8 @@ from app.api.v1.custom_reports import router as custom_reports_router
 from app.api.v1.coupons import router as coupons_router
 
 api_v1_router = APIRouter()
+from app.api.v1.platform import router as platform_router
+api_v1_router.include_router(platform_router)
 api_v1_router.include_router(auth_router)
 api_v1_router.include_router(users_router)
 api_v1_router.include_router(roles_router)
@@ -69,3 +71,6 @@ api_v1_router.include_router(coupons_router)
 
 
 
+
+from app.api.v1.subscription_contracts import router as subscription_contracts_router
+api_v1_router.include_router(subscription_contracts_router)

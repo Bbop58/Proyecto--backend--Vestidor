@@ -847,6 +847,9 @@ def seed_all(db=None):
             db.flush()
         db.flush()
 
+        from app.core.plan_catalog_ddl import ensure_legacy_versions
+        ensure_legacy_versions(db.connection())
+
         # Empresa 1: UrbanStyle Bolivia S.R.L. (Plan Profesional)
         tenant_urban = db.query(Tenant).options(lazyload("*")).filter(Tenant.slug == "urbanstyle").first()
         if not tenant_urban:
@@ -2059,6 +2062,9 @@ def seed_all(db=None):
             users_map=users_map
         )
 
+        from app.core.subscription_contract_ddl import ensure_legacy_terms
+        ensure_legacy_terms(db.connection())
+
         if owns_session:
             db.commit()
         else:
@@ -2076,6 +2082,45 @@ def seed_all(db=None):
     finally:
         if owns_session:
             db.close()
+
+
+def seed_demo_operator(db, user_id, password):
+    """Opt-in disposable-demo operator; UUID input is not a server privilege grant."""
+    import uuid
+    from sqlalchemy import select
+    from app.models.role import Role
+    from app.models.tenant import Tenant
+    from app.models.user import User
+    from app.models.role_permission import role_permissions
+    identifier=uuid.UUID(str(user_id))
+    if not isinstance(password,str) or len(password)<12:
+        raise ValueError('An explicit private demo operator password of at least 12 characters is required')
+    email='operator-demo@fashionstore.example.com'
+    tenant_id=uuid.uuid5(uuid.NAMESPACE_URL,'fashionstore:demo:operator:tenant:v1')
+    role_id=uuid.uuid5(uuid.NAMESPACE_URL,'fashionstore:demo:operator:role:v1')
+    existing=db.get(User,identifier)
+    if existing:
+        if existing.email!=email or existing.tenant_id!=tenant_id or existing.role_id!=role_id:
+            raise ValueError('The explicit operator UUID already belongs to another identity; it was not reassigned')
+        return existing
+    if db.query(User.id).filter_by(email=email).first():raise ValueError('Demo operator email belongs to another UUID')
+    technical=db.get(Tenant,tenant_id)
+    if technical and not technical.es_operadora:raise ValueError('Technical UUID belongs to a commercial company')
+    if not technical:
+        if db.query(Tenant.id).filter_by(es_operadora=True).first():raise ValueError('A different operator company already exists')
+        db.add(Tenant(id=tenant_id,nombre='FashionStore Operadora Demo',razon_social='Operación SaaS de prueba',
+            nit_rut='DEMO-OPERADORA',slug='fashionstore-demo-operadora',es_operadora=True,activo=True))
+        db.flush()
+    role=db.get(Role,role_id)
+    if role and (role.name!='superadmin_plataforma' or role.tenant_id!=tenant_id):raise ValueError('Reserved role UUID collision')
+    if not role:
+        db.add(Role(id=role_id,name='superadmin_plataforma',tenant_id=tenant_id,description='Operación demo sin permisos comerciales'))
+        db.flush()
+    if db.connection().execute(select(role_permissions.c.role_id).where(role_permissions.c.role_id==role_id)).first():
+        raise ValueError('Review reserved role permissions explicitly; seeder will not overwrite them')
+    actor=User(id=identifier,email=email,full_name='Operador SaaS Demo',tenant_id=tenant_id,role_id=role_id,
+        hashed_password=get_password_hash(password),is_active=True,is_verified=True)
+    db.add(actor);db.flush();return actor
 
 
 if __name__ == "__main__":

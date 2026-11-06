@@ -482,7 +482,9 @@ def test_reconciliation_tool_requires_matching_ledger_before_resigning(committed
         db.add(permission);user.role.permissions.append(permission);db.commit()
         wallet=WalletService.topup_cash_admin(db,user,user_id,10)
         wallet.firma_balance='legacy';db.commit();wallet_id=wallet.id
-    environment={**os.environ,'WALLET_RECONCILIATION_DATABASE_URL':TEST_DATABASE_URL}
+    schema=factory.kw['bind'].get_execution_options()['schema_translate_map'][None]
+    environment={**os.environ,'WALLET_RECONCILIATION_DATABASE_URL':TEST_DATABASE_URL,
+                 'PGOPTIONS':f'-c search_path={schema},public'}
     result=subprocess.run([sys.executable,RECONCILIATION_SCRIPT,'--apply'],env=environment,capture_output=True,text=True,timeout=90)
     assert result.returncode==0,result.stdout+result.stderr
     with factory() as db:
@@ -548,7 +550,9 @@ def test_reconciliation_refuses_historical_unverified_paypal_credit(committed_sh
             origen='MOBILE',estado_sync='CONCILIADO'))
         db.commit();wid=wallet.id
     result=subprocess.run([sys.executable,RECONCILIATION_SCRIPT,'--apply'],
-        env={**os.environ,'WALLET_RECONCILIATION_DATABASE_URL':TEST_DATABASE_URL},capture_output=True,text=True,timeout=90)
+        env={**os.environ,'WALLET_RECONCILIATION_DATABASE_URL':TEST_DATABASE_URL,
+             'PGOPTIONS':'-c search_path='+factory.kw['bind'].get_execution_options()['schema_translate_map'][None]+',public'},
+        capture_output=True,text=True,timeout=90)
     assert result.returncode!=0
     with factory() as db:assert db.get(UserWallet,wid).firma_balance=='legacy'
 

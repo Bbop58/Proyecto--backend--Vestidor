@@ -23,9 +23,14 @@ def _snapshot(connection, metadata):
     return result
 
 
-def reset_demo_database(engine):
+def reset_demo_database(engine, operator_user_id=None, operator_password=None):
     if engine.dialect.name != 'postgresql':
         raise ValueError('Demo reset requires PostgreSQL')
+    if operator_user_id is not None:
+        import uuid
+        operator_user_id=uuid.UUID(str(operator_user_id))
+        if not isinstance(operator_password,str) or len(operator_password)<12:
+            raise ValueError('An explicit private demo operator password is required before reset')
     from app.database import Base
     import app.models  # Register all current tables, enum types and constraints.
     from app import seed_database
@@ -48,6 +53,8 @@ def reset_demo_database(engine):
                 # Keep verbose demo output and SQL exception parameters out of logs.
                 with contextlib.redirect_stdout(io.StringIO()):
                     seed_database.seed_all(db=db)
+                    if operator_user_id is not None:
+                        seed_database.seed_demo_operator(db,operator_user_id,operator_password)
                 db.commit()  # Releases savepoint; only engine.begin commits the reset.
 
         seed_once()
@@ -89,7 +96,9 @@ def main(argv=None):
         os.environ['RUN_STARTUP_MIGRATIONS'] = 'false'
         os.environ['RUN_DEMO_SEED'] = 'false'
         engine = create_engine(url, pool_pre_ping=True, connect_args={'connect_timeout':15})
-        result = reset_demo_database(engine)
+        result = reset_demo_database(engine,
+            operator_user_id=os.environ.get('DEMO_OPERATOR_USER_ID') or None,
+            operator_password=os.environ.get('DEMO_OPERATOR_PASSWORD'))
     except Exception as error:
         print(f'[demo reset] FAILED ({type(error).__name__}); deployment must stop. '
               'Database transaction rolled back if started.', file=sys.stderr)

@@ -39,6 +39,13 @@ class AuditService:
         """
         Registra una entrada en la bitácora del sistema de forma segura.
         """
+        from app.core.access_policy import is_platform_candidate
+        if user and is_platform_candidate(user):
+            from app.services.platform_audit_service import PlatformAuditService
+            entry = PlatformAuditService.record(db,user,action[:80],'IDENTITY',user.id,{}, {},
+                                                 'Evento de identidad de plataforma')
+            db.commit()
+            return entry
         try:
             u_id = user_id
             t_id = tenant_id

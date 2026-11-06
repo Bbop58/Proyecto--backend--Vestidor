@@ -81,6 +81,9 @@ def reset_demo_database(engine, operator_user_id=None, operator_password=None, t
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if os.environ.get('BACKUP_WORKER_ONLY', '').strip().lower() in {'true', '1', 'yes'}:
+        print('[demo reset] Refusing reset in a backup worker service; nothing was changed.', file=sys.stderr)
+        return 2
     if argv != ['--confirm-disposable-demo']:
         print('[demo reset] Refusing reset without --confirm-disposable-demo.', file=sys.stderr)
         return 2

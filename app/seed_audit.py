@@ -3,6 +3,11 @@ from sqlalchemy import text
 
 
 CHECKS = {
+    "backup_policy_coverage": """SELECT count(*) FROM tenants t
+        WHERE (NOT t.es_operadora AND NOT EXISTS
+            (SELECT 1 FROM backup_policies p WHERE p.tenant_id=t.id))
+        OR (t.es_operadora AND EXISTS
+            (SELECT 1 FROM backup_policies p WHERE p.tenant_id=t.id))""",
     "sale_total_vs_details": """SELECT count(*) FROM ventas v WHERE
         v.monto_total <> COALESCE((SELECT sum(subtotal) FROM detalles_venta d WHERE d.venta_id=v.id),0)
         - v.descuento + COALESCE(v.costo_envio,0)""",

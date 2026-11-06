@@ -2065,6 +2065,9 @@ def seed_all(db=None):
         from app.core.subscription_contract_ddl import ensure_legacy_terms
         ensure_legacy_terms(db.connection())
 
+        from app.services.automatic_backup_service import seed_policies
+        seed_policies(db.connection())
+
         if owns_session:
             db.commit()
         else:

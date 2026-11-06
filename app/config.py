@@ -1,5 +1,5 @@
 import os
-from typing import List, Union
+from typing import List, Union, Literal
 from pydantic import AnyHttpUrl, field_validator, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -14,6 +14,14 @@ class Settings(BaseSettings):
 
     RUN_STARTUP_MIGRATIONS: bool = False
     RUN_DEMO_SEED: bool = False
+    # Optional automatic backups: absent storage never disables manual export.
+    BACKUP_S3_ENDPOINT: str = ''
+    BACKUP_S3_BUCKET: str = ''
+    BACKUP_S3_REGION: str = 'auto'
+    BACKUP_S3_ADDRESSING_STYLE: Literal['virtual', 'path'] = 'virtual'
+    BACKUP_S3_ACCESS_KEY_ID: SecretStr | None = None
+    BACKUP_S3_SECRET_ACCESS_KEY: SecretStr | None = None
+    BACKUP_ENVIRONMENT: str = ''
     PLATFORM_ADMIN_USER_IDS: List[str] = []
     PAYMENT_CREDENTIALS_KEY: SecretStr | None = None
     WALLET_SIGNING_KEY: str | None = Field(None, min_length=32)

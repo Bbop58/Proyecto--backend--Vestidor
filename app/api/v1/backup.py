@@ -7,8 +7,43 @@ from app.database import get_db
 from app.api.deps import require_permission
 from app.models.user import User
 from app.services.backup_service import BackupService, json_serializer
+from app.schemas.backup import AutomaticBackupUpdate
+from app.services import automatic_backup_service as automatic
+from app.services.backup_storage import StorageError
+from uuid import UUID
 
 router = APIRouter(prefix="/backups", tags=["Copias de Seguridad y Restauración (Backup/Restore)"])
+
+
+@router.get('/automatic')
+def automatic_config(db: Session = Depends(get_db),
+                     actor: User = Depends(require_permission('backups.download'))):
+    return {**automatic.policy_summary(automatic.get_policy(db, actor)),
+            'storage_ready': bool(automatic.storage_ready())}
+
+
+@router.put('/automatic')
+def configure_automatic(payload: AutomaticBackupUpdate, db: Session = Depends(get_db),
+                        actor: User = Depends(require_permission('backups.configure'))):
+    return {**automatic.policy_summary(automatic.update_policy(db, actor, payload)),
+            'storage_ready': bool(automatic.storage_ready())}
+
+
+@router.get('/automatic/copies')
+def automatic_copies(db: Session = Depends(get_db),
+                     actor: User = Depends(require_permission('backups.download'))):
+    return automatic.list_copies(db, actor)
+
+
+@router.get('/automatic/copies/{copy_id}/download')
+def automatic_download(copy_id: UUID, db: Session = Depends(get_db),
+                       actor: User = Depends(require_permission('backups.download'))):
+    try:
+        content = automatic.download_copy(db, actor, copy_id)
+    except StorageError:
+        raise HTTPException(503, 'No se pudo recuperar la copia; vuelve a intentarlo')
+    return Response(content, media_type='application/json', headers={
+        'Content-Disposition': f'attachment; filename="backup_automatic_{copy_id}.json"'})
 
 
 @router.get("/stats", summary="Obtener estadísticas de entidades de la base de datos")

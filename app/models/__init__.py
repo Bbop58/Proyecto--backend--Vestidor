@@ -84,3 +84,5 @@ __all__ = [
 
 from app.models.company_paypal_credential import CompanyPayPalCredential
 from app.models.subscription_payment import SubscriptionPayment,SubscriptionPaymentEvent
+from app.models.backup_policy import BackupPolicy
+from app.models.backup_copy import BackupCopy

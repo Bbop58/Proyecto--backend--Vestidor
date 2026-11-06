@@ -11,6 +11,8 @@ from app.models.permission import Permission
 from app.models.season import Season
 
 PERMISSIONS_SEED = [
+    {"code":"backups.configure","module":"Respaldos","method":"PUT",
+     "path":"/api/v1/backups/automatic","description":"Configurar respaldo automático de empresa propia"},
     {"code":"payments.configure","module":"Pagos empresariales","method":"PUT","path":"/company/paypal"},
     {"code":"subscriptions.manage","module":"Suscripciones","method":"POST",
      "path":"/api/v1/subscriptions/requests","description":"Gestionar contrato de empresa propia"},

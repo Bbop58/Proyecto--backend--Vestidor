@@ -175,6 +175,14 @@ def restore_snapshot(db,backup,user):
             for field in ('activo','es_operadora','platform_revision','paypal_client_id','paypal_client_secret','paypal_mode'):
                 row[field]=current_tenant[field]
         by_id=lambda items: sorted(items,key=lambda row:str(row['id']))
+        # Provider orders/captures/refunds are durable recovery evidence, not a
+        # historical value an uploaded JSON may invent, erase or rewind.
+        from app.models.payment_intent import PaymentIntent
+        live_intents = [dict(row) for row in connection.execute(
+            select(PaymentIntent.__table__).where(PaymentIntent.tenant_id == tenant)).mappings()]
+        normalized_live = json.loads(json.dumps(live_intents, default=serialize))
+        if digest(by_id(data['payment_intents'])) != digest(by_id(normalized_live)):
+            raise HTTPException(409, 'Los pagos comerciales cambiaron; no se pueden restaurar órdenes, capturas o reembolsos anteriores')
         current_paypal=payment_references(connection,tenant)
         if digest(by_id(data['reference_paypal_credentials']))!=digest(by_id(json.loads(json.dumps(current_paypal,default=serialize)))):
             raise HTTPException(409,'La configuración PayPal cambió; genera un respaldo nuevo')

@@ -238,7 +238,7 @@ def test_private_routes_have_authentication_dependencies():
     from app.main import app
     from fastapi.routing import APIRoute
     public={'/auth/register','/auth/login','/auth/login/swagger','/auth/refresh',
-            '/payments/paypal/config','/payments/paypal/return','/payments/paypal/cancel',
+            '/payments/paypal/return','/payments/paypal/cancel','/subscriptions/paypal/webhook',
             '/subscriptions/public/tenants','/subscriptions/plans','/subscriptions/onboarding','/health','/health/ready','/'}
     def dependencies(dep):
         names={getattr(dep.call,'__name__','')}
@@ -331,7 +331,9 @@ def test_all_commercial_models_have_an_ownership_boundary():
     owned=predicates(uuid.uuid4())
     unscoped={mapper.class_.__name__ for mapper in Base.registry.mappers if mapper.class_ not in owned}
     # SaaS audit is global platform metadata, never part of a commercial graph.
-    assert unscoped=={'TokenBlacklist','Permission','SubscriptionPlan','SubscriptionPlanVersion','PlatformAuditLog'}
+    # Verified webhook events are central and refer to a tenant-owned billing
+    # record; they have no generic commercial route/import or ORM write path.
+    assert unscoped=={'TokenBlacklist','Permission','SubscriptionPlan','SubscriptionPlanVersion','PlatformAuditLog','SubscriptionPaymentEvent'}
 
 
 def test_deferred_relationship_foreign_key_cannot_bypass_scope(db_session,shops):

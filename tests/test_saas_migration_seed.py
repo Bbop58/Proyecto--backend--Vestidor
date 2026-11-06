@@ -19,7 +19,7 @@ def legacy_saas():
     with test_engine.begin() as conn:conn.execute(text('CREATE SCHEMA '+schema))
     engine=test_engine.execution_options(schema_translate_map={None:schema})
     metadata=MetaData()
-    excluded={'platform_audit_logs','subscription_plan_versions','subscription_change_requests','subscription_terms'}
+    excluded={'platform_audit_logs','subscription_plan_versions','subscription_change_requests','subscription_terms','subscription_payments','subscription_payment_events'}
     for table in Base.metadata.sorted_tables:
         if table.name not in excluded:table.to_metadata(metadata)
     for name,columns in {'tenants':['es_operadora','platform_revision'],'subscription_plans':['catalog_managed']}.items():

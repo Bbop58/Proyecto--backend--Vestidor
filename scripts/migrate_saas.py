@@ -38,6 +38,13 @@ def migrate_connection(connection):
     for path in MIGRATIONS:
         data=path.read_bytes();connection.exec_driver_sql(data.decode('utf-8'))
         applied.append({'name':path.name,'sha256':hashlib.sha256(data).hexdigest()})
+    # A repeated historical SaaS upgrade must not replace installed P3 guards
+    # with the older MANUAL-only term function.
+    if inspect(connection).has_table('subscription_payments',schema=schema):
+        # Explicit maintenance already selected its catalog schema/search_path.
+        # Do not force public when the caller is maintaining a separate schema.
+        sql=(ROOT/'migrations/payments_03_subscription_billing.sql').read_text(encoding='utf-8')
+        connection.exec_driver_sql(sql.split('-- GUARDS\n',1)[1])
     return {'schema_generation':'saas-3','migrations':applied,'seed_executed':False}
 
 

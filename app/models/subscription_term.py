@@ -31,7 +31,7 @@ class SubscriptionTerm(Base):
         CheckConstraint("fecha_fin>fecha_inicio AND anchor_day BETWEEN 1 AND 31 AND max_sucursales>=1",name='ck_term_dates'),
         CheckConstraint("moneda='BOB' AND estado='CONFIRMADO' AND periodicidad IN ('MENSUAL','LEGADA')",name='ck_term_billing'),
         CheckConstraint("precio_mensual_bob IS NULL OR (precio_mensual_bob>=0 AND precio_mensual_bob!='NaN'::numeric)",name='ck_term_price'),
-        CheckConstraint("(origen='REFERENCIA_LEGADA' AND precio_mensual_bob IS NULL AND accepted_by IS NULL AND periodicidad='LEGADA') OR (origen='MANUAL' AND precio_mensual_bob IS NOT NULL AND request_id IS NOT NULL AND accepted_by IS NOT NULL AND accepted_at IS NOT NULL AND approved_by IS NOT NULL AND approved_at IS NOT NULL AND periodicidad='MENSUAL')",name='ck_term_origin'))
+        CheckConstraint("(origen='REFERENCIA_LEGADA' AND precio_mensual_bob IS NULL AND accepted_by IS NULL AND periodicidad='LEGADA') OR (origen IN ('MANUAL','PAYPAL') AND precio_mensual_bob IS NOT NULL AND request_id IS NOT NULL AND accepted_by IS NOT NULL AND accepted_at IS NOT NULL AND approved_by IS NOT NULL AND approved_at IS NOT NULL AND periodicidad='MENSUAL')",name='ck_term_origin'))
 
 
 event.listen(SubscriptionTerm.__table__,'after_create',install_contract_schema)

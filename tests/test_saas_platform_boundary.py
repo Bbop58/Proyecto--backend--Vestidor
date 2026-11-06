@@ -58,7 +58,7 @@ def test_all_commercial_routes_reject_operator_before_validation_or_provider_cal
     exempt_prefixes=('/api/v1/auth/', '/api/v1/platform/', '/api/v1/subscriptions/admin/')
     exempt_exact={'/api/v1/users/me','/api/v1/users/me/change-password',
         '/api/v1/subscriptions/public/tenants','/api/v1/subscriptions/plans','/api/v1/subscriptions/onboarding',
-        '/api/v1/payments/paypal/config','/api/v1/payments/paypal/return','/api/v1/payments/paypal/cancel'}
+        '/api/v1/payments/paypal/return','/api/v1/payments/paypal/cancel','/api/v1/subscriptions/paypal/webhook'}
     results=[]
     import re
     for path, operations in app.openapi()['paths'].items():

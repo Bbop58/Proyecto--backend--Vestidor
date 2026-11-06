@@ -44,6 +44,12 @@ class EntitlementService:
             term=connection.execute(select(SubscriptionTerm.__table__).where(SubscriptionTerm.subscription_id==sub['id'],
                 SubscriptionTerm.tenant_id==user.tenant_id,SubscriptionTerm.estado=='CONFIRMADO',
                 SubscriptionTerm.fecha_inicio<=today,SubscriptionTerm.fecha_fin>today)).mappings().first()
+        if term and term['origen']=='PAYPAL':
+            from app.models.subscription_payment import SubscriptionPayment
+            verified=connection.execute(select(SubscriptionPayment.id).where(
+                SubscriptionPayment.request_id==term['request_id'],SubscriptionPayment.tenant_id==user.tenant_id,
+                SubscriptionPayment.state=='APPLIED')).first()
+            if not verified:term=None
         active=bool(user.tenant.activo and sub and sub['estado']=='ACTIVA' and term)
         state='ACTIVA' if active else ('EMPRESA_SUSPENDIDA' if not user.tenant.activo else
             'SIN_CONTRATO' if not sub else 'SUSCRIPCION_SUSPENDIDA' if sub['estado']!='ACTIVA' else 'SIN_PERIODO_VIGENTE')

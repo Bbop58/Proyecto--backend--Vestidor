@@ -54,7 +54,10 @@ class PayPalService:
 
     @classmethod
     def get_access_token(cls, client_id=None, client_secret=None, mode=None):
-        cid, secret = client_id or settings.PAYPAL_CLIENT_ID, client_secret or settings.PAYPAL_CLIENT_SECRET
+        # Callers must select the complete merchant pair explicitly.
+        # A partial tenant pair must never borrow a platform credential.
+        cid = client_id.strip() if isinstance(client_id,str) else ""
+        secret = client_secret.strip() if isinstance(client_secret,str) else ""
         if not cid or not secret:
             raise HTTPException(503, 'Configura las credenciales de pago de la empresa')
         headers = {'Authorization': 'Basic '+base64.b64encode(f'{cid}:{secret}'.encode()).decode(),
@@ -136,3 +139,18 @@ class PayPalService:
     def get_refund_details(cls, refund_id, client_id=None, client_secret=None, mode=None):
         return cls._request(cls._get_base_url(mode)+f'/v2/payments/refunds/{cls._id(refund_id)}', 'GET',
                             cls._headers(client_id, client_secret, mode))
+
+    @classmethod
+    def verify_webhook_signature(cls, headers, event, webhook_id, client_id=None, client_secret=None, mode=None):
+        if not webhook_id:raise HTTPException(503,'El webhook de plataforma no está configurado')
+        fields={'auth_algo':'paypal-auth-algo','cert_url':'paypal-cert-url','transmission_id':'paypal-transmission-id',
+            'transmission_sig':'paypal-transmission-sig','transmission_time':'paypal-transmission-time'}
+        normalized={k.lower():v for k,v in headers.items()}
+        if any(not normalized.get(name) or len(normalized[name])>3000 for name in fields.values()):
+            raise HTTPException(400,'Firma del evento incompleta')
+        payload={key:normalized[name] for key,name in fields.items()}
+        payload.update(webhook_id=webhook_id,webhook_event=event)
+        result=cls._request(cls._get_base_url(mode)+'/v1/notifications/verify-webhook-signature','POST',
+            cls._headers(client_id,client_secret,mode),payload)
+        if result.get('verification_status')!='SUCCESS':raise HTTPException(400,'Firma del evento no verificada')
+        return True

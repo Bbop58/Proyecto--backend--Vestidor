@@ -74,3 +74,8 @@ api_v1_router.include_router(coupons_router)
 
 from app.api.v1.subscription_contracts import router as subscription_contracts_router
 api_v1_router.include_router(subscription_contracts_router)
+
+from app.api.v1.company_paypal import router as company_paypal_router
+api_v1_router.include_router(company_paypal_router)
+from app.api.v1.subscription_billing import router as subscription_billing_router
+api_v1_router.include_router(subscription_billing_router)

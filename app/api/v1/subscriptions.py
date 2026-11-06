@@ -31,7 +31,8 @@ from app.api.deps import get_subscription_manager, get_history_user
 from app.schemas.subscription_contract import ContractChangeRequest
 from app.services.subscription_contract_service import SubscriptionContractService
 
-router = APIRouter(prefix="/subscriptions", tags=["SaaS Suscripciones y Multitenant"])
+from app.api.secret_safe_route import SecretSafeRoute
+router = APIRouter(prefix="/subscriptions", tags=["SaaS Suscripciones y Multitenant"], route_class=SecretSafeRoute)
 
 
 @router.get(
@@ -124,6 +125,8 @@ def update_current_tenant_branding(
     tenant: Tenant = Depends(get_current_tenant),
     admin: User = Depends(require_permission("roles.update"))
 ):
+    if any(value is not None for value in (request.paypal_client_id,request.paypal_client_secret,request.paypal_mode)):
+        raise HTTPException(409,'Configura PayPal desde Pagos de mi empresa')
     if request.nombre is not None and request.nombre.strip():
         tenant.nombre = request.nombre.strip()
     if request.logo_url is not None:
@@ -138,12 +141,6 @@ def update_current_tenant_branding(
         tenant.telefono = request.telefono.strip() or None
     if request.email_contacto is not None:
         tenant.email_contacto = request.email_contacto.strip() or None
-    if request.paypal_client_id is not None:
-        tenant.paypal_client_id = request.paypal_client_id.strip() or None
-    if request.paypal_client_secret is not None:
-        tenant.paypal_client_secret = request.paypal_client_secret.strip() or None
-    if request.paypal_mode is not None:
-        tenant.paypal_mode = request.paypal_mode.strip() or "sandbox"
 
     db.commit()
     db.refresh(tenant)

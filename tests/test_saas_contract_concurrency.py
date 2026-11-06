@@ -1,6 +1,7 @@
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier,Event
+import time
 from datetime import timedelta
 import pytest
 from fastapi import HTTPException
@@ -21,10 +22,12 @@ from app.schemas.subscription_contract import ContractChangeRequest,ContractDeci
 from app.schemas.plan_catalog import PlanDraftCreate,PlanVersionDecision
 from app.schemas.branch import BranchCreate
 from tests.conftest import test_engine
+from tests.test_saas_subscription_billing import provider
+from app.services.subscription_billing_service import SubscriptionBillingService as Billing
 
 
-@pytest.mark.parametrize('mode',['same-key','different-keys','sibling-requests','branch-race'])
-def test_contract_approvals_are_serialized_and_quota_is_atomic(monkeypatch,mode):
+@pytest.mark.parametrize('mode',['same-key','different-keys','sibling-requests','branch-race','billing-create','billing-capture','billing-backup-lock'])
+def test_contract_approvals_are_serialized_and_quota_is_atomic(monkeypatch,mode,provider):
     schema='saas_contract_'+uuid.uuid4().hex
     with test_engine.begin() as connection:connection.execute(text('CREATE SCHEMA '+schema))
     engine=test_engine.execution_options(schema_translate_map={None:schema})
@@ -56,15 +59,56 @@ def test_contract_approvals_are_serialized_and_quota_is_atomic(monkeypatch,mode)
         with Session(engine) as db:
             actor=get_authenticated_identity(db,{'sub':str(admin_id),'tenant_id':str(company_id)})
             quoted=Service.quote(db,actor,uuid.UUID(version['id']),'RENOVACION')
+            # Exercise the historical MANUAL contract race; P3 billing races
+            # have their own provider/reconciliation suite.
+            from tests.test_saas_subscription_contracts import legacy_quote
+            if not mode.startswith('billing'):quoted=legacy_quote(quoted)
             first=Service.request_change(db,actor,ContractChangeRequest(quote_token=quoted['quote_token'],acceptance=True,idempotency_key=uuid.uuid4()))
             second=Service.request_change(db,actor,ContractChangeRequest(quote_token=quoted['quote_token'],acceptance=True,idempotency_key=uuid.uuid4())) if mode=='sibling-requests' else first
+        if mode.startswith('billing'):
+            with Session(engine) as db:
+                operator=get_authenticated_identity(db,{'sub':str(operator_id),'tenant_id':str(operator_tenant_id)})
+                approved=Service.decide_request(db,operator,uuid.UUID(first['id']),ContractDecision(decision='APROBADA',expected_version=0,
+                    idempotency_key=uuid.uuid4(),reason='Approved billing concurrency'))
+                payment_id=uuid.UUID(approved['billing_payment_id'])
+            if mode=='billing-capture':
+                with Session(engine) as db:
+                    manager=get_authenticated_identity(db,{'sub':str(admin_id),'tenant_id':str(company_id)})
+                    Billing.create(db,manager,payment_id)
+            if mode=='billing-backup-lock':
+                ready=Event();worker_pid=[]
+                def blocked_creator():
+                    with Session(engine) as db:
+                        manager=get_authenticated_identity(db,{'sub':str(admin_id),'tenant_id':str(company_id)})
+                        worker_pid.append(db.connection().execute(select(func.pg_backend_pid())).scalar_one());ready.set()
+                        return Billing.create(db,manager,payment_id)
+                with ThreadPoolExecutor(max_workers=1) as workers:
+                    with engine.begin() as backup:
+                        backup.exec_driver_sql('LOCK TABLE '+schema+'.subscription_payments IN SHARE ROW EXCLUSIVE MODE')
+                        future=workers.submit(blocked_creator);assert ready.wait(timeout=15)
+                        blocked=False
+                        for _ in range(100):
+                            blocked=bool(backup.execute(text('SELECT cardinality(pg_blocking_pids(:pid))'),{'pid':worker_pid[0]}).scalar_one())
+                            if blocked:break
+                            time.sleep(.02)
+                        assert blocked,'The writer must be waiting for the backup table lock'
+                        # If the writer locked its tenant first, this NOWAIT fails:
+                        # a real restore would deadlock waiting for that parent.
+                        backup.execute(select(Tenant.id).where(Tenant.id==company_id).with_for_update(key_share=True,nowait=True))
+                    assert future.result(timeout=20)['state']=='CREATED'
+                assert len(provider[1]['create'])==1
+                return
         barrier=Barrier(2);key=uuid.uuid4()
         def perform(index):
             with Session(engine) as db:
                 is_branch=mode=='branch-race' and index==1
-                actor=get_authenticated_identity(db,{'sub':str(admin_id if is_branch else operator_id),'tenant_id':str(company_id if is_branch else operator_tenant_id)})
+                commercial=is_branch or mode.startswith('billing')
+                actor=get_authenticated_identity(db,{'sub':str(admin_id if commercial else operator_id),'tenant_id':str(company_id if commercial else operator_tenant_id)})
                 barrier.wait(timeout=15)
                 try:
+                    if mode.startswith('billing'):
+                        result=(Billing.create if mode=='billing-create' else Billing.capture)(db,actor,payment_id)
+                        return result['state']
                     if is_branch:
                         BranchService.create(db,BranchCreate(nombre='Concurrent third',ciudad='SC',direccion='Test',activa=True),tenant_id=company_id)
                         return 201
@@ -76,7 +120,12 @@ def test_contract_approvals_are_serialized_and_quota_is_atomic(monkeypatch,mode)
         with ThreadPoolExecutor(max_workers=2) as workers:codes=list(workers.map(perform,range(2)))
         with Session(engine) as db:
             manual=db.scalar(select(func.count()).select_from(SubscriptionTerm).where(SubscriptionTerm.origen=='MANUAL'))
-            if mode=='same-key':assert codes==[200,200] and manual==1
+            if mode.startswith('billing'):
+                expected='CREATED' if mode=='billing-create' else 'APPLIED'
+                assert codes==[expected,expected]
+                assert len(provider[1]['create'])==1 and len(provider[1]['capture'])==(1 if mode=='billing-capture' else 0)
+                assert db.scalar(select(func.count()).select_from(SubscriptionTerm).where(SubscriptionTerm.origen=='PAYPAL'))==(1 if mode=='billing-capture' else 0)
+            elif mode=='same-key':assert codes==[200,200] and manual==1
             elif mode=='branch-race':
                 # Approval checks committed usage under the same mutex. If it
                 # wins first, later creation still has today's four-branch

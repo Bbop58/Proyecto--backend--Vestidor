@@ -10,7 +10,7 @@ from sqlalchemy import Date, DateTime, Enum, Numeric, select, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 ALIASES = {'variantes_producto':'variantes','user_wallets':'billeteras'}
-VERSION = '4.4.0'
+VERSION = '4.6.0'
 
 
 def serialize(value):
@@ -34,9 +34,10 @@ def contract_references(connection,tenant):
     from app.models.subscription import Subscription
     from app.models.subscription_term import SubscriptionTerm
     from app.models.subscription_change_request import SubscriptionChangeRequest
+    from app.models.subscription_payment import SubscriptionPayment
     return {'reference_'+model.__tablename__:[dict(row) for row in connection.execute(
         select(model.__table__).where(model.tenant_id==tenant)).mappings()]
-        for model in (Subscription,SubscriptionTerm,SubscriptionChangeRequest)}
+        for model in (Subscription,SubscriptionTerm,SubscriptionChangeRequest,SubscriptionPayment)}
 
 
 def catalog_references(connection,contracts):
@@ -51,10 +52,17 @@ def catalog_references(connection,contracts):
     return {'reference_plans':plans,'reference_plan_versions':versions}
 
 
+def payment_references(connection,tenant):
+    from app.models.company_paypal_credential import CompanyPayPalCredential as Credential
+    columns=[Credential.id,Credential.tenant_id,Credential.revision,Credential.enabled,
+             Credential.client_id,Credential.mode,Credential.merchant_key,Credential.verified_at]
+    return [dict(r) for r in connection.execute(select(*columns).where(Credential.tenant_id==tenant)).mappings()]
+
+
 def lock_tables(connection,models,mode):
     # Identifiers are exclusively local ORM metadata, never backup input.
     names={model.__tablename__ for model,_ in models.values()}|{'role_permissions','permissions','subscription_plans',
-        'subscriptions','subscription_terms','subscription_change_requests','subscription_plan_versions'}
+        'subscriptions','subscription_terms','subscription_change_requests','subscription_plan_versions','company_paypal_credentials','subscription_payments','subscription_payment_events'}
     quote=connection.dialect.identifier_preparer.quote
     connection.execute(text("SET LOCAL lock_timeout = '5s'"))
     connection.execute(text("SET LOCAL statement_timeout = '30s'"))
@@ -78,6 +86,9 @@ def export_snapshot(db):
     data['reference_permissions']=[dict(row) for row in connection.execute(select(Permission.__table__)).mappings()]
     data.update(contract_references(connection,tenant))
     data.update(catalog_references(connection,data))
+    if any(row.get('paypal_client_secret') for row in data['tenants']):
+        raise HTTPException(409,'Migra las credenciales antiguas antes de exportar')
+    data['reference_paypal_credentials']=payment_references(connection,tenant)
     return {'system':'FashionStore','version':VERSION,'scope':'tenant','tenant_id':str(tenant),
             'created_at':datetime.now(timezone.utc).isoformat(),'data':data,
             'checksum_sha256':digest(data),'total_records':sum(len(rows) for rows in data.values())}
@@ -145,7 +156,7 @@ def restore_snapshot(db,backup,user):
         raise HTTPException(403,'Un respaldo comercial no puede aprovisionar operadores')
     models=models_for(tenant)
     if set(data)!=set(models)|{'role_permissions','reference_permissions','reference_plans',
-        'reference_subscriptions','reference_subscription_terms','reference_subscription_change_requests','reference_plan_versions'}:
+        'reference_subscriptions','reference_subscription_terms','reference_subscription_change_requests','reference_plan_versions','reference_paypal_credentials','reference_subscription_payments'}:
         raise HTTPException(400,'El respaldo está incompleto o contiene tablas no permitidas')
     if any(not isinstance(rows,list) for rows in data.values()) or sum(len(rows) for rows in data.values())>50000:
         raise HTTPException(400,'El respaldo excede los límites o contiene tablas no válidas')
@@ -159,9 +170,19 @@ def restore_snapshot(db,backup,user):
         tenant_table=tables['tenants']
         current_tenant=connection.execute(select(tenant_table).where(tenant_table.c.id==tenant)).mappings().one()
         for row in rows['tenants']:
-            for field in ('activo','es_operadora','platform_revision'):
+            if row.get('paypal_client_secret'):
+                raise HTTPException(400,'El respaldo no puede importar secretos PayPal')
+            for field in ('activo','es_operadora','platform_revision','paypal_client_id','paypal_client_secret','paypal_mode'):
                 row[field]=current_tenant[field]
         by_id=lambda items: sorted(items,key=lambda row:str(row['id']))
+        current_paypal=payment_references(connection,tenant)
+        if digest(by_id(data['reference_paypal_credentials']))!=digest(by_id(json.loads(json.dumps(current_paypal,default=serialize)))):
+            raise HTTPException(409,'La configuración PayPal cambió; genera un respaldo nuevo')
+        known={str(row['id']):row for row in current_paypal}
+        for intent in rows.get('payment_intents',[]):
+            reference=intent['payload'].get('paypal_credential_id')
+            if reference and (not isinstance(reference,str) or reference not in known or known[reference]['merchant_key']!=intent['merchant_key']):
+                raise HTTPException(400,'Referencia PayPal ajena o incompatible en el respaldo')
         for key,current in contract_references(connection,tenant).items():
             if digest(by_id(data[key]))!=digest(by_id(json.loads(json.dumps(current,default=serialize)))):
                 raise HTTPException(409,'El contrato cambió; genera un respaldo nuevo sin restaurar condiciones anteriores')

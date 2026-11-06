@@ -102,3 +102,27 @@ def test_optional_operator_requires_password_before_starting_reset():
     engine=SimpleNamespace(dialect=SimpleNamespace(name='postgresql'),
                            begin=lambda:pytest.fail('Invalid operator must not start destructive DDL'))
     with pytest.raises(ValueError):reset_demo_database(engine,uuid.uuid4(),None)
+
+
+def test_private_paypal_seed_failure_restores_previous_schema(monkeypatch):
+    import secrets
+    from pydantic import SecretStr
+    from app.config import settings
+    from app.services import company_paypal_seed
+    from scripts.reset_demo_database import reset_demo_database
+    monkeypatch.setattr(settings,'PAYMENT_CREDENTIALS_KEY',SecretStr(secrets.token_urlsafe(32)))
+    with test_engine.begin() as connection:
+        connection.execute(text('CREATE TABLE paypal_rollback_probe(id integer)'))
+        connection.execute(text('INSERT INTO paypal_rollback_probe VALUES (91)'))
+    def fail(*args,**kwargs):raise RuntimeError('injected private seed failure')
+    monkeypatch.setattr(company_paypal_seed,'seed_company_paypal',fail)
+    values={'urbanstyle':{'client_id':'synthetic-merchant','client_secret':'synthetic-private','mode':'sandbox'}}
+    try:
+        with pytest.raises(RuntimeError,match='injected private seed failure'):
+            reset_demo_database(test_engine,tenant_paypal_config=values)
+        with test_engine.connect() as connection:
+            assert connection.execute(text('SELECT id FROM paypal_rollback_probe')).scalar_one()==91
+            assert connection.execute(text('SELECT count(*) FROM users')).scalar_one()==0
+    finally:
+        with test_engine.begin() as connection:
+            connection.execute(text('DROP TABLE IF EXISTS paypal_rollback_probe'))

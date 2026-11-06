@@ -2,7 +2,7 @@
 import uuid
 from sqlalchemy import text
 
-TRIGGERS={('subscription_plan_versions','tr_protect_plan_version'),('subscription_plans','tr_protect_legacy_plan_conditions'),
+TRIGGERS={('subscription_payments','tr_subscription_payment'),('company_paypal_credentials','tr_company_paypal_immutable'),('subscription_plan_versions','tr_protect_plan_version'),('subscription_plans','tr_protect_legacy_plan_conditions'),
  ('subscription_terms','tr_subscription_term'),('subscription_change_requests','tr_subscription_request'),('subscriptions','tr_subscription_aggregate')}
 TABLE_COLUMNS={'tenants':{'es_operadora','platform_revision'},'subscription_plans':{'catalog_managed'},
  'subscription_plan_versions':{'id','permite_analitica_avanzada','lock_version'},'subscription_terms':{'id','features','accepted_at'},

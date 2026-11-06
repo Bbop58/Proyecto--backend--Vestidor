@@ -30,7 +30,7 @@ def future_plan(client,db_session,contract_setup):
 
 def test_company_snapshot_references_future_plan_and_versions_without_owning_them(client,db_session,future_plan):
     setup,plan,version=future_plan;actor=setup['admin'];payload=snapshot(db_session,actor)
-    assert payload['version']=='4.4.0'
+    assert payload['version']=='4.6.0'
     assert str(plan) in {row['id'] for row in payload['data']['reference_plans']}
     assert version['id'] in {row['id'] for row in payload['data']['reference_plan_versions']}
     assert 'subscription_plan_versions' not in payload['data'] and 'platform_audit_logs' not in payload['data']

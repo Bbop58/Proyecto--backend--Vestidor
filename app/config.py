@@ -1,6 +1,6 @@
 import os
 from typing import List, Union
-from pydantic import AnyHttpUrl, field_validator, Field
+from pydantic import AnyHttpUrl, field_validator, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     RUN_STARTUP_MIGRATIONS: bool = False
     RUN_DEMO_SEED: bool = False
     PLATFORM_ADMIN_USER_IDS: List[str] = []
+    PAYMENT_CREDENTIALS_KEY: SecretStr | None = None
     WALLET_SIGNING_KEY: str | None = Field(None, min_length=32)
 
     @field_validator('WALLET_SIGNING_KEY')
@@ -62,6 +63,8 @@ class Settings(BaseSettings):
     PAYPAL_CLIENT_ID: str = ""
     PAYPAL_CLIENT_SECRET: str = ""
     PAYPAL_MODE: str = "sandbox"
+    PAYPAL_WEBHOOK_ID: str = ""
+    SUBSCRIPTION_WEB_URL: str = "https://proyecto-frontend-vestidor-ten.vercel.app/empresa/suscripcion"
     PAYPAL_EXCHANGE_RATE: float = 6.96
 
     # Google Gemini AI Configuration

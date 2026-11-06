@@ -36,41 +36,32 @@ def _resolve_tenant_paypal(db: Session, sucursal_id: Optional[uuid.UUID] = None,
         if sucursal_id and not db.query(Branch.id).filter_by(id=sucursal_id,tenant_id=account_tenant,activa=True).first():
             raise HTTPException(status_code=404, detail="Sucursal no disponible")
         tenant_id = account_tenant
-    tenant = None
-    if tenant_id:
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not tenant and sucursal_id:
-        branch = db.query(Branch).filter(Branch.id == sucursal_id).first()
-        if branch and branch.tenant_id:
-            tenant = db.query(Tenant).filter(Tenant.id == branch.tenant_id).first()
-    if not tenant and user and user.tenant_id:
-        tenant = db.query(Tenant).filter(Tenant.id == user.tenant_id).first()
+    # Internal callers derive tenant_id from the authenticated database user.
+    # Never substitute the platform account for an unknown/unconfigured business.
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="Identifica la empresa autenticada")
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant or tenant.es_operadora:
+        raise HTTPException(status_code=404, detail="Empresa no disponible")
+    if sucursal_id and not db.query(Branch.id).filter_by(
+            id=sucursal_id,tenant_id=tenant.id,activa=True).first():
+        raise HTTPException(status_code=404, detail="Sucursal no disponible")
+    from app.services.company_paypal_service import CompanyPayPalService
+    return CompanyPayPalService.resolve(db,tenant.id)
 
-    if tenant and tenant.paypal_client_id and tenant.paypal_client_secret:
-        return {
-            "client_id": tenant.paypal_client_id,
-            "client_secret": tenant.paypal_client_secret,
-            "mode": tenant.paypal_mode or "sandbox",
-            "brand_name": tenant.nombre
-        }
-    return {
-        "client_id": settings.PAYPAL_CLIENT_ID,
-        "client_secret": settings.PAYPAL_CLIENT_SECRET,
-        "mode": settings.PAYPAL_MODE,
-        "brand_name": tenant.nombre if tenant else "FICCT STORE"
-    }
 
 
 @router.get(
     "/paypal/config",
-    summary="Obtener configuración pública de PayPal Sandbox (por Tenant o global)"
+    summary="Obtener configuración SDK de PayPal de la empresa autenticada"
 )
 def get_paypal_config(
     tenant_id: Optional[uuid.UUID] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
 ):
-    """Retorna la configuración necesaria para el SDK de PayPal en el cliente."""
-    creds = _resolve_tenant_paypal(db=db, tenant_id=tenant_id)
+    """Only non-secret SDK fields for the authenticated company."""
+    creds = _resolve_tenant_paypal(db=db, tenant_id=tenant_id, user=user)
     return {
         "client_id": creds["client_id"],
         "mode": creds["mode"],
@@ -368,3 +359,9 @@ def resume_paypal_order(order_id: str, db: Session = Depends(get_db), current_us
         tenant_id=current_user.tenant_id, user_id=current_user.id).first()
     if not row: raise HTTPException(404, 'Orden no disponible')
     return PaymentFlowService.capture(db, current_user, order_id, purpose=row.purpose)
+
+
+@router.get('/paypal/availability')
+def paypal_availability(db: Session=Depends(get_db), user: User=Depends(get_current_user)):
+    from app.services.company_paypal_service import CompanyPayPalService
+    return CompanyPayPalService.availability(db,user)

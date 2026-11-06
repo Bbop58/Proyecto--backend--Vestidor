@@ -1,5 +1,6 @@
 """Durable PayPal orchestration: quote, bind, verify, apply or compensate."""
 import hashlib
+import re
 import uuid
 from collections import Counter
 from decimal import Decimal
@@ -28,10 +29,9 @@ def request_key(intent, action):
 
 class PaymentFlowService:
     @staticmethod
-    def credentials(db, user):
-        from app.api.v1.payments import _resolve_tenant_paypal
-        # Ownership is validated before recovery, even when the company is suspended.
-        return _resolve_tenant_paypal(db=db, tenant_id=user.tenant_id)
+    def credentials(db, user, intent=None):
+        from app.services.company_paypal_service import CompanyPayPalService
+        return CompanyPayPalService.resolve(db,user.tenant_id,intent,for_new_payment=intent is None)
 
     @staticmethod
     def merchant(creds):
@@ -98,7 +98,18 @@ class PaymentFlowService:
             from app.services.entitlement_service import EntitlementService
             licensed=EntitlementService.check(db,user)
             SaleService._actor_tenant(db, user.id)
+            # Identity authorization precedes configuration/provider errors,
+            # including when the company has not enabled PayPal yet.
+            if (purpose == 'SALE' and data.cliente_id and data.cliente_id != user.id
+                    and 'ventas.create' not in RoleService.get_permission_codes(db,user.role_id)):
+                raise HTTPException(403, 'El cliente debe operar con su propia cuenta')
+            if purpose == 'SALE':
+                from app.models.branch import Branch
+                if not db.query(Branch.id).filter_by(
+                        id=data.sucursal_id, tenant_id=user.tenant_id, activa=True).first():
+                    raise HTTPException(404, 'Sucursal no disponible')
             creds = cls.credentials(db, user)
+            credential_id = creds.pop('_credential_id',None)
             unresolved = (db.query(PaymentIntent).filter(
                 PaymentIntent.user_id == user.id, PaymentIntent.tenant_id == user.tenant_id,
                 PaymentIntent.purpose == purpose,
@@ -149,7 +160,8 @@ class PaymentFlowService:
                     sucursal_id=sale.sucursal_id if purpose == 'SALE' else None,
                     state='CREATING', amount_bob=amount, amount_usd=usd, exchange_rate=rate,
                     merchant_key=cls.merchant(creds), provider_mode=creds['mode'], payload={'request': payload, 'input_hash': input_hash,
-                        'license_term_id':str(licensed['term']['id'])})
+                        'license_term_id':str(licensed['term']['id']),
+                        'paypal_credential_id':credential_id})
                 db.add(intent)
                 db.commit()  # Recovery identity exists before a network effect.
                 intent = db.query(PaymentIntent).filter_by(id=key).with_for_update().one()
@@ -194,7 +206,7 @@ class PaymentFlowService:
             captures = unit['payments']['captures']
             assert len(captures) == 1
             capture = captures[0]
-            assert capture['status'] == 'COMPLETED' and capture['id']
+            assert capture['status'] == 'COMPLETED' and isinstance(capture['id'],str) and re.fullmatch(r'[A-Za-z0-9-]{3,100}',capture['id'])
             assert capture['amount']['currency_code'] == 'USD'
             assert money(capture['amount']['value'], positive=True) == money(intent.amount_usd)
             return capture['id']
@@ -239,7 +251,8 @@ class PaymentFlowService:
             can_capture=EntitlementService.payment_recovery(db,user,intent)
             if not can_capture and intent.state not in ('APPLIED','CAPTURED','CAPTURING','REFUND_PENDING','REFUNDED'):
                 raise HTTPException(409,'REVISION_REQUERIDA: pago sin autorización contractual previa; no se inicia un cargo')
-            creds = cls.credentials(db, user)
+            creds = cls.credentials(db, user, intent)
+            creds.pop('_credential_id',None)
             if cls.merchant(creds) != intent.merchant_key:
                 raise HTTPException(409, 'La cuenta de cobro cambió; requiere conciliación')
             if purpose == 'SALE':
@@ -283,10 +296,8 @@ class PaymentFlowService:
                         request_id=request_key(intent, 'capture'), **{k:v for k,v in creds.items() if k != 'brand_name'})
                     raw = result.get('raw_response', {})
                 capture_id = cls.verify_capture(intent, raw)
-                table = PaymentIntent.__table__
-                duplicate = db.execute(select(table.c.id).where(table.c.capture_id == capture_id,
-                                                                table.c.id != intent.id)).first()
-                if duplicate:
+                from app.core.payment_evidence import capture_claimed_elsewhere
+                if capture_claimed_elsewhere(db,capture_id,commercial_id=intent.id):
                     intent.state = 'REVIEW'
                     db.commit()
                     raise HTTPException(409, 'La captura ya está vinculada a otra operación; requiere conciliación')
@@ -352,7 +363,8 @@ class PaymentFlowService:
                 raise HTTPException(409, 'La venta requiere conciliación por sus cambios o estado')
             if intent.state not in ('APPLIED','REFUND_PENDING','REFUNDED'):
                 raise HTTPException(409, 'Estado de pago no reembolsable')
-            creds = cls.credentials(db, user)
+            creds = cls.credentials(db, user, intent)
+            creds.pop('_credential_id',None)
             if cls.merchant(creds) != intent.merchant_key:
                 raise HTTPException(409, 'La cuenta de cobro cambió; requiere conciliación')
             if intent.state != 'REFUNDED':

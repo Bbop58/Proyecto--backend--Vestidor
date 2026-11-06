@@ -91,7 +91,7 @@ class TenantBrandingUpdateRequest(BaseModel):
     email_contacto: Optional[str] = None
     paypal_client_id: Optional[str] = None
     paypal_client_secret: Optional[str] = None
-    paypal_mode: Optional[str] = "sandbox"
+    paypal_mode: Optional[str] = None
 
 
 class TenantOverviewItem(BaseModel):

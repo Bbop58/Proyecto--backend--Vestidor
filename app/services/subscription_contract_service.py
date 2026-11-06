@@ -43,7 +43,9 @@ class SubscriptionContractService:
     @contextmanager
     def _write(db):
         try:
-            yield db.connection();db.commit()
+            from app.core.payment_evidence import lock_contract_tables
+            connection=db.connection();lock_contract_tables(connection)
+            yield connection;db.commit()
         except IntegrityError:
             db.rollback();raise HTTPException(409,'El contrato cambió o se intentó duplicar una operación')
         except Exception:
@@ -105,7 +107,7 @@ class SubscriptionContractService:
             'iat':int(now.timestamp()),'exp':int(expires.timestamp()),'jti':str(uuid.uuid4()),
             'actor_id':str(actor.id),'tenant_id':str(actor.tenant_id),
             'subscription_id':str(sub['id']) if sub else None,'version_id':str(version_id),
-            'kind':kind,'conditions':cls._conditions(version),'schedule':schedule}
+            'kind':kind,'conditions':cls._conditions(version),'schedule':schedule,'billing_mode':'PAYPAL'}
         return {'quote_token':jwt.encode(payload,cls._key(),algorithm='HS256'),'expires_at':expires,
                 'version_id':version_id,'kind':kind,'conditions':payload['conditions'],**schedule,
                 'approval_mode':'MANUAL','payment_status':'NO_VERIFICADO'}
@@ -122,14 +124,20 @@ class SubscriptionContractService:
         return payload
 
     @staticmethod
-    def _request_json(row):
+    def _request_json(row,connection=None):
+        result=row['decision_result'] or {}
+        status=result.get('payment_status','NO_VERIFICADO');payment=None
+        if connection is not None:
+            from app.models.subscription_payment import SubscriptionPayment
+            saved=connection.execute(select(SubscriptionPayment.id,SubscriptionPayment.state).where(SubscriptionPayment.request_id==row['id'])).first()
+            if saved:payment=str(saved.id);status='VERIFICADO' if saved.state=='APPLIED' else saved.state
         return {'id':str(row['id']),'tenant_id':str(row['tenant_id']),'subscription_id':str(row['subscription_id']),
             'version_id':str(row['version_id']),'kind':row['kind'],'estado':row['estado'],
             'lock_version':row['lock_version'],'conditions':row['quote_payload']['conditions'],
             'schedule':row['quote_payload']['schedule'],'accepted_by':str(row['accepted_by']),
             'accepted_at':row['accepted_at'].isoformat(),'quote_expires_at':row['quote_expires_at'].isoformat(),
             'reason':row['reason'],'decision_result':row['decision_result'],
-            'approval_mode':'MANUAL','payment_status':'NO_VERIFICADO'}
+            'approval_mode':'MANUAL','payment_status':status,'billing_payment_id':payment}
 
     @staticmethod
     def _request(connection,request_id,tenant_id=None,lock=False):
@@ -149,7 +157,7 @@ class SubscriptionContractService:
                 Request.idempotency_key==body.idempotency_key)).mappings().first()
             if replay:
                 if replay['fingerprint']!=fingerprint:raise HTTPException(409,'La clave ya contiene otra solicitud')
-                return cls._request_json(replay)
+                return cls._request_json(replay,connection)
             payload=cls._decode(body.quote_token,actor)
             version=cls._version(connection,uuid.UUID(payload['version_id']))
             if cls._conditions(version)!=payload['conditions']:raise HTTPException(409,'Las condiciones cambiaron')
@@ -166,7 +174,7 @@ class SubscriptionContractService:
                 accepted_at=cls.now(),quote_expires_at=datetime.fromtimestamp(payload['exp'],timezone.utc),
                 idempotency_key=body.idempotency_key,fingerprint=fingerprint).returning(Request.id)).scalar_one()
             AuditService.record(db,'Solicitud de suscripción aceptada; pendiente de decisión','Suscripciones',actor)
-            return cls._request_json(cls._request(connection,request_id,actor.tenant_id))
+            return cls._request_json(cls._request(connection,request_id,actor.tenant_id),connection)
 
     @classmethod
     def decide_request(cls,db,actor,request_id,body):
@@ -179,13 +187,14 @@ class SubscriptionContractService:
                 Request.decision_key==body.idempotency_key)).mappings().first()
             if previous:
                 if previous['decision_fingerprint']!=fingerprint:raise HTTPException(409,'La clave contiene otra decisión')
-                return cls._request_json(previous)
+                return cls._request_json(previous,connection)
             info=cls._request(connection,request_id);cls.lock_company(connection,info['tenant_id'])
             sub=cls._subscription(connection,info['tenant_id'],lock=True)
             row=cls._request(connection,request_id,lock=True)
             if row['estado']!='PENDIENTE' or row['lock_version']!=body.expected_version:
                 raise HTTPException(409,'La solicitud cambió; actualiza antes de decidir')
             term_id=None
+            requires_payment=False
             if body.decision=='APROBADA':
                 if cls.now()>=row['quote_expires_at']:raise HTTPException(409,'La cotización venció; requiere nueva aceptación')
                 version=cls._version(connection,row['version_id'],lock=True);payload=row['quote_payload']
@@ -194,23 +203,30 @@ class SubscriptionContractService:
                 active=connection.execute(select(func.count(Branch.id)).where(Branch.tenant_id==row['tenant_id'],Branch.activa.is_(True))).scalar_one()
                 if active>version['max_sucursales']:raise HTTPException(409,'Reduce las sucursales activas antes de aprobar este límite')
                 schedule=payload['schedule']
-                if sub['estado']=='PENDIENTE':
+                requires_payment=payload.get('billing_mode')=='PAYPAL' and version['precio_mensual_bob']>0
+                if not requires_payment and sub['estado']=='PENDIENTE':
                     connection.execute(update(Sub).where(Sub.id==sub['id']).values(estado='ACTIVA',
                         fecha_inicio=date.fromisoformat(schedule['fecha_inicio']),fecha_vencimiento=date.fromisoformat(schedule['fecha_fin'])-timedelta(days=1)))
-                term_id=connection.execute(insert(Term).values(tenant_id=row['tenant_id'],subscription_id=sub['id'],
+                if not requires_payment:
+                    term_id=connection.execute(insert(Term).values(tenant_id=row['tenant_id'],subscription_id=sub['id'],
                     version_id=row['version_id'],request_id=row['id'],fecha_inicio=date.fromisoformat(schedule['fecha_inicio']),
                     fecha_fin=date.fromisoformat(schedule['fecha_fin']),anchor_day=schedule['anchor_day'],
                     precio_mensual_bob=version['precio_mensual_bob'],moneda='BOB',periodicidad='MENSUAL',
                     max_sucursales=version['max_sucursales'],features=feature_values(version),origen='MANUAL',
                     accepted_by=row['accepted_by'],accepted_at=row['accepted_at'],approved_by=actor.id,approved_at=cls.now()).returning(Term.id)).scalar_one()
             result={'term_id':str(term_id) if term_id else None,'approval_mode':'MANUAL','payment_status':'NO_VERIFICADO'}
+            if body.decision=='APROBADA' and requires_payment:result['payment_status']='PENDIENTE'
+            elif body.decision=='APROBADA' and row['quote_payload'].get('billing_mode')=='PAYPAL':result['payment_status']='SIN_CARGO'
             connection.execute(update(Request).where(Request.id==row['id']).values(estado=body.decision,lock_version=row['lock_version']+1,
                 decision_key=body.idempotency_key,decision_fingerprint=fingerprint,decided_by=actor.id,decided_at=cls.now(),
                 reason=body.reason,decision_result=result))
+            if requires_payment:
+                from app.services.subscription_billing_service import SubscriptionBillingService
+                SubscriptionBillingService.authorize(db,cls._request(connection,row['id']),actor)
             after={'id':str(row['id']),'tenant_id':str(row['tenant_id']),'estado':body.decision,**result}
             PlatformAuditService.record(db,actor,'CONTRACT_DECISION','CONTRACT_REQUEST',row['id'],
                 {'id':str(row['id']),'estado':'PENDIENTE'},after,body.reason)
-            return cls._request_json(cls._request(connection,row['id']))
+            return cls._request_json(cls._request(connection,row['id']),connection)
 
     @classmethod
     def cancel(cls,db,actor,request_id,body):
@@ -218,12 +234,12 @@ class SubscriptionContractService:
         with cls._write(db) as connection:
             cls.lock_company(connection,actor.tenant_id);cls._subscription(connection,actor.tenant_id,lock=True)
             row=cls._request(connection,request_id,actor.tenant_id,lock=True)
-            if row['estado']=='CANCELADA':return cls._request_json(row)
+            if row['estado']=='CANCELADA':return cls._request_json(row,connection)
             if row['estado']!='PENDIENTE' or row['lock_version']!=body.expected_version:raise HTTPException(409,'La solicitud cambió')
             connection.execute(update(Request).where(Request.id==row['id']).values(estado='CANCELADA',lock_version=row['lock_version']+1,
                 decided_by=actor.id,decided_at=cls.now(),reason=body.reason))
             AuditService.record(db,'Solicitud de suscripción cancelada','Suscripciones',actor)
-            return cls._request_json(cls._request(connection,request_id,actor.tenant_id))
+            return cls._request_json(cls._request(connection,request_id,actor.tenant_id),connection)
 
     @classmethod
     def list_requests(cls,db,actor,platform=False,limit=50,offset=0):
@@ -231,7 +247,7 @@ class SubscriptionContractService:
         else:actor=cls._company(db,actor)
         query=select(Request.__table__)
         if not platform:query=query.where(Request.tenant_id==actor.tenant_id)
-        return [cls._request_json(row) for row in db.connection().execute(query.order_by(Request.accepted_at.desc(),Request.id)
+        return [cls._request_json(row,db.connection()) for row in db.connection().execute(query.order_by(Request.accepted_at.desc(),Request.id)
             .limit(limit).offset(offset)).mappings()]
 
     @staticmethod
@@ -242,12 +258,17 @@ class SubscriptionContractService:
             raise HTTPException(403,'Contrato de otra empresa')
         row=db.connection().execute(select(Term.__table__).where(Term.subscription_id==sub_id,Term.tenant_id==tenant_id,
             Term.fecha_inicio<=(at or business_today()),Term.fecha_fin>(at or business_today()))).mappings().first()
+        if row and row['origen']=='PAYPAL':
+            from app.models.subscription_payment import SubscriptionPayment
+            if not db.connection().execute(select(SubscriptionPayment.id).where(SubscriptionPayment.request_id==row['request_id'],
+                    SubscriptionPayment.tenant_id==tenant_id,SubscriptionPayment.state=='APPLIED')).first():return None
         return dict(row) if row else None
 
     @classmethod
     def contract(cls,db,actor):
         actor=cls._company(db,actor);connection=db.connection();sub=cls._subscription(connection,actor.tenant_id)
         terms=[] if not sub else [dict(row) for row in connection.execute(select(Term.__table__).where(Term.subscription_id==sub['id'],Term.tenant_id==actor.tenant_id).order_by(Term.fecha_inicio)).mappings()]
+        current=cls.get_current_term(db,sub) if sub else None
         return {'subscription_id':str(sub['id']) if sub else None,'tenant_id':str(actor.tenant_id),
             'estado_administrativo':sub['estado'] if sub else 'SIN_CONTRATO','terms':terms,
-            'current_term':cls.get_current_term(db,sub) if sub else None,'approval_mode':'MANUAL','payment_status':'NO_VERIFICADO'}
+            'current_term':current,'approval_mode':'MANUAL','payment_status':'VERIFICADO' if current and current['origen']=='PAYPAL' else 'NO_VERIFICADO'}

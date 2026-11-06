@@ -104,7 +104,7 @@ def isolate_writes(db, context, instances):
             from app.core.access_policy import PLATFORM_ROLE
             if isinstance(obj,PlatformAuditLog):
                 reject(403,'La auditoría SaaS requiere una identidad de plataforma')
-            if cls.__name__ in {'SubscriptionTerm','SubscriptionChangeRequest'}:
+            if cls.__name__ in {'SubscriptionTerm','SubscriptionChangeRequest','SubscriptionPayment','SubscriptionPaymentEvent'}:
                 reject(403,'El contrato requiere un procedimiento explícito verificado')
             if isinstance(obj,Tenant) and (obj.es_operadora or inspect(obj).attrs.es_operadora.history.has_changes()):
                 reject(403,'Una empresa no puede convertirse en operadora')

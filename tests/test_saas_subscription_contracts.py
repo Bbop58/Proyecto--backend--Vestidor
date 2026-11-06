@@ -30,7 +30,9 @@ def contract_setup(db_session,saas_actors,request):
         fecha_inicio=business_today()-timedelta(days=3),fecha_vencimiento=business_today()+timedelta(days=-1 if getattr(request,'param',None)=='expired' else 15))
     db_session.add(sub);db_session.commit()
     ensure_legacy_terms(db_session.connection());db_session.commit()
-    return {**saas_actors,'sub':sub,'plan':plan}
+    # S3/S4 regression fixtures represent accepted pre-P3 manual quotations.
+    # New billing suites explicitly turn this marker off and use the actual API token.
+    return {**saas_actors,'sub':sub,'plan':plan,'legacy_manual_quotes':True}
 
 
 def test_old_client_cannot_self_activate(client,contract_setup):
@@ -53,11 +55,24 @@ def quote(client,setup,actor=None,kind='RENOVACION'):
     version=next(row for row in client.get('/api/v1/subscriptions/plans').json() if row['codigo']=='CONTRACT')['version_id']
     result=client.post('/api/v1/subscriptions/quote',headers=headers(actor or setup['admin']),json={'version_id':version,'kind':kind})
     assert result.status_code==200,result.text
-    return result.json()
+    quoted=result.json()
+    if setup.get('legacy_manual_quotes'):
+        quoted=legacy_quote(quoted)
+    return quoted
+
+
+def legacy_quote(quoted):
+    """Reconstruct a signed pre-P3 offer; never used by application code."""
+    import jwt
+    payload=jwt.decode(quoted['quote_token'],options={'verify_signature':False})
+    payload.pop('billing_mode',None)
+    return {**quoted,'quote_token':jwt.encode(payload,Service._key(),algorithm='HS256')}
 
 
 def accept(client,setup,quoted=None,key=None):
-    body={'quote_token':(quoted or quote(client,setup))['quote_token'],'acceptance':True,'idempotency_key':str(key or uuid.uuid4())}
+    quoted=quoted or quote(client,setup)
+    if setup.get('legacy_manual_quotes'):quoted=legacy_quote(quoted)
+    body={'quote_token':quoted['quote_token'],'acceptance':True,'idempotency_key':str(key or uuid.uuid4())}
     result=client.post('/api/v1/subscriptions/requests',headers=headers(setup['admin']),json=body)
     assert result.status_code==201,result.text
     return result.json(),body
@@ -276,7 +291,7 @@ def test_no_subscription_manager_can_request_alta_without_self_activation(client
     setup=saas_actors
     plan=SubscriptionPlan(codigo='CONTRACT',nombre='New contract',precio_mensual_bob=100,max_sucursales=3)
     db_session.add(plan);db_session.flush();ensure_legacy_versions(db_session.connection());db_session.commit()
-    setup={**setup,'plan':plan}
+    setup={**setup,'plan':plan,'legacy_manual_quotes':True}
     quoted=quote(client,setup,kind='ALTA');requested,_=accept(client,setup,quoted)
     assert db_session.query(Subscription).one().estado=='PENDIENTE'
     assert db_session.query(Term).count()==0
@@ -297,6 +312,9 @@ def test_upgrade_from_existing_subscription_without_contract_tables(db_session,c
     from pathlib import Path
     connection=db_session.connection();sub_id=contract_setup['sub'].id
     before=dict(connection.execute(select(Subscription.__table__).where(Subscription.id==sub_id)).mappings().one())
+    # Simulate an actual pre-P3 schema, rather than leaving newer FK children.
+    connection.exec_driver_sql('DROP TABLE subscription_payment_events')
+    connection.exec_driver_sql('DROP TABLE subscription_payments')
     connection.exec_driver_sql('DROP TABLE subscription_terms')
     connection.exec_driver_sql('DROP TABLE subscription_change_requests')
     sql=(Path(__file__).parents[1]/'migrations/saas_03_subscription_terms.sql').read_text(encoding='utf-8')

@@ -2044,6 +2044,12 @@ def seed_all(db=None):
             moda_variants=moda_variants
         )
 
+        # Additional fictional buyers/receipts for ML sufficiency, independently
+        # of the historical generator so its Random42 sequence stays unchanged.
+        from app.seed_ml_demo import seed_ml_demo
+        seed_ml_demo(db,tenant_moda,[branches_map.get('Moda Express - Tarija Centro'),
+            branches_map.get('Moda Express - El Molino')],moda_variants,users_map.get('cajero@modaexpress.com'))
+
         # 8. Sembrado de Tarifas de Delivery y Favoritos
         seed_delivery_rates_and_favorites(
             db=db,

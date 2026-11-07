@@ -61,7 +61,7 @@ def main():
                 assert [round(value,2) for value in predicted]==[row['ventas_bs'] for row in result['proyeccion']]
                 assert not forecast['datos_cambiaron'] and not segments['datos_cambiaron']
                 assert forecast['estado']=='LISTO'
-                assert segments['estado']==('LISTO' if slug=='urbanstyle' else 'DATOS_INSUFICIENTES')
+                assert segments['estado']=='LISTO'  # Both default demo cohorts now meet the minimum.
                 output['companies'].append({'slug':slug,'forecast_state':forecast['estado'],
                     'forecast_method':result['metodo'],'projected_bob':result['total_proyectado_bs'],
                     'metrics':result['metricas'],'comparison':result['comparacion'],

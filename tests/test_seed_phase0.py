@@ -96,5 +96,5 @@ def test_seed_failure_rolls_back_and_retry_succeeds(seed_database,monkeypatch):
     monkeypatch.setattr(seed,"seed_delivery_rates_and_favorites",original)
     seed.seed_all()
     with seed_database() as db:
-        assert db.query(Sale).count()==1135
+        assert db.query(Sale).count()==1155
         assert not any(reconcile(db).values())

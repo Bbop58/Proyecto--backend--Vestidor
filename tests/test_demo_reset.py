@@ -36,13 +36,24 @@ def test_fresh_rebuilds_legacy_schema_seeds_twice_and_authenticates():
     assert not any(result['checks'].values())
     with test_engine.connect() as connection:
         assert connection.execute(text("SELECT to_regclass('runtime_demo_probe')")).scalar() is None
-        assert connection.execute(text('SELECT count(*) FROM ventas')).scalar()==1135
+        assert connection.execute(text('SELECT count(*) FROM ventas')).scalar()==1155
         connection.execute(text('SELECT tenant_id FROM roles LIMIT 1'))
     with Session(test_engine) as db:
+        from datetime import datetime,timezone
+        from app.ml.analytics_data import build_weekly_sales,build_customer_rfm
+        from app.ml.supervised_model import train_forecast
+        from app.ml.unsupervised_model import train_segments
         for email in ('admin@urbanstyle.com','admin@modaexpress.com'):
             user=db.query(User).filter_by(email=email).one()
             authenticated,_,_=AuthService.login(db,LoginRequest(email=email,password='Password123!',tenant_id=user.tenant_id))
             assert authenticated.id==user.id
+            cutoff=datetime.now(timezone.utc)
+            weekly=build_weekly_sales(db,user.tenant_id,cutoff);rfm=build_customer_rfm(db,user.tenant_id,cutoff)
+            assert weekly.quality['weeks']>=27 and weekly.quality['nonzero_weeks']>=8
+            assert len(rfm.rows)==(36 if email=='admin@urbanstyle.com' else 16)
+            assert len({(r['recency_days'],r['frequency'],r['monetary_bob']) for r in rfm.rows})>=4
+            assert train_forecast(weekly).result['estado']=='LISTO'
+            assert train_segments(rfm).result['estado']=='LISTO'
 
 
 def test_seed_failure_restores_previous_schema_and_data(monkeypatch):

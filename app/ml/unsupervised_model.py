@@ -1,197 +1,65 @@
-import os
-import joblib
+"""Company RFM clustering; labels describe observed groups, not forced archetypes."""
+import math
 import numpy as np
-import pandas as pd
-from typing import Dict, Any, List, Tuple, Optional
-from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-
-from app.schemas.analytics import (
-    UnsupervisedModelMetrics,
-    CustomerClusterCentroid,
-    CustomerDataPoint
-)
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from threadpoolctl import threadpool_limits
+from app.ml.training_result import outcome
 
 
-RFM_FEATURES = ["recencia_dias", "frecuencia_compras", "monto_total_bs"]
+def segment_label(recency,frequency):
+    if recency>=90:return 'En riesgo'
+    if recency<=30 and frequency>=4:return 'VIP'
+    if frequency>=4:return 'Frecuentes'
+    return 'Ocasionales'
 
 
-CLUSTER_META_CONFIG = {
-    "VIP": {
-        "nombre": "Clientes VIP / Alta Fidelidad",
-        "color": "#f59e0b",  # Amber / Gold
-        "estrategia": "Ofrecer preventas exclusivas de colecciones, trato prioritario y regalos de lealtad."
-    },
-    "FRECUENTES": {
-        "nombre": "Compradores Frecuentes",
-        "color": "#3b82f6",  # Blue
-        "estrategia": "Incentivar incremento de ticket promedio mediante ventas cruzadas y puntos acumulables."
-    },
-    "NUEVOS": {
-        "nombre": "Nuevos / Ocasionales",
-        "color": "#10b981",  # Emerald Green
-        "estrategia": "Enviar cupón de bienvenida para incentivar su segunda compra dentro de los primeros 30 días."
-    },
-    "EN_RIESGO": {
-        "nombre": "Clientes en Riesgo de Abandono",
-        "color": "#ef4444",  # Red
-        "estrategia": "Campaña de reactivación urgente con promociones personalizadas y recordatorio de novedades."
-    }
-}
+RECOMMENDATIONS={'VIP':'Revisar preferencias y conservar una atención personalizada.',
+    'En riesgo':'Revisar la relación y motivos de inactividad antes de contactar.',
+    'Frecuentes':'Revisar disponibilidad de las prendas de compra habitual.',
+    'Ocasionales':'Observar hábitos antes de ofrecer incentivos.'}
 
 
-class CustomerSegmenter:
-    """
-    Modelo de Aprendizaje No Supervisado para Segmentación de Clientes.
-    Implementa el modelo RFM (Recency, Frequency, Monetary) con StandardScaler y K-Means.
-    """
-
-    def __init__(self, model_path: Optional[str] = None):
-        self.model_path = model_path or os.path.join(
-            os.path.dirname(__file__), "artifacts", "customer_segmentation_model.joblib"
-        )
-        self.scaler: Optional[StandardScaler] = None
-        self.kmeans: Optional[KMeans] = None
-        self.metrics: Optional[UnsupervisedModelMetrics] = None
-        self.cluster_centroids: List[CustomerClusterCentroid] = []
-        self.sample_points: List[CustomerDataPoint] = []
-
-    def train(self, df: pd.DataFrame, n_clusters: int = 4) -> Tuple[UnsupervisedModelMetrics, List[CustomerClusterCentroid], List[CustomerDataPoint]]:
-        """
-        Entrena el agrupador K-Means sobre el espacio RFM normalizado,
-        asigna etiquetas semánticas y calcula el Silhouette Score.
-        """
-        X = df[RFM_FEATURES].copy().values
-
-        self.scaler = StandardScaler()
-        X_scaled = self.scaler.fit_transform(X)
-
-        self.kmeans = KMeans(
-            n_clusters=n_clusters,
-            init="k-means++",
-            n_init=10,
-            max_iter=300,
-            random_state=42
-        )
-        labels = self.kmeans.fit_predict(X_scaled)
-        df_clustered = df.copy()
-        df_clustered["cluster"] = labels
-
-        # Evaluación matemática formal de separación de grupos
-        sil_score = float(silhouette_score(X_scaled, labels))
-        inertia = float(self.kmeans.inertia_)
-
-        self.metrics = UnsupervisedModelMetrics(
-            silhouette_score=round(sil_score, 4),
-            inercia_wss=round(inertia, 2),
-            n_clusters=n_clusters,
-            total_clientes_analizados=len(df)
-        )
-
-        # Caracterización semántica de los centroides
-        raw_centers = self.scaler.inverse_transform(self.kmeans.cluster_centers_)
-        total_customers = len(df)
-
-        # Identificar dinámicamente el rol de cada centroide según sus medias RFM
-        cluster_info = []
-        for c_id in range(n_clusters):
-            c_data = df_clustered[df_clustered["cluster"] == c_id]
-            mean_r = float(c_data["recencia_dias"].mean())
-            mean_f = float(c_data["frecuencia_compras"].mean())
-            mean_m = float(c_data["monto_total_bs"].mean())
-            count_c = len(c_data)
-            pct = round((count_c / total_customers) * 100, 1)
-
-            cluster_info.append({
-                "id": c_id,
-                "r": mean_r,
-                "f": mean_f,
-                "m": mean_m,
-                "count": count_c,
-                "pct": pct
-            })
-
-        # Mapear cada cluster a su arquetipo de negocio
-        assigned_clusters: Dict[int, str] = {}
-        # 1. VIP = Mayor monto
-        sorted_by_monto = sorted(cluster_info, key=lambda x: x["m"], reverse=True)
-        vip_c = sorted_by_monto[0]["id"]
-        assigned_clusters[vip_c] = "VIP"
-
-        # 2. En Riesgo = Mayor recencia (entre los no VIP)
-        non_vip = [c for c in cluster_info if c["id"] != vip_c]
-        sorted_by_recency = sorted(non_vip, key=lambda x: x["r"], reverse=True)
-        risk_c = sorted_by_recency[0]["id"]
-        assigned_clusters[risk_c] = "EN_RIESGO"
-
-        # 3. Frecuentes vs Nuevos
-        remaining = [c for c in non_vip if c["id"] != risk_c]
-        sorted_by_freq = sorted(remaining, key=lambda x: x["f"], reverse=True)
-        freq_c = sorted_by_freq[0]["id"]
-        new_c = sorted_by_freq[1]["id"] if len(sorted_by_freq) > 1 else remaining[0]["id"]
-        assigned_clusters[freq_c] = "FRECUENTES"
-        assigned_clusters[new_c] = "NUEVOS"
-
-        # Construir objetos de centroides
-        self.cluster_centroids = []
-        for c_item in cluster_info:
-            c_id = c_item["id"]
-            archetype = assigned_clusters.get(c_id, "FRECUENTES")
-            meta = CLUSTER_META_CONFIG[archetype]
-
-            self.cluster_centroids.append(CustomerClusterCentroid(
-                cluster_id=c_id,
-                nombre_segmento=meta["nombre"],
-                color_hex=meta["color"],
-                total_clientes=c_item["count"],
-                porcentaje_total=c_item["pct"],
-                recencia_promedio_dias=round(c_item["r"], 1),
-                frecuencia_promedio_compras=round(c_item["f"], 1),
-                gasto_promedio_bs=round(c_item["m"], 2),
-                ticket_promedio_bs=round(c_item["m"] / max(1.0, c_item["f"]), 2),
-                estrategia_recomendada=meta["estrategia"]
-            ))
-
-        # Puntos de muestra para graficación (Scatter plot en Frontend)
-        self.sample_points = []
-        sample_subset = df_clustered.sample(min(150, len(df_clustered)), random_state=42)
-        for _, row in sample_subset.iterrows():
-            c_id = int(row["cluster"])
-            arch = assigned_clusters.get(c_id, "FRECUENTES")
-            self.sample_points.append(CustomerDataPoint(
-                cliente_id=str(row["cliente_id"]),
-                nombre=str(row["nombre"]),
-                recencia_dias=int(row["recencia_dias"]),
-                frecuencia_compras=int(row["frecuencia_compras"]),
-                monto_total_bs=round(float(row["monto_total_bs"]), 2),
-                cluster_id=c_id,
-                cluster_nombre=CLUSTER_META_CONFIG[arch]["nombre"]
-            ))
-
-        # Serialización de artefactos
-        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-        joblib.dump({
-            "scaler": self.scaler,
-            "kmeans": self.kmeans,
-            "metrics": self.metrics,
-            "centroids": self.cluster_centroids,
-            "sample_points": self.sample_points
-        }, self.model_path)
-
-        return self.metrics, self.cluster_centroids, self.sample_points
-
-    def load(self) -> bool:
-        """Carga artefactos serializados si existen."""
-        if os.path.exists(self.model_path):
-            try:
-                data = joblib.load(self.model_path)
-                self.scaler = data.get("scaler")
-                self.kmeans = data.get("kmeans")
-                self.metrics = data.get("metrics")
-                self.cluster_centroids = data.get("centroids", [])
-                self.sample_points = data.get("sample_points", [])
-                return True
-            except Exception:
-                return False
-        return False
+def train_segments(dataset):
+    rows=sorted(dataset.rows,key=lambda row:row['customer_id'])
+    x=np.array([[r['recency_days'],r['frequency'],float(r['monetary_bob'])] for r in rows],dtype=float).reshape(-1,3)
+    if not np.isfinite(x).all() or (x<0).any() or (len(x) and (x[:,1]<1).any()):
+        raise ValueError('Invalid RFM business data')
+    if len({r['customer_id'] for r in rows})!=len(rows):raise ValueError('Duplicate buyer')
+    if dataset.quality.get('excluded_invalid_sales',0):
+        return outcome(dataset,'RFM',None,message='Primero concilia las ventas excluidas.',
+            warnings=['Existen ventas incongruentes; no se publica una segmentación nueva.'])
+    if len(rows)<12 or len(np.unique(x,axis=0))<4:
+        return outcome(dataset,'RFM',None,message='Se requieren 12 compradores y 4 vectores RFM distintos.')
+    model=Pipeline([('scaler',StandardScaler()),('kmeans',KMeans(n_clusters=4,n_init=10,random_state=42))])
+    with threadpool_limits(limits=1):labels=model.fit_predict(x)
+    if len(set(labels))!=4:
+        return outcome(dataset,'RFM',None,message='No se pudieron separar cuatro grupos distintos.')
+    scaled=model.named_steps['scaler'].transform(x)
+    rng=np.random.RandomState(42)
+    selected=[int(np.flatnonzero(labels==label)[0]) for label in range(4)]
+    remaining=np.setdiff1d(np.arange(len(rows)),selected)
+    if len(remaining):selected.extend(rng.choice(remaining,min(1000-len(selected),len(remaining)),replace=False).tolist())
+    with threadpool_limits(limits=1):score=float(silhouette_score(scaled[selected],labels[selected]))
+    if not math.isfinite(score):raise ValueError('Undefined silhouette')
+    clusters=[]
+    ordering=sorted(range(4),key=lambda label:tuple(x[labels==label].mean(axis=0)))
+    remap={old:new for new,old in enumerate(ordering)};names={}
+    for old in ordering:
+        members=x[labels==old];r,f,m=members.mean(axis=0);name=segment_label(r,f);names[old]=name
+        clusters.append({'cluster_id':remap[old],'nombre':name,'total_clientes':len(members),
+            'porcentaje':round(100*len(members)/len(rows),2),'recencia_promedio_dias':round(float(r),2),
+            'frecuencia_promedio':round(float(f),2),'monetario_promedio_bs':round(float(m),2),
+            'recomendacion':RECOMMENDATIONS[name]})
+    sample=sorted(rng.choice(len(rows),min(150,len(rows)),replace=False).tolist())
+    points=[{'cliente_id':rows[i]['customer_id'],'nombre':rows[i]['name'],
+        'recencia_dias':int(x[i,0]),'frecuencia':int(x[i,1]),'monetario_bs':float(x[i,2]),
+        'cluster_id':remap[int(labels[i])],'segmento':names[int(labels[i])]} for i in sample]
+    result={'clusters':clusters,'puntos_muestra':points,'muestra_grafico':len(points),
+        'metricas':{'silhouette':round(score,6),'muestra_silhouette':len(selected),
+            'total_clientes':len(rows),'n_clusters':4,'inercia':float(model.named_steps['kmeans'].inertia_)}}
+    warnings=['Segmentos descriptivos de compras originales DEMO; no son propensión de compra ni acciones automáticas.']
+    if score<0.25:warnings.append('Separación débil entre grupos; interpreta los segmentos con cautela.')
+    return outcome(dataset,'RFM',model,result,message='RFM de compradores identificados en 365 días.',warnings=warnings)

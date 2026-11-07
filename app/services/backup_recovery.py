@@ -165,6 +165,11 @@ def restore_snapshot(db,backup,user):
     rows['role_permissions']=[convert_row(role_permissions,row) for row in data['role_permissions']]
     connection=db.connection()
     try:
+        # Lock ordering: analytics first, then business tables. Training never
+        # publishes a stale analysis over a completed restore, without a
+        # deadlock between an EXCLUSIVE tenant lock and the training session.
+        from app.ml.analytics_store import lock_analytics_restore, invalidate_analytics
+        lock_analytics_restore(connection, tenant)
         lock_tables(connection,models,'EXCLUSIVE')
         # Platform-owned state is never rolled back by a commercial snapshot.
         tenant_table=tables['tenants']
@@ -260,6 +265,7 @@ def restore_snapshot(db,backup,user):
         db.expire_all()
         for wallet in db.query(UserWallet).all():
             if not WalletService.verify_wallet_integrity(wallet):raise HTTPException(409,'La clave de billetera no valida las firmas del respaldo')
+        invalidate_analytics(connection, tenant)
         AuditService.record(db,'Respaldo de empresa restaurado','Backups',user)
         db.commit()
         return {'success':True,'message':'Respaldo de la empresa restaurado; las demás empresas se conservaron.',

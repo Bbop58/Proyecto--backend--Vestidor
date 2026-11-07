@@ -1,248 +1,91 @@
-import os
-import joblib
+"""Four-week company merchandise forecast; causal temporal evaluation only."""
+from datetime import timedelta
+import math
 import numpy as np
-import pandas as pd
-from typing import Dict, Any, List, Tuple, Optional
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+from app.ml.training_result import outcome
 
-from app.schemas.analytics import (
-    SupervisedModelMetrics,
-    ForecastDataPoint,
-    DemandPredictCustomRequest,
-    DemandPredictCustomResponse
-)
+METHODS=('ULTIMA_SEMANA','MEDIA_PREVIA','RANDOM_FOREST')  # Simpler wins ties.
+LABELS={'ULTIMA_SEMANA':'Método de referencia: última semana',
+        'MEDIA_PREVIA':'Método de referencia: media previa', 'RANDOM_FOREST':'Random Forest'}
 
 
-CATEGORICAL_FEATURES = ["temporada", "sucursal", "categoria"]
-NUMERICAL_FEATURES = [
-    "semana_del_ano",
-    "mes",
-    "es_fin_de_ano",
-    "es_festivo",
-    "precio_base",
-    "ventas_lag1_bs",
-    "ventas_lag2_bs",
-    "promedio_movil_3_bs"
-]
-TARGET_FEATURE = "ingreso_total_bs"
+def feature_row(day, history):
+    if len(history)<3:raise ValueError('Three previous weeks required')
+    angle=2*math.pi*day.isocalendar().week/53
+    return np.array([history[-3],history[-2],history[-1],sum(history[-3:])/3,
+                     math.sin(angle),math.cos(angle)],dtype=float)
 
 
-class DemandForecaster:
-    """
-    Modelo de Aprendizaje Supervisado para Previsión de Demanda de Ventas.
-    Utiliza un ensamble de RandomForestRegressor con preprocesamiento scikit-learn.
-    """
+def fit_forest(values, dates):
+    x=np.array([feature_row(dates[i],values[:i]) for i in range(3,len(values))])
+    model=Pipeline([('forest',RandomForestRegressor(n_estimators=80,max_depth=6,
+        min_samples_leaf=2,random_state=42,n_jobs=1))])
+    model.fit(x,np.array(values[3:]))
+    return model
 
-    def __init__(self, model_path: Optional[str] = None):
-        self.model_path = model_path or os.path.join(
-            os.path.dirname(__file__), "artifacts", "demand_forecast_model.joblib"
-        )
-        self.pipeline: Optional[Pipeline] = None
-        self.metrics: Optional[SupervisedModelMetrics] = None
 
-    def train(self, df: pd.DataFrame) -> SupervisedModelMetrics:
-        """
-        Entrena el pipeline supervisado, evalúa métricas matemáticas y serializa el artefacto.
-        """
-        X = df[CATEGORICAL_FEATURES + NUMERICAL_FEATURES].copy()
-        y = df[TARGET_FEATURE].values
+def recursive_predict(model, history, start, weeks=4):
+    previous=list(history);predictions=[]
+    for i in range(weeks):
+        value=float(model.predict(np.array([feature_row(start+timedelta(weeks=i),previous)]))[0])
+        if not math.isfinite(value):raise ValueError('Nonfinite prediction')
+        value=max(0.,value);predictions.append(value);previous.append(value)
+    return predictions
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.20, random_state=42, shuffle=True
-        )
 
-        preprocessor = ColumnTransformer(
-            transformers=[
-                ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), CATEGORICAL_FEATURES),
-                ("num", StandardScaler(), NUMERICAL_FEATURES)
-            ]
-        )
+def predict_method(method, model, history, start):
+    if method=='RANDOM_FOREST':return recursive_predict(model,history,start)
+    if method=='ULTIMA_SEMANA':return [float(history[-1])]*4
+    return [float(sum(history[-3:])/3)]*4
 
-        regressor = RandomForestRegressor(
-            n_estimators=100,
-            max_depth=12,
-            min_samples_split=4,
-            random_state=42,
-            n_jobs=-1
-        )
 
-        self.pipeline = Pipeline(steps=[
-            ("preprocessor", preprocessor),
-            ("regressor", regressor)
-        ])
+def metrics(actual, predictions):
+    actual=np.array(actual,dtype=float);predictions=np.array(predictions,dtype=float)
+    error=actual-predictions;denominator=float(np.sum((actual-actual.mean())**2))
+    return {'mae':round(float(np.mean(np.abs(error))),4),
+            'rmse':round(float(np.sqrt(np.mean(error**2))),4),
+            'r2':round(1-float(np.sum(error**2))/denominator,6) if denominator>0 else None,
+            'muestras_prueba':len(actual)}
 
-        self.pipeline.fit(X_train, y_train)
 
-        # Inferencia en conjunto de prueba independiente
-        y_pred = self.pipeline.predict(X_test)
-
-        r2 = float(r2_score(y_test, y_pred))
-        rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
-        mae = float(mean_absolute_error(y_test, y_pred))
-        mape = float(np.mean(np.abs((y_test - y_pred) / np.maximum(y_test, 1))) * 100)
-
-        # Importancia de variables
-        feature_names_out = self.pipeline.named_steps["preprocessor"].get_feature_names_out()
-        importances = self.pipeline.named_steps["regressor"].feature_importances_
-        sorted_indices = np.argsort(importances)[::-1]
-
-        top_features = []
-        for idx in sorted_indices[:6]:
-            raw_name = str(feature_names_out[idx])
-            clean_name = raw_name.replace("cat__", "").replace("num__", "").replace("_", " ").title()
-            top_features.append({
-                "feature": clean_name,
-                "importance_pct": round(float(importances[idx] * 100), 2)
-            })
-
-        self.metrics = SupervisedModelMetrics(
-            r2_score=round(r2, 4),
-            rmse=round(rmse, 2),
-            mae=round(mae, 2),
-            mape=round(mape, 2),
-            muestras_entrenamiento=len(X_train),
-            muestras_prueba=len(X_test),
-            importancia_caracteristicas=top_features
-        )
-
-        # Guardar en disco
-        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-        joblib.dump({
-            "pipeline": self.pipeline,
-            "metrics": self.metrics
-        }, self.model_path)
-
-        return self.metrics
-
-    def load(self) -> bool:
-        """Carga el modelo serializado si existe."""
-        if os.path.exists(self.model_path):
-            try:
-                data = joblib.load(self.model_path)
-                self.pipeline = data.get("pipeline")
-                self.metrics = data.get("metrics")
-                return True
-            except Exception:
-                return False
-        return False
-
-    def predict_timeline(self, df: pd.DataFrame, weeks_ahead: int = 4) -> List[ForecastDataPoint]:
-        """
-        Genera la serie temporal de ventas semanales combinando datos históricos
-        y las próximas semanas proyectadas por el modelo de ML.
-        """
-        if self.pipeline is None:
-            self.load()
-            if self.pipeline is None:
-                raise RuntimeError("El modelo supervisado debe entrenarse antes de predecir.")
-
-        # Agrupar histórico global por semana
-        weekly_actual = df.groupby("semana_del_ano").agg(
-            total_ventas=("ingreso_total_bs", "sum"),
-            total_unidades=("unidades_demandadas", "sum")
-        ).reset_index()
-
-        points: List[ForecastDataPoint] = []
-        max_week = int(weekly_actual["semana_del_ano"].max())
-        start_history_week = max(1, max_week - 12)  # Últimas 12 semanas históricas
-
-        recent_hist = weekly_actual[weekly_actual["semana_del_ano"] >= start_history_week].copy()
-
-        # Generar predicción histórica vs real
-        for _, row in recent_hist.iterrows():
-            w = int(row["semana_del_ano"])
-            real_val = float(row["total_ventas"])
-            # Estimación del modelo con ruido controlado
-            pred_val = round(real_val * np.random.uniform(0.97, 1.03), 2)
-            units = int(row["total_unidades"])
-
-            points.append(ForecastDataPoint(
-                periodo=f"Semana {w}",
-                semana_numero=w,
-                ventas_reales_bs=round(real_val, 2),
-                demanda_proyectada_bs=pred_val,
-                unidades_estimadas=units,
-                es_proyeccion=False
-            ))
-
-        # Proyectar las próximas `weeks_ahead` semanas
-        last_real_sales = float(recent_hist.iloc[-1]["total_ventas"])
-        last_units = int(recent_hist.iloc[-1]["total_unidades"])
-
-        for i in range(1, weeks_ahead + 1):
-            future_week = (max_week + i - 1) % 52 + 1
-            # Crecimiento o estacionalidad predictiva
-            trend_factor = 1.0 + (0.015 * i)
-            seasonal_boost = 1.25 if future_week in [47, 48, 49, 50, 51, 52] else 1.0
-            future_pred = round(last_real_sales * trend_factor * seasonal_boost, 2)
-            est_units = int(last_units * trend_factor * seasonal_boost)
-
-            points.append(ForecastDataPoint(
-                periodo=f"Semana {future_week} (Pronóstico)",
-                semana_numero=future_week,
-                ventas_reales_bs=None,
-                demanda_proyectada_bs=future_pred,
-                unidades_estimadas=est_units,
-                es_proyeccion=True
-            ))
-
-        return points
-
-    def predict_custom(self, req: DemandPredictCustomRequest) -> DemandPredictCustomResponse:
-        """
-        Inferencia personalizada para simular escenarios de demanda según parámetros elegidos por el usuario.
-        """
-        if self.pipeline is None:
-            self.load()
-            if self.pipeline is None:
-                raise RuntimeError("El modelo supervisado debe entrenarse antes de predecir.")
-
-        v_lag1 = req.ventas_semana_anterior_bs or 12000.0
-        v_lag2 = v_lag1 * 0.98
-        v_roll = (v_lag1 + v_lag2) / 2.0
-
-        es_fin_de_ano = 1 if req.semana_del_ano in [48, 49, 50, 51, 52] else 0
-        es_festivo = 1 if req.semana_del_ano in [19, 20, 21, 47, 51, 52] else 0
-        precio_base = 150.0
-
-        input_data = pd.DataFrame([{
-            "temporada": req.temporada,
-            "sucursal": req.sucursal_nombre,
-            "categoria": req.categoria_nombre,
-            "semana_del_ano": req.semana_del_ano,
-            "mes": req.mes,
-            "es_fin_de_ano": es_fin_de_ano,
-            "es_festivo": es_festivo,
-            "precio_base": precio_base,
-            "ventas_lag1_bs": v_lag1,
-            "ventas_lag2_bs": v_lag2,
-            "promedio_movil_3_bs": v_roll
-        }])
-
-        pred_income = float(self.pipeline.predict(input_data)[0])
-        pred_income = max(100.0, round(pred_income, 2))
-        est_units = max(1, int(round(pred_income / precio_base)))
-
-        # Intervalo de confianza del 95% basado en el RMSE
-        rmse_val = self.metrics.rmse if self.metrics else (pred_income * 0.08)
-        ci_lower = max(0.0, round(pred_income - (1.96 * (rmse_val / 2)), 2))
-        ci_upper = round(pred_income + (1.96 * (rmse_val / 2)), 2)
-
-        factores = [
-            f"Estacionalidad '{req.temporada}' en el mes {req.mes}",
-            f"Venta previa base de Bs. {v_lag1:,.2f}",
-            f"Impacto por plaza '{req.sucursal_nombre}' y categoría '{req.categoria_nombre}'"
-        ]
-
-        return DemandPredictCustomResponse(
-            demanda_proyectada_bs=pred_income,
-            unidades_estimadas=est_units,
-            rango_confianza_inferior_bs=ci_lower,
-            rango_confianza_superior_bs=ci_upper,
-            factores_principales=factores
-        )
+def train_forecast(dataset):
+    dates=[r['week_start'] for r in dataset.rows]
+    values=[float(r['sales_bob']) for r in dataset.rows]
+    if (any(not math.isfinite(v) or v<0 for v in values)
+        or any(day.weekday()!=0 for day in dates)
+        or any(b-a!=timedelta(weeks=1) for a,b in zip(dates,dates[1:]))
+        or (dates and dates[-1]+timedelta(weeks=1)!=dataset.period_end)):
+        raise ValueError('Invalid weekly business data')
+    if dataset.quality.get('excluded_invalid_sales',0):
+        return outcome(dataset,'FORECAST',None,message='Primero concilia las ventas excluidas.',
+            warnings=['Existen ventas incongruentes; no se publica un pronóstico nuevo.'])
+    if len(values)<27 or sum(v>0 for v in values)<8:
+        return outcome(dataset,'FORECAST',None,message='Se requieren 27 semanas observadas y 8 con ventas.')
+    predictions={key:[] for key in METHODS};actual=[];evaluations=[]
+    for origin in (len(values)-12,len(values)-8,len(values)-4):
+        prefix=values[:origin];model=fit_forest(prefix,dates[:origin])
+        observed=values[origin:origin+4];actual.extend(observed)
+        evaluation={'inicio_prueba':dates[origin].isoformat(),'fin_entrenamiento':dates[origin-1].isoformat(),
+                    'filas_entrenamiento':origin-3,'semanas_prueba':4,'metodos':{}}
+        for method in METHODS:
+            predicted=predict_method(method,model,prefix,dates[origin]);predictions[method].extend(predicted)
+            evaluation['metodos'][method]=metrics(observed,predicted)
+        evaluations.append(evaluation)
+    comparison=[{'metodo':method,**metrics(actual,predictions[method])} for method in METHODS]
+    method=min(METHODS,key=lambda m:float(np.mean(np.abs(np.array(actual)-np.array(predictions[m])))))
+    forest=fit_forest(values,dates)
+    future=predict_method(method,forest,values,dataset.period_end)
+    result={'metodo':method,'etiqueta_metodo':LABELS[method],
+        'historico':[{'fecha':day.isoformat(),'ventas_bs':value} for day,value in zip(dates,values)],
+        'proyeccion':[{'fecha':(dataset.period_end+timedelta(weeks=i)).isoformat(),'ventas_bs':round(v,2)} for i,v in enumerate(future)],
+        'total_proyectado_bs':round(sum(round(v,2) for v in future),2),
+        'metricas':next({k:v for k,v in row.items() if k!='metodo'} for row in comparison if row['metodo']==method),
+        'comparacion':comparison,'evaluaciones':evaluations,'filas_entrenamiento_final':len(values)-3}
+    warnings=['Evaluación sobre datos DEMO; no demuestra precisión comercial.']
+    if result['metricas']['r2'] is not None and result['metricas']['r2']<0:
+        warnings.append('R² negativo en la evaluación; usa esta estimación con cautela, no como garantía de ventas.')
+    return outcome(dataset,'FORECAST',{'forest':forest,'selected_method':method},result,
+        message='Estimación de mercadería original completada, sin envío; no es utilidad.',
+        warnings=warnings)

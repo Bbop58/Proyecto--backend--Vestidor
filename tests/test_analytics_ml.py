@@ -1,123 +1,151 @@
-from tests.support import make_test_admin
+"""M2: real company source, no fixed accuracy target or global synthetic model."""
+from datetime import datetime,timedelta,timezone
+from decimal import Decimal
+import uuid
 import pytest
-from fastapi.testclient import TestClient
+from fastapi import HTTPException
+from sqlalchemy import select,delete
 from sqlalchemy.orm import Session
-from app.seed_permissions import seed
-from app.ml.synthetic_data_generator import SyntheticDataGenerator
-from app.ml.supervised_model import DemandForecaster
-from app.ml.unsupervised_model import CustomerSegmenter
-from app.ml.ml_service import MLAnalyticsService
-
-ADMIN_DATA = {
-    "email": "admin_analytics@example.com",
-    "password": "AdminPassword123!",
-    "full_name": "Admin Analytics ML"
-}
+from app.models import AnalyticsModel,Category,Product,ProductVariant,Branch,Sale,SaleDetail,User,Role
+from app.ml.ml_service import MLAnalyticsService as Service
+from app.ml.analytics_store import load_analysis
+from app.ml.training_result import load_server_model
+from tests.test_analytics_store import store_companies
 
 
-def test_synthetic_data_generation():
-    # 1. Dataset de Demanda de Ventas
-    sales_df = SyntheticDataGenerator.generate_sales_demand_dataset(seed=42)
-    assert len(sales_df) == 52 * 4 * 5  # 52 semanas * 4 sucursales * 5 categorías = 1040 registros
-    assert "ingreso_total_bs" in sales_df.columns
-    assert "unidades_demandadas" in sales_df.columns
-    assert "ventas_lag1_bs" in sales_df.columns
-    assert not sales_df.isnull().values.any()
-
-    # 2. Dataset de Clientes RFM
-    customers_df = SyntheticDataGenerator.generate_rfm_customers_dataset(n_samples=200, seed=42)
-    assert len(customers_df) == 200
-    assert "recencia_dias" in customers_df.columns
-    assert "frecuencia_compras" in customers_df.columns
-    assert "monto_total_bs" in customers_df.columns
-    assert not customers_df.isnull().values.any()
-
-
-def test_supervised_demand_forecaster_training():
-    sales_df = SyntheticDataGenerator.generate_sales_demand_dataset(seed=42)
-    forecaster = DemandForecaster()
-    metrics = forecaster.train(sales_df)
-
-    # Validaciones matemáticas requeridas por el examen
-    assert metrics.r2_score >= 0.70, f"R² esperado >= 0.70, obtenido {metrics.r2_score}"
-    assert metrics.rmse > 0
-    assert metrics.mae > 0
-    assert len(metrics.importancia_caracteristicas) > 0
-
-    # Inferencia de serie temporal
-    timeline = forecaster.predict_timeline(sales_df, weeks_ahead=4)
-    assert len(timeline) >= 12
-    projected_points = [p for p in timeline if p.es_proyeccion]
-    assert len(projected_points) == 4
-    for p in projected_points:
-        assert p.demanda_proyectada_bs > 0
-        assert p.unidades_estimadas > 0
+@pytest.fixture
+def business_companies(store_companies):
+    engine,companies=store_companies
+    now=datetime.now(timezone.utc);end=now.date()-timedelta(days=now.weekday())
+    with Session(engine) as db:
+        for index,company in enumerate(companies):
+            role=Role(tenant_id=company,name='cliente',description='QA ML buyer')
+            db.add(role);db.flush()
+            category=Category(tenant_id=company,nombre='QA ML');db.add(category);db.flush()
+            product=Product(tenant_id=company,nombre='QA ML',precio_base=10,categoria_id=category.id)
+            branch=Branch(tenant_id=company,nombre='QA',ciudad='QA',direccion='QA')
+            db.add_all([product,branch]);db.flush()
+            variant=ProductVariant(producto_id=product.id,sku=uuid.uuid4().hex,talla='M',color='QA')
+            db.add(variant);db.flush()
+            users=[]
+            for i in range(12 if index==0 else 8):
+                user=User(tenant_id=company,role_id=role.id,email=uuid.uuid4().hex+'@example.com',full_name='QA buyer',hashed_password='unused')
+                db.add(user);db.flush();users.append(user.id)
+            for week in range(30):
+                when=datetime.combine(end-timedelta(weeks=30-week),datetime.min.time(),timezone.utc)+timedelta(hours=16)
+                amount=Decimal((week+1)*10*(index+1))
+                sale=Sale(tenant_id=company,sucursal_id=branch.id,numero_recibo='ML-'+uuid.uuid4().hex[:20],
+                    cliente_id=users[week%len(users)],created_at=when,monto_subtotal=amount,monto_total=amount)
+                db.add(sale);db.flush()
+                db.add(SaleDetail(venta_id=sale.id,variante_id=variant.id,cantidad=1,precio_unitario=amount,subtotal=amount))
+        db.commit()
+    yield engine,companies
+    with engine.begin() as connection:
+        connection.execute(delete(Sale.__table__).where(Sale.tenant_id.in_(companies)))
+        connection.execute(delete(User.__table__).where(User.tenant_id.in_(companies)))
 
 
-def test_unsupervised_customer_segmentation_training():
-    customers_df = SyntheticDataGenerator.generate_rfm_customers_dataset(n_samples=250, seed=42)
-    segmenter = CustomerSegmenter()
-    metrics, centroids, sample_pts = segmenter.train(customers_df, n_clusters=4)
-
-    # Validación formal del Silhouette Score
-    assert metrics.silhouette_score >= 0.45, f"Silhouette Score esperado >= 0.45, obtenido {metrics.silhouette_score}"
-    assert metrics.n_clusters == 4
-    assert len(centroids) == 4
-    assert len(sample_pts) > 0
-
-    # Verificar que los 4 arquetipos estén representados
-    cluster_names = [c.nombre_segmento for c in centroids]
-    assert any("VIP" in name for name in cluster_names)
-    assert any("Frecuentes" in name for name in cluster_names)
-    assert any("Nuevos" in name for name in cluster_names)
-    assert any("Riesgo" in name for name in cluster_names)
+def train_inline(kind,data):
+    from app.ml.supervised_model import train_forecast
+    from app.ml.unsupervised_model import train_segments
+    return {'FORECAST':train_forecast,'RFM':train_segments}[kind](data)
 
 
-def test_analytics_api_endpoints_e2e(client: TestClient, db_session: Session):
-    # 1. Sembrado y autenticación
-    seed(db_session)
-    admin_reg = client.post("/api/v1/auth/register", json=ADMIN_DATA)
-    assert admin_reg.status_code == 201
-    make_test_admin(db_session,admin_reg.json()["user"]["email"])
-    token = admin_reg.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
+def test_two_companies_train_real_data_reload_estimator_and_get_never_trains(business_companies,monkeypatch):
+    engine,(a,b)=business_companies
+    monkeypatch.setattr('app.ml.ml_service.run_training',train_inline)
+    with Session(engine) as db:
+        assert Service.get_demand_forecast(db,a)['estado']=='SIN_ANALISIS'
+        Service.train_all(db,a);Service.train_all(db,b)
+    monkeypatch.setattr('app.ml.ml_service.run_training',lambda *args:pytest.fail('GET must never train'))
+    with Session(engine) as db:
+        first=Service.get_demand_forecast(db,a);second=Service.get_demand_forecast(db,b)
+        assert first['estado']==second['estado']=='LISTO'
+        assert first['resultado']['historico'][-1]['ventas_bs']==300
+        assert second['resultado']['historico'][-1]['ventas_bs']==600
+        assert Service.get_customer_segments(db,b)['estado']=='DATOS_INSUFICIENTES'
+        assert Service.get_customer_segments(db,a)['estado']=='LISTO'
+        assert not first['datos_cambiaron']
+        model=load_server_model(load_analysis(db,a,'FORECAST'),a,'FORECAST')
+        assert model['forest'].named_steps['forest'].n_jobs==1
+        with pytest.raises(ValueError):load_server_model(load_analysis(db,a,'FORECAST'),b,'FORECAST')
+        assert len(db.scalars(select(AnalyticsModel)).all())==4
 
-    # 2. POST /api/v1/analytics/train
-    train_resp = client.post("/api/v1/analytics/train", headers=headers)
-    assert train_resp.status_code == 200
-    train_data = train_resp.json()
-    assert train_data["estado"] == "COMPLETADO"
-    assert train_data["supervisado"]["r2_score"] >= 0.70
-    assert train_data["no_supervisado"]["silhouette_score"] >= 0.45
 
-    # 3. GET /api/v1/analytics/forecast
-    forecast_resp = client.get("/api/v1/analytics/forecast?weeks_ahead=4", headers=headers)
-    assert forecast_resp.status_code == 200
-    forecast_data = forecast_resp.json()
-    assert len(forecast_data["serie_temporal"]) > 0
-    assert forecast_data["total_proyectado_mes_bs"] > 0
-    assert "RandomForest" in forecast_data["resumen_ejecutivo"]
+def test_timeout_preserves_previous_and_does_not_block_other_tab(business_companies,monkeypatch):
+    engine,(a,_)=business_companies
+    monkeypatch.setattr('app.ml.ml_service.run_training',train_inline)
+    with Session(engine) as db:Service.train_all(db,a)
+    with Session(engine) as db:before=load_analysis(db,a,'FORECAST').trained_at
+    def fail_forecast(kind,data):
+        if kind=='FORECAST':raise HTTPException(503,'QA timeout')
+        return train_inline(kind,data)
+    monkeypatch.setattr('app.ml.ml_service.run_training',fail_forecast)
+    with Session(engine) as db:
+        with pytest.raises(HTTPException) as exc:Service.train_all(db,a)
+        assert exc.value.status_code==503 and exc.value.detail['actualizados']==['RFM']
+    with Session(engine) as db:
+        assert load_analysis(db,a,'FORECAST').trained_at==before
+        assert Service.get_demand_forecast(db,a)['estado']=='LISTO'
 
-    # 4. GET /api/v1/analytics/segments
-    segments_resp = client.get("/api/v1/analytics/segments", headers=headers)
-    assert segments_resp.status_code == 200
-    segments_data = segments_resp.json()
-    assert len(segments_data["clusters"]) == 4
-    assert len(segments_data["puntos_muestra"]) > 0
-    assert segments_data["metricas"]["silhouette_score"] >= 0.45
 
-    # 5. POST /api/v1/analytics/forecast/predict
-    predict_payload = {
-        "semana_del_ano": 48,
-        "mes": 11,
-        "temporada": "Primavera",
-        "categoria_nombre": "Chaquetas y Abrigos",
-        "sucursal_nombre": "Sucursal Central",
-        "ventas_semana_anterior_bs": 15000.0
-    }
-    predict_resp = client.post("/api/v1/analytics/forecast/predict", json=predict_payload, headers=headers)
-    assert predict_resp.status_code == 200
-    predict_data = predict_resp.json()
-    assert predict_data["demanda_proyectada_bs"] > 0
-    assert predict_data["unidades_estimadas"] > 0
-    assert predict_data["rango_confianza_superior_bs"] >= predict_data["demanda_proyectada_bs"]
+def test_new_buyer_new_receipt_and_source_week_are_detected(business_companies,monkeypatch):
+    engine,(a,_)=business_companies
+    monkeypatch.setattr('app.ml.ml_service.run_training',train_inline)
+    with Session(engine) as db:Service.train_all(db,a)
+    with Session(engine) as db:
+        sale=db.scalars(select(Sale).where(Sale.tenant_id==a).order_by(Sale.created_at.desc())).first()
+        sale.monto_subtotal+=1;sale.monto_total+=1;sale.detalles[0].precio_unitario+=1;sale.detalles[0].subtotal+=1
+        db.commit()
+    with Session(engine) as db:
+        assert Service.get_demand_forecast(db,a)['datos_cambiaron']
+        assert Service.get_customer_segments(db,a)['datos_cambiaron']
+        Service.train_all(db,a)
+    with Session(engine) as db:assert not Service.get_demand_forecast(db,a)['datos_cambiaron']
+
+
+def test_open_week_and_new_customer_change_rfm_but_not_closed_week_forecast(business_companies,monkeypatch):
+    engine,(a,_)=business_companies;monkeypatch.setattr('app.ml.ml_service.run_training',train_inline)
+    with Session(engine) as db:Service.train_all(db,a)
+    with Session(engine) as db:
+        role=db.scalar(select(Role).where(Role.tenant_id==a))
+        customer=User(tenant_id=a,role_id=role.id,email=uuid.uuid4().hex+'@example.com',full_name='New QA buyer',hashed_password='unused')
+        db.add(customer);db.commit()
+    with Session(engine) as db:
+        assert Service.get_customer_segments(db,a)['datos_cambiaron']
+        assert not Service.get_demand_forecast(db,a)['datos_cambiaron']
+        Service.train_all(db,a)
+    with Session(engine) as db:
+        old=db.scalars(select(Sale).where(Sale.tenant_id==a)).first()
+        sale=Sale(tenant_id=a,sucursal_id=old.sucursal_id,cliente_id=old.cliente_id,
+            numero_recibo='ML-'+uuid.uuid4().hex[:20],monto_subtotal=20,monto_total=20)
+        db.add(sale);db.flush()
+        db.add(SaleDetail(venta_id=sale.id,variante_id=old.detalles[0].variante_id,cantidad=1,precio_unitario=20,subtotal=20))
+        db.commit()
+    with Session(engine) as db:
+        assert Service.get_customer_segments(db,a)['datos_cambiaron']
+        assert not Service.get_demand_forecast(db,a)['datos_cambiaron']
+
+
+def test_corrupt_or_incompatible_stored_result_requires_update(business_companies,monkeypatch):
+    engine,(a,_)=business_companies;monkeypatch.setattr('app.ml.ml_service.run_training',train_inline)
+    with Session(engine) as db:Service.train_all(db,a)
+    with Session(engine) as db:
+        row=db.scalar(select(AnalyticsModel).where(AnalyticsModel.tenant_id==a,AnalyticsModel.kind=='FORECAST'))
+        row.result={**row.result,'resultado':{'bad':True}};db.commit()
+        assert Service.get_demand_forecast(db,a)['estado']=='REQUIERE_ACTUALIZAR'
+
+
+def test_http_empty_state_and_fixed_horizon(client,db_session,shops,monkeypatch):
+    from app.api.deps import get_current_user
+    from app.main import app
+    app.dependency_overrides[get_current_user]=lambda:shops['a'][0]
+    monkeypatch.setattr('app.ml.ml_service.run_training',lambda *args:pytest.fail('GET training'))
+    for path in ['forecast','segments']:
+        response=client.get('/api/v1/analytics/'+path)
+        assert response.status_code==200 and response.json()['estado']=='SIN_ANALISIS'
+        assert response.json()['tenant_id']==str(shops['a'][0].tenant_id)
+    assert client.get('/api/v1/analytics/forecast?weeks_ahead=8').status_code==422
+
+
+from tests.test_tenant_sales import shops

@@ -30,6 +30,8 @@ def test_period_features_override_plan_without_anticipating_future(client,db_ses
     assert effective['term']['precio_mensual_bob']==150
     assert client.post('/api/v1/reportes-voz/query',headers=headers(setup['admin']),json={}).status_code==403
     assert client.get('/api/v1/analytics/forecast',headers=headers(setup['admin'])).status_code==403
+    assert client.get('/api/v1/analytics/segments',headers=headers(setup['admin'])).status_code==403
+    assert client.post('/api/v1/analytics/train',headers=headers(setup['admin'])).status_code==403
     current=client.get('/api/v1/subscriptions/current',headers=headers(setup['admin'])).json()
     assert current['plan']['precio_mensual_bob']==150 and current['sucursales_maximas']==2
 

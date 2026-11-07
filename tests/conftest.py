@@ -99,20 +99,6 @@ def client(db_session: Session,request) -> Generator[TestClient, None, None]:
         yield test_client
     fastapi_app.dependency_overrides.clear()
 
-@pytest.fixture(autouse=True)
-def isolated_ml_artifacts(monkeypatch, tmp_path):
-    from app.ml.supervised_model import DemandForecaster
-    from app.ml.unsupervised_model import CustomerSegmenter
-    from app.ml.ml_service import MLAnalyticsService
-    for cls, name in [(DemandForecaster, "demand.joblib"), (CustomerSegmenter, "segments.joblib")]:
-        original = cls.__init__
-        def init(self, model_path=None, _original=original, _name=name):
-            _original(self, model_path=str(tmp_path / _name))
-        monkeypatch.setattr(cls, "__init__", init)
-    monkeypatch.setattr(MLAnalyticsService, "_forecaster", DemandForecaster())
-    monkeypatch.setattr(MLAnalyticsService, "_segmenter", CustomerSegmenter())
-
-
 @pytest.fixture
 def commercial_tenant(db_session):
     from app.models.tenant import Tenant
@@ -129,7 +115,7 @@ def explicit_company_for_historical_tests(request,monkeypatch):
     # registration fixtures are adapted; tenant-contract tests remain untouched.
     modules = {"test_auth","test_users","test_roles","test_phase1","test_phase2",
                "test_phase3","test_phase4","test_phase5","test_exchanges",
-               "test_analytics_ml","test_voice_reports_excel"}
+               "test_voice_reports_excel"}
     if request.module.__name__.split(".")[-1] not in modules:
         yield
         return

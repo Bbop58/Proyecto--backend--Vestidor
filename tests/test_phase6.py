@@ -100,17 +100,6 @@ def test_excel_cells_from_data_remain_text_not_formulas():
     assert cell.data_type=='s'
 
 
-@pytest.mark.parametrize('filters', [{'fecha_inicio':'bad'}, {'fecha_inicio':'2026-12-10','fecha_fin':'2026-12-01'}, {'precio_oferta':20}])
-def test_markdown_invalid_date_or_increased_price_rejected(db_session,shops,filters):
-    from app.ml.ml_service import MLAnalyticsService
-    from app.schemas.analytics import ApplyMarkdownRequest
-    user,variant,_=shops['a']
-    with pytest.raises((ValueError,HTTPException)):
-        MLAnalyticsService.apply_markdown_recommendation(db_session,user.tenant_id,variant.producto_id,ApplyMarkdownRequest(**filters))
-    db_session.refresh(variant.producto)
-    assert not variant.producto.en_oferta
-
-
 def test_tryon_rejects_non_image_before_download_or_provider(db_session,shops,monkeypatch):
     from app.schemas.ai import VirtualTryOnRequest
     from app.services.ai_tryon_service import AITryOnService
@@ -241,23 +230,12 @@ def test_anonymous_tryon_cannot_select_private_product(client,shops):
     assert response.status_code in (401,403)
 
 
-def test_auto_apply_offers_does_not_hide_partial_failure(client,db_session,shops,monkeypatch):
-    from types import SimpleNamespace
-    from app.ml.ml_service import MLAnalyticsService
+def test_retired_auto_markdown_cannot_change_prices(client,db_session,shops):
     from app.main import app
     from app.api.deps import get_current_user
     user,variant,_=shops['a'];app.dependency_overrides[get_current_user]=lambda:user
-    rec=SimpleNamespace(estado='SUGERIDA',producto_id=str(variant.producto_id),descuento_sugerido_pct=20,fecha_inicio_sugerida='2026-11-04',fecha_fin_sugerida='2026-11-10')
-    monkeypatch.setattr(MLAnalyticsService,'get_markdown_recommendations',lambda *a,**kw:[rec,rec])
-    calls=[]
-    original=MLAnalyticsService.apply_markdown_recommendation
-    def apply(**kwargs):
-        calls.append(1)
-        if len(calls)>1:raise ValueError('QA fail second offer')
-        return original(**kwargs)
-    monkeypatch.setattr(MLAnalyticsService,'apply_markdown_recommendation',apply)
+    original=(variant.producto.precio_base,variant.producto.precio_oferta,variant.producto.en_oferta)
     response=client.post('/api/v1/analytics/markdown-recommendations/auto-apply-all')
-    assert response.status_code==422,response.text
+    assert response.status_code==410
     db_session.refresh(variant.producto)
-    assert not variant.producto.en_oferta
-    assert variant.producto.precio_oferta is None
+    assert (variant.producto.precio_base,variant.producto.precio_oferta,variant.producto.en_oferta)==original

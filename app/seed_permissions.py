@@ -11,6 +11,8 @@ from app.models.permission import Permission
 from app.models.season import Season
 
 PERMISSIONS_SEED = [
+    {"code":"analytics.train","module":"Analítica","method":"POST",
+     "path":"/api/v1/analytics/train","description":"Actualizar análisis de empresa propia"},
     {"code":"backups.configure","module":"Respaldos","method":"PUT",
      "path":"/api/v1/backups/automatic","description":"Configurar respaldo automático de empresa propia"},
     {"code":"payments.configure","module":"Pagos empresariales","method":"PUT","path":"/company/paypal"},
@@ -413,6 +415,19 @@ def seed(db=None, *, include_seasons=True):
         db.flush()
 
         # Temporadas predefinidas
+        # Explicit new capability for commercial admins only. Preserve all
+        # other role choices when repeating the maintenance seed.
+        from app.models.tenant import Tenant
+        from app.models.role_permission import role_permissions
+        from sqlalchemy import select, or_
+        from sqlalchemy.dialects.postgresql import insert
+        training = db.query(Permission).filter_by(code='analytics.train').one()
+        admin_ids = db.connection().execute(select(Role.id).outerjoin(Tenant, Tenant.id == Role.tenant_id)
+            .where(Role.name == 'admin', or_(Role.tenant_id.is_(None), Tenant.es_operadora.is_(False)))).scalars()
+        for identifier in admin_ids:
+            db.connection().execute(insert(role_permissions).values(role_id=identifier, permission_id=training.id)
+                .on_conflict_do_nothing())
+
         for s_data in (SEASONS_SEED if include_seasons else []):
             season = db.query(Season).filter(Season.nombre == s_data["nombre"]).first()
             if not season:

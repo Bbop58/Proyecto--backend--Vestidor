@@ -1,146 +1,63 @@
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
+from typing import Literal
 
 
-# ── Modelos de Métricas y Rendimiento ──
-
-class SupervisedModelMetrics(BaseModel):
-    r2_score: float = Field(..., description="Coeficiente de determinación R² (0.0 a 1.0)")
-    rmse: float = Field(..., description="Raíz del Error Cuadrático Medio en Bs.")
-    mae: float = Field(..., description="Error Absoluto Medio en Bs.")
-    mape: float = Field(..., description="Error Porcentual Absoluto Medio (%)")
-    muestras_entrenamiento: int
+class ForecastMetrics(BaseModel):
+    mae: float
+    rmse: float
+    r2: Optional[float] = None
     muestras_prueba: int
-    importancia_caracteristicas: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-class UnsupervisedModelMetrics(BaseModel):
-    silhouette_score: float = Field(..., description="Coeficiente de Silueta (-1.0 a 1.0, >0.5 indica buena separación)")
-    inercia_wss: float = Field(..., description="Within-Cluster Sum of Squares")
-    n_clusters: int = Field(default=4)
-    total_clientes_analizados: int
+class BusinessForecastPoint(BaseModel):
+    fecha: str
+    ventas_bs: float
 
 
-class TrainingMetricsResponse(BaseModel):
-    origen_datos: str = 'SINTETICO_DEMOSTRACION'
-    supervisado: SupervisedModelMetrics
-    no_supervisado: UnsupervisedModelMetrics
-    fecha_entrenamiento: str
-    estado: str = "COMPLETADO"
-    tiempo_entrenamiento_ms: float
-    mensaje: str = "Modelos entrenados y guardados exitosamente"
+class BusinessForecastResult(BaseModel):
+    metodo: Literal['ULTIMA_SEMANA','MEDIA_PREVIA','RANDOM_FOREST']
+    etiqueta_metodo: str
+    historico: List[BusinessForecastPoint]
+    proyeccion: List[BusinessForecastPoint] = Field(min_length=4,max_length=4)
+    total_proyectado_bs: float
+    metricas: ForecastMetrics
+    comparacion: List[Dict[str,Any]]
+    evaluaciones: List[Dict[str,Any]]
+    filas_entrenamiento_final: int
 
 
-# ── Previsión de Demanda de Ventas (Supervisado) ──
-
-class ForecastDataPoint(BaseModel):
-    periodo: str
-    semana_numero: int
-    ventas_reales_bs: Optional[float] = None
-    demanda_proyectada_bs: float
-    unidades_estimadas: int
-    es_proyeccion: bool
+class BusinessSegmentResult(BaseModel):
+    clusters: List[Dict[str,Any]] = Field(min_length=4,max_length=4)
+    puntos_muestra: List[Dict[str,Any]] = Field(max_length=150)
+    muestra_grafico: int
+    metricas: Dict[str,Any]
 
 
-class DemandForecastResponse(BaseModel):
-    origen_datos: str = 'SINTETICO_DEMOSTRACION'
-    serie_temporal: List[ForecastDataPoint]
-    metricas: SupervisedModelMetrics
-    resumen_ejecutivo: str
-    crecimiento_proyectado_pct: float
-    total_proyectado_mes_bs: float
-
-
-class DemandPredictCustomRequest(BaseModel):
-    semana_del_ano: int = Field(..., ge=1, le=52)
-    mes: int = Field(..., ge=1, le=12)
-    temporada: str = Field(default="Invierno")
-    categoria_nombre: Optional[str] = "Poleras y Camisas"
-    sucursal_nombre: Optional[str] = "Sucursal Central"
-    ventas_semana_anterior_bs: float = Field(default=12500.0,ge=0,le=99999999,allow_inf_nan=False)
-
-
-class DemandPredictCustomResponse(BaseModel):
-    origen_datos: str = 'SINTETICO_DEMOSTRACION'
-    demanda_proyectada_bs: float
-    unidades_estimadas: int
-    rango_confianza_inferior_bs: float
-    rango_confianza_superior_bs: float
-    factores_principales: List[str]
-
-
-# ── Segmentación de Clientes (No Supervisado / RFM) ──
-
-class CustomerClusterCentroid(BaseModel):
-    cluster_id: int
-    nombre_segmento: str
-    color_hex: str
-    total_clientes: int
-    porcentaje_total: float
-    recencia_promedio_dias: float
-    frecuencia_promedio_compras: float
-    gasto_promedio_bs: float
-    ticket_promedio_bs: float
-    estrategia_recomendada: str
-
-
-class CustomerDataPoint(BaseModel):
-    cliente_id: str
-    nombre: str
-    recencia_dias: int
-    frecuencia_compras: int
-    monto_total_bs: float
-    cluster_id: int
-    cluster_nombre: str
-
-
-class CustomerSegmentationResponse(BaseModel):
-    origen_datos: str = 'SINTETICO_DEMOSTRACION'
-    clusters: List[CustomerClusterCentroid]
-    puntos_muestra: List[CustomerDataPoint]
-    metricas: UnsupervisedModelMetrics
-    resumen_ejecutivo: str
-
-
-# ── Optimizador Predictivo de Ofertas y Liquidaciones (Smart Markdown) ──
-
-class MarkdownRecommendation(BaseModel):
-    origen_datos: str = 'REGLAS_ROTACION_SOBRE_DATOS_EMPRESA'
-    producto_id: str
-    producto_nombre: str
-    categoria: str
-    imagen_url: Optional[str] = None
-    stock_total: int
-    precio_base: float
-    precio_oferta_actual: Optional[float] = None
-    en_oferta_actualmente: bool
-    dias_inventario_proyectado: int
-    caida_demanda_pct: float
-    descuento_sugerido_pct: float
-    precio_oferta_sugerido: float
-    ahorro_estimado_bs: float
-    fecha_inicio_sugerida: str
-    fecha_fin_sugerida: str
-    diagnostico_ia: str
-    nivel_urgencia: str  # "ALTO", "MEDIO", "MODERADO"
-    estado: str  # "SUGERIDA", "ACTIVA", "PROGRAMADA"
-
-
-class ApplyMarkdownRequest(BaseModel):
-    descuento_pct: Optional[float] = Field(default=None, ge=5.0, le=75.0)
-    precio_oferta: Optional[float] = Field(default=None, gt=0.0)
-    fecha_inicio: Optional[str] = None  # Formato YYYY-MM-DD
-    fecha_fin: Optional[str] = None
-    motivo: Optional[str] = None
-
-
-class ApplyMarkdownResponse(BaseModel):
-    success: bool
+class StoredBusinessAnalysis(BaseModel):
+    estado: Literal['LISTO','DATOS_INSUFICIENTES']
+    calidad: Dict[str,Any]
+    advertencias: List[str]
     mensaje: str
-    producto_id: str
-    producto_nombre: str
-    precio_base: float
-    precio_oferta: float
-    descuento_pct: float
-    fecha_inicio: Optional[str] = None
-    fecha_fin: Optional[str] = None
+    resultado: Optional[Dict[str,Any]] = None
+
+
+class BusinessAnalysisResponse(BaseModel):
+    estado: Literal['LISTO','SIN_ANALISIS','DATOS_INSUFICIENTES','REQUIERE_ACTUALIZAR']
+    tenant_id: str
+    origen_datos: Literal['BASE_DATOS_EMPRESA']
+    entorno: Literal['DEMO']
+    fecha_corte: Optional[str] = None
+    fecha_entrenamiento: Optional[str] = None
+    datos_cambiaron: bool = False
+    calidad: Dict[str,Any] = Field(default_factory=dict)
+    advertencias: List[str] = Field(default_factory=list)
+    mensaje: str
+    resultado: Optional[Dict[str,Any]] = None
+
+
+class BusinessTrainingResponse(BaseModel):
+    estado: Literal['ACTUALIZADO']
+    tenant_id: str
+    fecha_corte: str
+    analisis: Dict[str,StoredBusinessAnalysis]

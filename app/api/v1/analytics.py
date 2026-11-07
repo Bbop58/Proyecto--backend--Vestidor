@@ -5,6 +5,7 @@ from app.database import get_db
 from app.api.deps import require_permission, get_current_user, require_plan_feature
 from app.models.user import User
 from app.ml.ml_service import MLAnalyticsService
+from app.schemas.analytics_recommendation import RecommendationResponse
 from app.schemas.analytics import (
     BusinessAnalysisResponse,
     BusinessTrainingResponse,
@@ -63,6 +64,14 @@ def get_customer_segments(
 ):
     """Lee grupos descriptivos propios; no fuerza arquetipos ni inventa compradores."""
     return MLAnalyticsService.get_customer_segments(db,_resolve_tenant_id(db,current_user))
+
+
+@router.get('/recommendations', response_model=RecommendationResponse,
+            dependencies=[Depends(require_permission('ventas.reports'))])
+def get_recommendations(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Read factual stock suggestions; no training, provider or commercial writes."""
+    from app.services.analytics_recommendation_service import AnalyticsRecommendationService
+    return AnalyticsRecommendationService.read(db, _resolve_tenant_id(db, current_user))
 
 
 @router.post("/forecast/predict", dependencies=[Depends(require_permission("ventas.reports"))])

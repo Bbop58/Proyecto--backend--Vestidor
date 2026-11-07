@@ -1,11 +1,11 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, status, HTTPException
+from fastapi import APIRouter, Depends, Query, status, HTTPException, Response
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.api.deps import require_permission, get_current_user, require_plan_feature
 from app.models.user import User
 from app.ml.ml_service import MLAnalyticsService
-from app.schemas.analytics_recommendation import RecommendationResponse
+from app.schemas.analytics_recommendation import RecommendationSummaryV2, BranchRecommendationSnapshot
 from app.schemas.analytics import (
     BusinessAnalysisResponse,
     BusinessTrainingResponse,
@@ -66,12 +66,36 @@ def get_customer_segments(
     return MLAnalyticsService.get_customer_segments(db,_resolve_tenant_id(db,current_user))
 
 
-@router.get('/recommendations', response_model=RecommendationResponse,
+@router.get('/recommendations', response_model=RecommendationSummaryV2,
             dependencies=[Depends(require_permission('ventas.reports'))])
 def get_recommendations(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Read factual stock suggestions; no training, provider or commercial writes."""
-    from app.services.analytics_recommendation_service import AnalyticsRecommendationService
-    return AnalyticsRecommendationService.read(db, _resolve_tenant_id(db, current_user))
+    from app.services.analytics_branch_recommendations import read_recommendation_snapshot, summarize_snapshot
+    return summarize_snapshot(read_recommendation_snapshot(db, _resolve_tenant_id(db, current_user)))
+
+
+@router.get('/recommendations/report-data', response_model=BranchRecommendationSnapshot,
+            dependencies=[Depends(require_permission('ventas.reports'))])
+def get_recommendation_report_data(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Complete own-company snapshot for export, never limited to UI highlights."""
+    from app.services.analytics_branch_recommendations import read_recommendation_snapshot
+    return read_recommendation_snapshot(db, _resolve_tenant_id(db, current_user))
+
+
+@router.get('/recommendations/export.xlsx', dependencies=[Depends(require_permission('ventas.reports'))])
+def export_recommendations_excel(
+    fingerprint: str = Query(pattern='^[a-f0-9]{64}$'),
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    from app.services.analytics_branch_recommendations import read_recommendation_snapshot
+    from app.services.analytics_recommendation_export import export_recommendation_xlsx
+    snapshot = read_recommendation_snapshot(db, _resolve_tenant_id(db, current_user))
+    if snapshot.fingerprint != fingerprint:
+        raise HTTPException(409,'Los datos cambiaron. Actualiza las recomendaciones antes de descargar.')
+    return Response(export_recommendation_xlsx(snapshot),
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition':'attachment; filename="recomendaciones_completas.xlsx"',
+                 'Cache-Control':'no-store','X-Recommendation-Fingerprint':snapshot.fingerprint})
 
 
 @router.post("/forecast/predict", dependencies=[Depends(require_permission("ventas.reports"))])

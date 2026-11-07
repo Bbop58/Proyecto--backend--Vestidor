@@ -21,7 +21,7 @@ from tests.support_saas import saas_actors, headers
     '/reservas', '/reservas/mis-reservas', '/ventas', '/ventas/mis-compras',
     '/ventas/reportes/top-productos', '/wallet/me', '/wallet/history', '/wallet/admin/list',
     '/notifications', '/favorites', '/recommendations/trending', '/backups/stats', '/backups/download',
-    '/analytics/forecast', '/analytics/segments', '/analytics/recommendations',
+    '/analytics/forecast', '/analytics/segments', '/analytics/recommendations', '/analytics/recommendations/report-data', '/analytics/recommendations/export.xlsx',
 ])
 def test_platform_operator_denied_business_even_with_admin_permissions(client, saas_actors, path):
     response = client.get('/api/v1' + path, headers=headers(saas_actors['operator']))

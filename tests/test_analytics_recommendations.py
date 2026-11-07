@@ -159,7 +159,7 @@ def test_read_only_query_has_fixed_count_no_n_plus_one(db_session,shops):
     event.listen(engine,'before_cursor_execute',capture)
     try:
         AnalyticsRecommendationService.read(db,shops['a'][0].tenant_id,CUT)
-        assert len(statements)<=12
+        assert len(statements)<=13  # R1 adds one fixed branch-directory query; no per-row reads
         assert all(not s.lstrip().upper().startswith(('INSERT','UPDATE','DELETE','ALTER','CREATE')) for s in statements)
     finally:event.remove(engine,'before_cursor_execute',capture)
 

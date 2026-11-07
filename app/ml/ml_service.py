@@ -19,6 +19,14 @@ class MLAnalyticsService:
             for kind,dataset in datasets.items():
                 try:
                     trained=run_training(kind,dataset)
+                    if kind=='FORECAST' and trained.result.get('estado')=='LISTO':
+                        # Validate before replacing the last good analysis. Old
+                        # JSON remains readable, but a new training must publish
+                        # all three authentic series, not a legacy-only payload.
+                        from app.schemas.analytics import BusinessForecastResult
+                        forecast=BusinessForecastResult.model_validate(trained.result['resultado'])
+                        if forecast.proyecciones_metodos is None:
+                            raise ValueError('New forecast requires all three method projections')
                     with work.begin_nested():
                         save_analysis(work,tenant,kind,trained.artifact,trained.result,
                             make_metadata(dataset.fingerprint,cutoff))

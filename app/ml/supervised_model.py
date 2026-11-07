@@ -76,11 +76,21 @@ def train_forecast(dataset):
     comparison=[{'metodo':method,**metrics(actual,predictions[method])} for method in METHODS]
     method=min(METHODS,key=lambda m:float(np.mean(np.abs(np.array(actual)-np.array(predictions[m])))))
     forest=fit_forest(values,dates)
-    future=predict_method(method,forest,values,dataset.period_end)
+    # Publish each method's actual four-week output, reusing the one final
+    # forest. References remain references; selecting one never hides the ML.
+    series=[]
+    for candidate in METHODS:
+        future=predict_method(candidate,forest,values,dataset.period_end)
+        projection=[{'fecha':(dataset.period_end+timedelta(weeks=i)).isoformat(),
+                     'ventas_bs':round(v,2)} for i,v in enumerate(future)]
+        series.append({'metodo':candidate,'etiqueta_metodo':LABELS[candidate],
+            'proyeccion':projection,'total_proyectado_bs':round(sum(p['ventas_bs'] for p in projection),2)})
+    winner=next(row for row in series if row['metodo']==method)
     result={'metodo':method,'etiqueta_metodo':LABELS[method],
         'historico':[{'fecha':day.isoformat(),'ventas_bs':value} for day,value in zip(dates,values)],
-        'proyeccion':[{'fecha':(dataset.period_end+timedelta(weeks=i)).isoformat(),'ventas_bs':round(v,2)} for i,v in enumerate(future)],
-        'total_proyectado_bs':round(sum(round(v,2) for v in future),2),
+        'proyeccion':winner['proyeccion'],
+        'total_proyectado_bs':winner['total_proyectado_bs'],
+        'proyecciones_metodos':series,
         'metricas':next({k:v for k,v in row.items() if k!='metodo'} for row in comparison if row['metodo']==method),
         'comparacion':comparison,'evaluaciones':evaluations,'filas_entrenamiento_final':len(values)-3}
     warnings=['Evaluación sobre datos DEMO; no demuestra precisión comercial.']

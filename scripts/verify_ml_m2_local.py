@@ -59,12 +59,21 @@ def main():
                 predicted=predict_method(model['selected_method'],model['forest'],history,
                     date.fromisoformat(result['proyeccion'][0]['fecha']))
                 assert [round(value,2) for value in predicted]==[row['ventas_bs'] for row in result['proyeccion']]
+                series=result['proyecciones_metodos']
+                assert len(series)==3 and {s['metodo'] for s in series}=={'RANDOM_FOREST','ULTIMA_SEMANA','MEDIA_PREVIA'}
+                for row in series:
+                    predicted=predict_method(row['metodo'],model['forest'],history,
+                        date.fromisoformat(row['proyeccion'][0]['fecha']))
+                    assert [round(value,2) for value in predicted]==[p['ventas_bs'] for p in row['proyeccion']]
+                    assert [p['fecha'] for p in row['proyeccion']]==[p['fecha'] for p in result['proyeccion']]
+                    assert row['total_proyectado_bs']==round(sum(p['ventas_bs'] for p in row['proyeccion']),2)
                 assert not forecast['datos_cambiaron'] and not segments['datos_cambiaron']
                 assert forecast['estado']=='LISTO'
                 assert segments['estado']=='LISTO'  # Both default demo cohorts now meet the minimum.
                 output['companies'].append({'slug':slug,'forecast_state':forecast['estado'],
                     'forecast_method':result['metodo'],'projected_bob':result['total_proyectado_bs'],
                     'metrics':result['metricas'],'comparison':result['comparacion'],
+                    'method_projections':series,
                     'first_forecast_week':result['proyeccion'][0]['fecha'],'cutoff':forecast['fecha_corte'],
                     'source_quality':forecast['calidad'],'segments_state':segments['estado'],
                     'segments_quality':segments['calidad'],

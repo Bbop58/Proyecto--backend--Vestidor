@@ -68,8 +68,63 @@ def test_two_companies_train_real_data_reload_estimator_and_get_never_trains(bus
         assert not first['datos_cambiaron']
         model=load_server_model(load_analysis(db,a,'FORECAST'),a,'FORECAST')
         assert model['forest'].named_steps['forest'].n_jobs==1
+        from app.ml.supervised_model import predict_method
+        from datetime import date
+        for forecast,company in ((first,a),(second,b)):
+            result=forecast['resultado'];history=[p['ventas_bs'] for p in result['historico']]
+            loaded=load_server_model(load_analysis(db,company,'FORECAST'),company,'FORECAST')
+            assert len(result['proyecciones_metodos'])==3
+            for row in result['proyecciones_metodos']:
+                expected=predict_method(row['metodo'],loaded['forest'],history,date.fromisoformat(row['proyeccion'][0]['fecha']))
+                assert [p['ventas_bs'] for p in row['proyeccion']]==[round(v,2) for v in expected]
         with pytest.raises(ValueError):load_server_model(load_analysis(db,a,'FORECAST'),b,'FORECAST')
         assert len(db.scalars(select(AnalyticsModel)).all())==4
+
+
+@pytest.mark.parametrize('legacy', [True,False])
+def test_saved_legacy_is_readable_but_malformed_new_comparison_requires_update(business_companies,monkeypatch,legacy):
+    from copy import deepcopy
+    engine,(company,_)=business_companies
+    monkeypatch.setattr('app.ml.ml_service.run_training',train_inline)
+    with Session(engine) as db:Service.train_all(db,company)
+    with Session(engine) as db:
+        row=db.scalar(select(AnalyticsModel).where(AnalyticsModel.tenant_id==company,AnalyticsModel.kind=='FORECAST'))
+        payload=deepcopy(row.result)
+        if legacy:payload['resultado'].pop('proyecciones_metodos')
+        else:payload['resultado']['proyecciones_metodos'].pop()
+        row.result=payload;db.commit()
+    monkeypatch.setattr('app.ml.ml_service.run_training',lambda *args:pytest.fail('GET cannot train'))
+    with Session(engine) as db:
+        result=Service.get_demand_forecast(db,company)
+        assert result['estado']==('LISTO' if legacy else 'REQUIERE_ACTUALIZAR')
+        if legacy:
+            assert result['resultado']['proyecciones_metodos'] is None
+            assert result['resultado']['proyeccion']==payload['resultado']['proyeccion']
+        else:assert result['resultado'] is None
+        assert Service.get_customer_segments(db,company)['estado']=='LISTO'
+
+
+@pytest.mark.parametrize('bad', ['missing','total'])
+def test_incomplete_new_training_preserves_previous_valid_forecast(business_companies,monkeypatch,bad):
+    engine,(company,_)=business_companies
+    monkeypatch.setattr('app.ml.ml_service.run_training',train_inline)
+    with Session(engine) as db:Service.train_all(db,company)
+    with Session(engine) as db:
+        stored=load_analysis(db,company,'FORECAST');before=(stored.result,stored.artifact,stored.trained_at)
+    def corrupt(kind,data):
+        outcome=train_inline(kind,data)
+        if kind=='FORECAST':
+            if bad=='missing':outcome.result['resultado'].pop('proyecciones_metodos')
+            else:outcome.result['resultado']['proyecciones_metodos'][1]['total_proyectado_bs']+=1
+        return outcome
+    monkeypatch.setattr('app.ml.ml_service.run_training',corrupt)
+    with Session(engine) as db:
+        with pytest.raises(HTTPException) as error:Service.train_all(db,company)
+        assert error.value.status_code==503 and error.value.detail['actualizados']==['RFM']
+    with Session(engine) as db:
+        stored=load_analysis(db,company,'FORECAST')
+        assert (stored.result,stored.artifact,stored.trained_at)==before
+        assert Service.get_demand_forecast(db,company)['estado']=='LISTO'
 
 
 def test_timeout_preserves_previous_and_does_not_block_other_tab(business_companies,monkeypatch):

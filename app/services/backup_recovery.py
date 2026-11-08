@@ -247,6 +247,8 @@ def restore_snapshot(db,backup,user):
             if ids and connection.execute(select(pk).where(pk.in_(ids),~condition)).first():
                 raise HTTPException(403,'Un identificador pertenece a otra empresa')
         owned_roles=select(Role.id).where(Role.tenant_id==tenant)
+        from app.services.mobile_session_service import MobileSessionService
+        MobileSessionService.revoke_company(db, tenant)
         connection.execute(role_permissions.delete().where(role_permissions.c.role_id.in_(owned_roles)))
         for table in reversed(Base.metadata.sorted_tables):
             if table.name not in tables or table.name=='tenants':continue

@@ -43,6 +43,19 @@ os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith(settings.API_V1_STR + '/auth/mobile/'):
+        # FastAPI's default validation errors may echo the entire request body.
+        return JSONResponse(status_code=422, content={'detail': 'Solicitud de sesión móvil no válida'},
+                            headers={'Cache-Control': 'no-store'})
+    return await request_validation_exception_handler(request, exc)
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     # Starlette's outer ServerErrorMiddleware executes this handler outside

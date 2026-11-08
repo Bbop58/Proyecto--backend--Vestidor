@@ -150,6 +150,16 @@ class AuthService:
             if reference and (reference.get('sub') != token_payload.get('sub') or reference.get('type') != 'refresh'):
                 raise HTTPException(400,'El token de renovación no pertenece a esta sesión')
         try:
+            if token_payload.get('mobile_session_id'):
+                from sqlalchemy import update
+                from app.models.mobile_session import MobileSession
+                from uuid import UUID
+                table = MobileSession.__table__
+                db.connection().execute(update(table).where(
+                    table.c.id == UUID(token_payload['mobile_session_id']),
+                    table.c.user_id == UUID(token_payload['sub']),
+                    table.c.tenant_id == UUID(token_payload['tenant_id'])
+                ).values(revoked_at=datetime.now(timezone.utc)))
             jti = token_payload.get("jti")
             exp_timestamp = token_payload.get("exp")
             if jti and exp_timestamp:
@@ -175,6 +185,9 @@ class AuthService:
 
     @staticmethod
     def change_password(db: Session, user: User, data: ChangePasswordRequest) -> None:
+        from app.services.mobile_session_service import MobileSessionService
+        MobileSessionService.lock_user(db, user.id)
+        db.refresh(user)
         if not verify_password(data.current_password, user.hashed_password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -188,6 +201,7 @@ class AuthService:
             )
         
         user.hashed_password = get_password_hash(data.new_password)
+        MobileSessionService.revoke_user(db, user.id)
         db.commit()
         db.refresh(user)
 

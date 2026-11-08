@@ -3,6 +3,9 @@ from sqlalchemy import text
 
 
 CHECKS = {
+    "mobile_session_owner": """SELECT count(*) FROM mobile_sessions s JOIN users u ON u.id=s.user_id
+        JOIN tenants t ON t.id=s.tenant_id WHERE s.revoked_at IS NULL AND
+        (s.tenant_id IS DISTINCT FROM u.tenant_id OR NOT u.is_active OR t.es_operadora)""",
     "backup_policy_coverage": """SELECT count(*) FROM tenants t
         WHERE (NOT t.es_operadora AND NOT EXISTS
             (SELECT 1 FROM backup_policies p WHERE p.tenant_id=t.id))

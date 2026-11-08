@@ -2,6 +2,7 @@ from app.database import Base
 from app.models.payment_intent import PaymentIntent
 from app.models.user import User
 from app.models.token_blacklist import TokenBlacklist
+from app.models.mobile_session import MobileSession
 from app.models.role import Role
 from app.models.permission import Permission
 from app.models.role_permission import role_permissions

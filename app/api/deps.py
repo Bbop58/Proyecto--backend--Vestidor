@@ -56,6 +56,8 @@ def get_current_token_payload(
             if revoked:
                 raise TokenRevokedException()
         
+        from app.services.mobile_session_service import MobileSessionService
+        MobileSessionService.validate_access(db, payload)
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(

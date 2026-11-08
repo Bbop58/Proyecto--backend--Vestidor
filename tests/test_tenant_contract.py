@@ -238,6 +238,9 @@ def test_private_routes_have_authentication_dependencies():
     from app.main import app
     from fastapi.routing import APIRoute
     public={'/auth/register','/auth/login','/auth/login/swagger','/auth/refresh',
+            # Like legacy refresh, these authenticate a body credential instead
+            # of requiring an unexpired access JWT. No commercial-route wildcard.
+            '/auth/mobile/refresh','/auth/mobile/logout',
             '/payments/paypal/return','/payments/paypal/cancel','/subscriptions/paypal/webhook',
             '/subscriptions/public/tenants','/subscriptions/plans','/subscriptions/onboarding','/health','/health/ready','/'}
     def dependencies(dep):

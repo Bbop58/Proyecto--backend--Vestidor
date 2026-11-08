@@ -21,7 +21,7 @@ def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
 
-def create_access_token(subject: Union[str, Any], expires_delta: Optional[timedelta] = None, *, tenant_id: Optional[uuid.UUID] = None) -> Dict[str, Any]:
+def create_access_token(subject: Union[str, Any], expires_delta: Optional[timedelta] = None, *, tenant_id: Optional[uuid.UUID] = None, mobile_session_id: Optional[uuid.UUID] = None) -> Dict[str, Any]:
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
@@ -36,6 +36,8 @@ def create_access_token(subject: Union[str, Any], expires_delta: Optional[timede
         "jti": jti,
         "type": "access"
     }
+    if mobile_session_id is not None:
+        to_encode['mobile_session_id'] = str(mobile_session_id)
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return {"token": encoded_jwt, "jti": jti, "expires_at": expire}
 

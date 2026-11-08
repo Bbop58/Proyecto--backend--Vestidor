@@ -168,10 +168,17 @@ class UserService:
             db_user.role_id = user_in.role_id
 
         if user_in.is_active is not None:
+            from app.services.mobile_session_service import MobileSessionService
+            MobileSessionService.lock_user(db, db_user.id)
             db_user.is_active = user_in.is_active
+            if not user_in.is_active:
+                MobileSessionService.revoke_user(db, db_user.id)
 
         if user_in.password:
+            from app.services.mobile_session_service import MobileSessionService
+            MobileSessionService.lock_user(db, db_user.id)
             db_user.hashed_password = get_password_hash(user_in.password)
+            MobileSessionService.revoke_user(db, db_user.id)
 
         db.commit()
         db.refresh(db_user)
@@ -184,7 +191,12 @@ class UserService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No puedes desactivar tu propia cuenta de administrador."
             )
+        from app.services.mobile_session_service import MobileSessionService
+        MobileSessionService.lock_user(db, db_user.id)
+        db.refresh(db_user)
         db_user.is_active = not db_user.is_active
+        if not db_user.is_active:
+            MobileSessionService.revoke_user(db, db_user.id)
         db.commit()
         db.refresh(db_user)
         return db_user

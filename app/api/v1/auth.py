@@ -20,6 +20,32 @@ from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["Autenticacion"])
 
+from app.schemas.mobile_session import MobileCredentialRequest, MobileRefreshResponse, MobileSessionResponse
+from app.services.mobile_session_service import MobileSessionService
+from fastapi import HTTPException, Response
+
+
+@router.post('/mobile/session', response_model=MobileSessionResponse)
+def mobile_session(response: Response, payload: dict = Depends(get_current_token_payload),
+                   user: User = Depends(get_authenticated_identity), db: Session = Depends(get_db)):
+    if 'mobile_session_id' in payload:
+        raise HTTPException(400, 'La sesión móvil ya está establecida')
+    response.headers['Cache-Control'] = 'no-store'
+    return MobileSessionService.issue(db, user)
+
+
+@router.post('/mobile/refresh', response_model=MobileRefreshResponse)
+def mobile_refresh(body: MobileCredentialRequest, response: Response, db: Session = Depends(get_db)):
+    response.headers['Cache-Control'] = 'no-store'
+    return MobileSessionService.refresh(db, body.session_token.get_secret_value())
+
+
+@router.post('/mobile/logout', response_model=MessageResponse)
+def mobile_logout(body: MobileCredentialRequest, response: Response, db: Session = Depends(get_db)):
+    MobileSessionService.revoke(db, body.session_token.get_secret_value())
+    response.headers['Cache-Control'] = 'no-store'
+    return MessageResponse(message='Sesión móvil cerrada')
+
 
 @router.post(
     "/register",

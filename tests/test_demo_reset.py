@@ -30,7 +30,8 @@ def test_fresh_rebuilds_legacy_schema_seeds_twice_and_authenticates():
         connection.execute(text('ALTER TABLE roles DROP COLUMN tenant_id CASCADE'))
     result=reset_demo_database(test_engine)
     assert result['tables_changed_on_repeat']==[]
-    assert len(result['checks'])==27  # 18 commercial + automatic backup coverage + 8 SaaS
+    assert len(result['checks'])==28  # Previous 27 plus ownership of active mobile sessions.
+    assert result['counts']['mobile_sessions'] == 0
     assert result['counts']['backup_policies'] == 2
     assert result['counts']['backup_copies'] == 0
     assert not any(result['checks'].values())

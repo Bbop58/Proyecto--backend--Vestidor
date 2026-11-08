@@ -809,6 +809,9 @@ def seed_all(db=None):
     print("Iniciando Sembrado Completo de la Base de Datos...")
     print("==================================================")
 
+    from app.core import billing_calendar
+    # Contracts are evaluated on Bolivia's business day, not the host's UTC day.
+    contract_day = billing_calendar.business_today()
     owns_session = db is None
     if owns_session:
         db = SessionLocal()
@@ -873,8 +876,8 @@ def seed_all(db=None):
                 tenant_id=tenant_urban.id,
                 plan_id=plan_pro.id,
                 estado="ACTIVA",
-                fecha_inicio=date.today(),
-                fecha_vencimiento=date.fromordinal(date.today().toordinal() + 365),
+                fecha_inicio=contract_day,
+                fecha_vencimiento=contract_day + timedelta(days=365),
                 notas="Suscripción Anual Profesional"
             )
             db.add(sub_urban)
@@ -904,8 +907,8 @@ def seed_all(db=None):
                 tenant_id=tenant_moda.id,
                 plan_id=plan_basico.id,
                 estado="ACTIVA",
-                fecha_inicio=date.today(),
-                fecha_vencimiento=date.fromordinal(date.today().toordinal() + 365),
+                fecha_inicio=contract_day,
+                fecha_vencimiento=contract_day + timedelta(days=365),
                 notas="Suscripción Anual Básica"
             )
             db.add(sub_moda)
@@ -919,7 +922,7 @@ def seed_all(db=None):
         for tenant, plan in ((tenant_urban, plan_pro), (tenant_moda, plan_basico)):
             if not db.query(Subscription.id).filter_by(tenant_id=tenant.id).first():
                 db.add(Subscription(tenant_id=tenant.id, plan_id=plan.id, estado="ACTIVA",
-                    fecha_inicio=date.today(), fecha_vencimiento=date.today()+timedelta(days=365)))
+                    fecha_inicio=contract_day, fecha_vencimiento=contract_day+timedelta(days=365)))
         db.flush()
 
         # 2. Sembrar Usuarios con diferentes Roles

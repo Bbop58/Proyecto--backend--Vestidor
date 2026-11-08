@@ -38,6 +38,33 @@ def snapshot(factory):
                 for r in db.execute(select(t)).mappings()) for t in Base.metadata.sorted_tables}
 
 
+def test_demo_contract_starts_on_bolivia_day_when_utc_host_is_already_tomorrow(seed_database,monkeypatch):
+    from datetime import date,timedelta
+    from app.core import billing_calendar
+    from app.models import Subscription,SubscriptionTerm
+    from app.services.entitlement_service import EntitlementService
+    day=date(2026,11,7)
+    class UtcHostDate(date):
+        @classmethod
+        def today(cls):return cls(2026,11,8)
+    monkeypatch.setattr(seed,'date',UtcHostDate)
+    monkeypatch.setattr(billing_calendar,'business_today',lambda:day)
+    seed.seed_all()
+    with seed_database() as db:
+        for email in ('admin@urbanstyle.com','admin@modaexpress.com'):
+            user=db.query(User).filter_by(email=email).one()
+            effective=EntitlementService.resolve(db,user)
+            assert effective['active'],effective['estado_efectivo']
+            assert effective['term']['fecha_inicio']==day
+            assert effective['subscription']['fecha_inicio']==day
+        original=[dict(r) for r in db.execute(select(SubscriptionTerm.__table__).order_by(SubscriptionTerm.id)).mappings()]
+    # A rerun on the next business day preserves the existing contract.
+    monkeypatch.setattr(billing_calendar,'business_today',lambda:day+timedelta(days=1))
+    seed.seed_all()
+    with seed_database() as db:
+        assert [dict(r) for r in db.execute(select(SubscriptionTerm.__table__).order_by(SubscriptionTerm.id)).mappings()]==original
+
+
 def test_seed_reconciles_and_preserves_edits(seed_database):
     seed.seed_all()
     with seed_database() as db:

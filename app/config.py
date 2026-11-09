@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     SMTP_USERNAME: str = ''
     SMTP_PASSWORD: SecretStr | None = None
     SMTP_FROM: str = ''
+
+    @field_validator('SMTP_PORT',mode='before')
+    @classmethod
+    def parse_smtp_port(cls,value):
+        # Environment variables arrive as text; Literal[int] does not coerce them.
+        if isinstance(value,str) and value.strip().isdigit():return int(value.strip())
+        return value
+
     FIREBASE_PROJECT_ID: str = 'fashionstore-14410'
     FIREBASE_ADMIN_JSON: SecretStr | None = None
     NOTIFICATION_WEB_URL: str = 'https://proyecto-frontend-vestidor-ten.vercel.app/dashboard?notifications=1'

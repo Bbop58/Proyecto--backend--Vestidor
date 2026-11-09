@@ -213,3 +213,16 @@ def test_real_transport_distinguishes_preaccept_failure_uncertainty_and_accepted
         connection.quit.side_effect=TimeoutError('provider-private-detail')
         _REAL_SMTP_SEND(sample(),'qa@example.com',b'%PDF')
         connection.send_message.assert_called_once()
+@pytest.mark.parametrize('port',['465','587'])
+def test_smtp_tls_port_from_hosting_environment(monkeypatch,port):
+    from app.config import Settings
+    monkeypatch.setenv('SMTP_PORT',port)
+    assert Settings(_env_file=None).SMTP_PORT==int(port)
+
+
+def test_smtp_insecure_port_from_environment_is_rejected(monkeypatch):
+    from app.config import Settings
+    from pydantic import ValidationError
+    monkeypatch.setenv('SMTP_PORT','25')
+    with pytest.raises(ValidationError):Settings(_env_file=None)
+

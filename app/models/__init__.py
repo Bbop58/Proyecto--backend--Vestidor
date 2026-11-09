@@ -19,6 +19,7 @@ from app.models.reservation_detail import ReservationDetail
 from app.models.sale import Sale, SaleType, SaleStatus, PaymentMethod
 from app.models.sale_detail import SaleDetail
 from app.models.notification import Notification
+from app.models.notification_push import NotificationDevice, NotificationPushDelivery
 from app.models.audit_log import AuditLog
 from app.models.product_exchange import ProductExchange
 from app.models.product_exchange_detail import ProductExchangeDetail

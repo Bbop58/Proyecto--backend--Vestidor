@@ -28,6 +28,9 @@ class NotificationService:
                 is_read=False
             )
             db.add(notif)
+            db.flush()
+            from app.services.notification_push_service import enqueue
+            enqueue(db, notif)
             db.commit()
             db.refresh(notif)
             logger.info(f"Notificación creada para usuario {user_id}: {title}")
@@ -43,7 +46,8 @@ class NotificationService:
         title: str,
         message: str,
         type: str = "NEW_PRODUCT",
-        reference_id: Optional[str] = None
+        reference_id: Optional[str] = None,
+        *, tenant_id: uuid.UUID
     ) -> int:
         try:
             from app.models.user import User
@@ -53,13 +57,9 @@ class NotificationService:
             users = (
                 db.query(User)
                 .join(Role, User.role_id == Role.id)
-                .filter(Role.name.ilike("%cliente%"), User.is_active == True)
+                .filter(Role.name == "cliente", User.is_active == True, User.tenant_id == tenant_id)
                 .all()
             )
-            # Si no hay usuarios con rol cliente específico, notificar a todos los usuarios activos
-            if not users:
-                users = db.query(User).filter(User.is_active == True).all()
-
             count = 0
             for u in users:
                 notif = Notification(
@@ -71,6 +71,9 @@ class NotificationService:
                     is_read=False
                 )
                 db.add(notif)
+                db.flush()
+                from app.services.notification_push_service import enqueue
+                enqueue(db, notif)
                 count += 1
 
             if count > 0:

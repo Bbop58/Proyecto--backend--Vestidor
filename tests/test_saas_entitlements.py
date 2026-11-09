@@ -114,7 +114,10 @@ def test_no_license_all_commercial_writers_reject_before_body_or_effect(client,d
     count=0
     for path,methods in app.openapi()['paths'].items():
         if not path.startswith('/api/v1/') or path.startswith(exempt) or path in (
-            '/api/v1/users/me','/api/v1/users/me/change-password','/api/v1/wallet/sync-offline-orders') or path.endswith(('/deactivate','/resume')):continue
+            '/api/v1/users/me','/api/v1/users/me/change-password','/api/v1/wallet/sync-offline-orders',
+            # Revoking an installation is cleanup, never a commercial write;
+            # it must work after expiry using its installation capability.
+            '/api/v1/notifications/push/unregister') or path.endswith(('/deactivate','/resume')):continue
         for method in set(methods)&{'post','put','patch','delete'}:
             concrete=re.sub(r'\{[^}]+\}',str(uuid.UUID(int=0)),path)
             response=client.request(method.upper(),concrete,headers=headers(setup['admin']),json={})

@@ -1,0 +1,118 @@
+{
+  "phase": "C1",
+  "date_bolivia": "2026-11-09",
+  "root": "C:\\Users\\Laptop\\FashionStore-recuperado",
+  "published": false,
+  "backend_directed_pass": 120,
+  "web_directed_pass": 6,
+  "angular_build": "PASS",
+  "android_real_push": "PENDING_C2",
+  "sources": {
+    "backend/app/models/notification_push.py": "a4703563551c206ac091f65ab321a54c417df9fb775cd996d158018be1ce4bfb",
+    "backend/app/core/notification_push_ddl.py": "4366b6f5f784d8e3d2ba78c3bf7a234c5b262dac334905e052bb7a5cbbeb7563",
+    "backend/app/services/notification_push_service.py": "f3f020b22ef51fa923f163e8ea428f42bf4e954dbabefdb8a5e6fbd543c7e676",
+    "backend/tests/test_notification_push.py": "6bfc5f219acb66d00c1e0bdd911f1fefa46837e5064dc609384a7750719d3a60",
+    "backend/scripts/verify_notifications_migration.py": "f6f750ee22e8f58c1bb09c80f280bdc4cb0d2d90d01ef1fa36a86b4cfe00a0ed",
+    "web/src/app/core/services/notification-push.service.ts": "d7b2b14ba604d582b3ddf1d8056dadd27aa86a98ac7a5ab2f76c618f61b73533",
+    "web/src/app/core/services/notification-push.service.spec.ts": "c306325ab4e4cdff010b521b05fde3b298f52f08bc777889252d51953c121043",
+    "web/src/app/core/services/notification-push-adapter.spec.ts": "93978b4872699b4b144d429676514226dd0225382ad5cf697aaf4c21e2beca6d"
+  },
+  "logs": {
+    "notifications-c1-red.log": "911a5b9ab666b9382d576feb5b82e76d9ec2412ba346d2259a63d4b09ce1723f",
+    "notifications-c1-web-red.log": "1485f12beb5bb7a5534b7a6f086a73e7cc4fd13f9db2ddd5c64c536f2826017e",
+    "notifications-c1-adapter-red.log": "4b940b34df4805eeff0d770cdcf1c226bf69d26f8621b06dc44965fa2461b47f",
+    "notifications-c1-backend-final.log": "1fc152813325018f7e2e6731b79bb2e829db91ce759cc84c244639b768b5ed2f",
+    "notifications-c1-web-green.log": "6063f7fb9b266803130a628652edc7828f79620373a34d21e08d2cf0cffec18b",
+    "notifications-c1-web-build.log": "05af6cc7dd9d228b87e409bdee2a0952a89d90bc7e7a38338a13129ba2d57244",
+    "notifications-c1-migration.json": "44063b5f8a0a314ccf250782ca27d7658b6c9345991ff4065b02aab2464587d9"
+  },
+  "repositories": {
+    "backend": {
+      "base_commit": "f6353467fc6a19d0b6693e22b2ac0028a1debc72",
+      "status": [
+        " M app/api/v1/notifications.py",
+        " M app/config.py",
+        " M app/core/tenant_scope.py",
+        " M app/main.py",
+        " M app/models/__init__.py",
+        " M app/services/backup_recovery.py",
+        " M app/services/notification_service.py",
+        " M app/services/product_service.py",
+        " M app/services/sale_service.py",
+        " M requirements.txt",
+        " M tests/test_saas_entitlements.py",
+        " M tests/test_saas_platform_boundary.py",
+        " M tests/test_tenant_contract.py",
+        "?? app/core/notification_push_ddl.py",
+        "?? app/models/notification_push.py",
+        "?? app/schemas/notification_push.py",
+        "?? app/services/notification_push_service.py",
+        "?? app/services/notification_realtime.py",
+        "?? scripts/migrate_notification_push.py",
+        "?? scripts/verify_notifications_live.py",
+        "?? scripts/verify_notifications_migration.py",
+        "?? tests/test_notification_push.py",
+        "?? tests/test_notifications_realtime.py"
+      ]
+    },
+    "web": {
+      "base_commit": "59188ba774ebbe27531ff4761984cbd94544bea3",
+      "status": [
+        " M package-lock.json",
+        " M package.json",
+        " M src/app/core/layout/topbar/topbar.component.html",
+        " M src/app/core/layout/topbar/topbar.component.ts",
+        " M src/app/core/services/notification.service.spec.ts",
+        " M src/app/core/services/notification.service.ts",
+        " M src/app/core/services/platform-storage-boundary.spec.ts",
+        "?? e2e/notifications-browser-diagnostic.mjs",
+        "?? e2e/notifications-live.mjs",
+        "?? public/firebase-config.js",
+        "?? public/firebase-messaging-sw.js",
+        "?? src/app/core/config/firebase.ts",
+        "?? src/app/core/services/notification-push-adapter.spec.ts",
+        "?? src/app/core/services/notification-push.service.spec.ts",
+        "?? src/app/core/services/notification-push.service.ts",
+        "?? src/app/core/services/notification-realtime.service.spec.ts",
+        "?? src/app/core/services/notification-realtime.service.ts"
+      ]
+    },
+    "mobile": {
+      "base_commit": "d64ffb19ac3d1a5b81cb548f499d58ac8def27e0",
+      "status": [
+        " M android/app/build.gradle.kts",
+        " M android/app/src/main/res/xml/auth_backup_rules.xml",
+        " M android/app/src/main/res/xml/auth_data_extraction_rules.xml",
+        " M android/settings.gradle.kts",
+        " M lib/config/routes.dart",
+        " M lib/main.dart",
+        " M lib/screens/notifications/notifications_screen.dart",
+        " M lib/services/local_notification_service.dart",
+        " M lib/services/notification_service.dart",
+        " M linux/flutter/generated_plugin_registrant.cc",
+        " M linux/flutter/generated_plugin_registrant.h",
+        " M linux/flutter/generated_plugins.cmake",
+        " M macos/Flutter/GeneratedPluginRegistrant.swift",
+        " M pubspec.lock",
+        " M pubspec.yaml",
+        " M windows/flutter/generated_plugin_registrant.cc",
+        " M windows/flutter/generated_plugin_registrant.h",
+        " M windows/flutter/generated_plugins.cmake",
+        "?? android/app/google-services.json",
+        "?? lib/screens/notifications/notification_controls.dart",
+        "?? lib/services/notification_push_service.dart",
+        "?? lib/services/notification_realtime_service.dart",
+        "?? test/notification_push_test.dart",
+        "?? test/notification_realtime_test.dart"
+      ]
+    }
+  },
+  "migration": {
+    "database": "fashionstore_test_push_migration_f04bd619b0",
+    "migration_runs": 2,
+    "tables_unchanged": 42,
+    "commercial_rows_unchanged": true,
+    "legacy_device_preserved": true,
+    "legacy_device_eligible": false
+  }
+}

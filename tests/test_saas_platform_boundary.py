@@ -63,6 +63,8 @@ def test_operator_company_is_not_in_public_directory(client, saas_actors):
 def test_all_commercial_routes_reject_operator_before_validation_or_provider_call(client, saas_actors):
     exempt_prefixes=('/api/v1/auth/', '/api/v1/platform/', '/api/v1/subscriptions/admin/')
     exempt_exact={'/api/v1/users/me','/api/v1/users/me/change-password',
+        # Installation-capability revocation works without a user session.
+        '/api/v1/notifications/push/unregister',
         '/api/v1/subscriptions/public/tenants','/api/v1/subscriptions/plans','/api/v1/subscriptions/onboarding',
         '/api/v1/payments/paypal/return','/api/v1/payments/paypal/cancel','/api/v1/subscriptions/paypal/webhook'}
     results=[]

@@ -14,6 +14,10 @@ class Settings(BaseSettings):
 
     RUN_STARTUP_MIGRATIONS: bool = False
     RUN_DEMO_SEED: bool = False
+    NOTIFICATION_PUSH_ENABLED: bool = False
+    FIREBASE_PROJECT_ID: str = 'fashionstore-14410'
+    FIREBASE_ADMIN_JSON: SecretStr | None = None
+    NOTIFICATION_WEB_URL: str = 'https://proyecto-frontend-vestidor-ten.vercel.app/dashboard?notifications=1'
     # Optional automatic backups: absent storage never disables manual export.
     BACKUP_S3_ENDPOINT: str = ''
     BACKUP_S3_BUCKET: str = ''

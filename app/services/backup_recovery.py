@@ -27,7 +27,8 @@ def digest(data):
 def models_for(tenant):
     from app.core.tenant_scope import predicates
     return {ALIASES.get(model.__tablename__,model.__tablename__):(model,condition)
-            for model,condition in predicates(tenant).items() if not getattr(model,'__contract_metadata__',False)}
+            for model,condition in predicates(tenant).items()
+            if not getattr(model,'__contract_metadata__',False) and not getattr(model,'__operational_metadata__',False)}
 
 
 def contract_references(connection,tenant):
@@ -249,6 +250,9 @@ def restore_snapshot(db,backup,user):
         owned_roles=select(Role.id).where(Role.tenant_id==tenant)
         from app.services.mobile_session_service import MobileSessionService
         MobileSessionService.revoke_company(db, tenant)
+        from app.models.notification_push import NotificationDevice
+        connection.execute(NotificationDevice.__table__.update().where(
+            NotificationDevice.__table__.c.tenant_id==tenant).values(active=False))
         connection.execute(role_permissions.delete().where(role_permissions.c.role_id.in_(owned_roles)))
         for table in reversed(Base.metadata.sorted_tables):
             if table.name not in tables or table.name=='tenants':continue

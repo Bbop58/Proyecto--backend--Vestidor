@@ -25,7 +25,8 @@ def predicates(tenant_id):
         (m.ProductVariant,'producto',m.Product), (m.SaleDetail,'venta',m.Sale),
         (m.ReservationDetail,'reserva',m.Reservation),
         (m.ProductExchangeDetail,'cambio',m.ProductExchange),
-        (m.Notification,'user',m.User)]:
+        (m.Notification,'user',m.User),
+        (m.NotificationPushDelivery,'device',m.NotificationDevice)]:
         result[cls] = getattr(cls,rel).has(parent.tenant_id == tenant_id)
     return result
 

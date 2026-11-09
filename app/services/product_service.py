@@ -96,6 +96,7 @@ class ProductService:
             from app.services.notification_service import NotificationService
             NotificationService.notify_all_clients(
                 db=db,
+                tenant_id=product.tenant_id,
                 title="✨ ¡Nuevo producto en el catálogo!",
                 message=f"Ya está disponible '{product.nombre}' a Bs {product.precio_base:.2f}. ¡Pruébatelo en el vestidor virtual!",
                 type="NEW_PRODUCT",

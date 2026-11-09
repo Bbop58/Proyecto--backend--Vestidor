@@ -441,7 +441,7 @@ class SaleService:
                 NotificationService.create(
                     db=db,
                     user_id=venta.cliente_id,
-                    title="¡Compra Presencial Exitosa!",
+                    title="¡Compra Digital Confirmada!",
                     message=f"Tu compra #{venta.numero_recibo} por Bs {float(venta.monto_total):.2f} ha sido procesada con éxito en {venta.sucursal.nombre if venta.sucursal else 'tienda'}.",
                     type="VENTA",
                     reference_id=str(venta.id)
@@ -573,8 +573,8 @@ class SaleService:
                 NotificationService.create(
                     db=db,
                     user_id=venta.cliente_id,
-                    title="¡Compra Presencial Exitosa!",
-                    message=f"Tu compra #{venta.numero_recibo} por Bs {float(venta.monto_total):.2f} ha sido procesada con éxito en {venta.sucursal.nombre if venta.sucursal else 'tienda'}.",
+                    title="Compra Cancelada",
+                    message=f"Tu compra #{venta.numero_recibo} fue cancelada. Consulta su estado en el historial de compras.",
                     type="VENTA",
                     reference_id=str(venta.id)
                 )

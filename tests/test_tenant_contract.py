@@ -241,6 +241,9 @@ def test_private_routes_have_authentication_dependencies():
             # Like legacy refresh, these authenticate a body credential instead
             # of requiring an unexpired access JWT. No commercial-route wildcard.
             '/auth/mobile/refresh','/auth/mobile/logout',
+            # Installation secret + binding capability authenticates durable
+            # logout cleanup even after the access token has expired.
+            '/notifications/push/unregister',
             '/payments/paypal/return','/payments/paypal/cancel','/subscriptions/paypal/webhook',
             '/subscriptions/public/tenants','/subscriptions/plans','/subscriptions/onboarding','/health','/health/ready','/'}
     def dependencies(dep):

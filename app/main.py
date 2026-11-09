@@ -49,11 +49,45 @@ from fastapi.exception_handlers import request_validation_exception_handler
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_error(request: Request, exc: RequestValidationError):
-    if request.url.path.startswith(settings.API_V1_STR + '/auth/mobile/'):
+    if (request.url.path.startswith(settings.API_V1_STR + '/auth/mobile/')
+        or request.url.path.startswith(settings.API_V1_STR + '/notifications/push/')):
         # FastAPI's default validation errors may echo the entire request body.
-        return JSONResponse(status_code=422, content={'detail': 'Solicitud de sesión móvil no válida'},
+        message='Solicitud de sesión móvil no válida' if '/auth/mobile/' in request.url.path else 'Solicitud de avisos no válida'
+        return JSONResponse(status_code=422, content={'detail': message},
                             headers={'Cache-Control': 'no-store'})
     return await request_validation_exception_handler(request, exc)
+
+
+@app.on_event('startup')
+async def start_notification_push_worker():
+    if not settings.NOTIFICATION_PUSH_ENABLED:return
+    if not settings.FIREBASE_ADMIN_JSON:
+        raise RuntimeError('FCM enabled without server credentials')
+    import json
+    credential=json.loads(settings.FIREBASE_ADMIN_JSON.get_secret_value())
+    if credential.get('project_id')!=settings.FIREBASE_PROJECT_ID or not credential.get('private_key'):
+        raise RuntimeError('FCM server credential does not match project')
+    import asyncio
+    from app.database import SessionLocal
+    from app.services.notification_push_service import deliver_pending
+    async def work():
+        import logging
+        while True:
+            try:await asyncio.to_thread(deliver_pending,SessionLocal)
+            except Exception as error:
+                logging.getLogger(__name__).warning('Push worker: %s',type(error).__name__)
+            await asyncio.sleep(3)
+    app.state.push_worker=asyncio.create_task(work())
+
+
+@app.on_event('shutdown')
+async def stop_notification_push_worker():
+    task=getattr(app.state,'push_worker',None)
+    if task:
+        import asyncio
+        task.cancel()
+        try:await task
+        except asyncio.CancelledError:pass
 
 
 @app.exception_handler(Exception)

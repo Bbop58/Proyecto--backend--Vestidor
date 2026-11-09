@@ -1,0 +1,3 @@
+-r requirements.txt
+# PDF text validation; not needed by the deployed API.
+pypdf==7.0.0

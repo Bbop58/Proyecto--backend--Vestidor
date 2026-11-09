@@ -1,0 +1,64 @@
+{
+  "tests": {
+    "new_directed_pass": 34,
+    "single_full_green_109": false,
+    "previous_commercial_pass": 75
+  },
+  "files": [
+    {
+      "path": "app/schemas/receipt.py",
+      "sha256": "63726185b93402af4147510c3b50fe35499d84175ac245045be0d928d6d2ea75"
+    },
+    {
+      "path": "app/services/receipt_document_service.py",
+      "sha256": "800019e0476f0405e160278731118517ddfde53510ac1dc96dad7eeab521ec38"
+    },
+    {
+      "path": "app/services/receipt_pdf_service.py",
+      "sha256": "4ce3434918fb7b22832bb4a02e30d93d02ff33cf6733485b22a41fe185ad3950"
+    },
+    {
+      "path": "app/api/v1/receipts.py",
+      "sha256": "e021bc27db64f4d9948c76851356a0c7c05d683282caca6418ea529f08635d1c"
+    },
+    {
+      "path": "app/api/v1/router.py",
+      "sha256": "0419b30130db4d763302505f876b1a36a58ced46792f1b1b6ab66c85a425448f"
+    },
+    {
+      "path": "requirements.txt",
+      "sha256": "a91a95aba23c5f554d1eca435d5243b06e9899d1ab5b19cca831be8bce629c51"
+    },
+    {
+      "path": "requirements-dev.txt",
+      "sha256": "f5e6c0bf7aa0f109d644e5080f978bfab24d5a0d689c67e2daaa4f1eaa34e368"
+    },
+    {
+      "path": "tests/test_receipt_documents.py",
+      "sha256": "1e7d0fbfb8ddf4e79990300ee6f731f7e91827c492defd85bdb4c50172fb3a2e"
+    },
+    {
+      "path": "tests/test_receipt_pdf.py",
+      "sha256": "679d4813cbc4eb88edd05f29b436046818d30026219a18b8a3b5610649b49b43"
+    },
+    {
+      "path": "app/assets/receipts/NotoSans-Regular.ttf",
+      "sha256": "b85c38ecea8a7cfb39c24e395a4007474fa5a4fc864f6ee33309eb4948d232d5"
+    },
+    {
+      "path": "app/assets/receipts/OFL.txt",
+      "sha256": "3c05a56499a20ee045a6d36834b6a9e1108f359eede10d7c1613bc4524d01eef"
+    }
+  ],
+  "backend_base": "d81f6e8",
+  "published": false,
+  "status": "COMPLETE_LOCAL",
+  "pdf_samples": {
+    "spans_in_bounds": 535,
+    "reservation_pages": 1,
+    "sale_pages": 1,
+    "long_pages": 6,
+    "long_items": 90
+  },
+  "phase": "F1"
+}

@@ -29,3 +29,4 @@ joblib>=1.4.0
 sqlglot==30.29.0
 boto3>=1.35.0,<2
 firebase-admin==7.7.0
+reportlab==5.1.0

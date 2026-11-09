@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     RUN_STARTUP_MIGRATIONS: bool = False
     RUN_DEMO_SEED: bool = False
     NOTIFICATION_PUSH_ENABLED: bool = False
+    RECEIPT_EMAIL_ENABLED: bool = False
+    SMTP_HOST: str = ''
+    SMTP_PORT: Literal[465,587] = 587
+    SMTP_USERNAME: str = ''
+    SMTP_PASSWORD: SecretStr | None = None
+    SMTP_FROM: str = ''
     FIREBASE_PROJECT_ID: str = 'fashionstore-14410'
     FIREBASE_ADMIN_JSON: SecretStr | None = None
     NOTIFICATION_WEB_URL: str = 'https://proyecto-frontend-vestidor-ten.vercel.app/dashboard?notifications=1'

@@ -89,3 +89,4 @@ from app.models.subscription_payment import SubscriptionPayment,SubscriptionPaym
 from app.models.backup_policy import BackupPolicy
 from app.models.backup_copy import BackupCopy
 from app.models.analytics_model import AnalyticsModel
+from app.models.receipt_email_delivery import ReceiptEmailDelivery

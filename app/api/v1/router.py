@@ -79,3 +79,6 @@ from app.api.v1.company_paypal import router as company_paypal_router
 api_v1_router.include_router(company_paypal_router)
 from app.api.v1.subscription_billing import router as subscription_billing_router
 api_v1_router.include_router(subscription_billing_router)
+
+from app.api.v1.receipts import router as receipts_router
+api_v1_router.include_router(receipts_router)

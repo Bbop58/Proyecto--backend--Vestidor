@@ -57,6 +57,7 @@ class AdminCashTopupRequest(BaseModel):
 
 
 class CashTopupReceipt(BaseModel):
+    transaction_id: uuid.UUID
     numero_comprobante: str
     fecha: str
     cajero: str

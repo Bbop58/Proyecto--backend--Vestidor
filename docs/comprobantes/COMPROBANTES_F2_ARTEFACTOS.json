@@ -1,0 +1,57 @@
+{
+  "phase": "F2",
+  "tests": {
+    "counts_overlap": true,
+    "integration_pass": 56,
+    "email_final_pass": 19
+  },
+  "migration_repeat_pass": true,
+  "published": false,
+  "actual_email_sent": false,
+  "smtp_authentication_local": "PASS",
+  "status": "COMPLETE_LOCAL",
+  "files": [
+    {
+      "path": "app/config.py",
+      "sha256": "6f97f9046c46fbb904b29586bde3f42c5cc7b7046062c13459c6ab38d6c2dc23"
+    },
+    {
+      "path": "app/models/receipt_email_delivery.py",
+      "sha256": "4c923818db64c28e6731fbd74a928eb0c522391badef07de2b13e1e5b83bc21e"
+    },
+    {
+      "path": "app/models/__init__.py",
+      "sha256": "a68a62bbded65ad73daae9951509ae58aef0915b750e482e4acbe4c2be7976b3"
+    },
+    {
+      "path": "app/core/receipt_email_ddl.py",
+      "sha256": "dfef1c75314f92630ebeb835fe0a12e02ccc7bfb367f750372d0d03bc9bff9b5"
+    },
+    {
+      "path": "scripts/migrate_receipt_email.py",
+      "sha256": "3c7fdf936a6222218838564d92bb280be95c6344c52c60ee1912bc169e0172b5"
+    },
+    {
+      "path": "app/schemas/receipt.py",
+      "sha256": "da561dcf177f6c5252a0c9e2876283fdfe83530836dbb1f69465b9d3ccd2a892"
+    },
+    {
+      "path": "app/services/receipt_email_service.py",
+      "sha256": "b7c70ee30a87ef6e0dc860054e512a5e7eaa2a9e1112acee26e008490f1cb219"
+    },
+    {
+      "path": "app/api/v1/receipts.py",
+      "sha256": "67af72015ccfb3207c1195e877e1fc6af85dc99a8b3c58a281ed5b6eed3071b2"
+    },
+    {
+      "path": "tests/test_receipt_email.py",
+      "sha256": "2531355e3bf166542b0a44e65511b30c2b8e4c3a5f8d864999fe8da03ad7851e"
+    }
+  ],
+  "seed": {
+    "repeat_unchanged": true,
+    "email_deliveries": 0,
+    "checks": 28
+  },
+  "railway_smtp_test": "PENDING_F3"
+}

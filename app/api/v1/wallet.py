@@ -70,7 +70,10 @@ def get_my_wallet_history(
     try:
         tenant_id = current_user.tenant_id
 
-        wallet = WalletService.get_or_create_wallet(db, current_user.id, tenant_id)
+        # Reading a receipt/history must not open a new financial account.
+        from app.models.user_wallet import UserWallet
+        wallet = db.query(UserWallet).filter_by(user_id=current_user.id,tenant_id=tenant_id).first()
+        if wallet is None:return []
         history = WalletService.get_wallet_history(db, wallet.id, limit=limit)
         return [WalletTransactionResponse.model_validate(t) for t in history]
     except HTTPException:
@@ -195,6 +198,7 @@ def admin_topup_cash(
         "user_email": cliente.email,
         "nuevo_saldo": float(wallet.saldo_actual),
         "recibo_caja": {
+            "transaction_id": str(transaction.id),
             "numero_comprobante": comp_num,
             "fecha": now_str,
             "cajero": current_user.email,

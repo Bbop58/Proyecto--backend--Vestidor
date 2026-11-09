@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     RUN_DEMO_SEED: bool = False
     NOTIFICATION_PUSH_ENABLED: bool = False
     RECEIPT_EMAIL_ENABLED: bool = False
+    RECEIPT_EMAIL_PROVIDER: Literal['smtp','brevo'] = 'smtp'
+    BREVO_API_KEY: SecretStr | None = None
     SMTP_HOST: str = ''
     SMTP_PORT: Literal[465,587] = 587
     SMTP_USERNAME: str = ''

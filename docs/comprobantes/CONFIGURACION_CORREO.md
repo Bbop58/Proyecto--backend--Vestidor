@@ -1,5 +1,11 @@
 # Configuración de correo del software
 
+## Brevo HTTPS — transporte elegido al cerrar
+
+Railway no pudo conectar SMTP Gmail. Se usa directamente `https://api.brevo.com/v3/smtp/email`, sin puente Vercel ni SDK nuevo. Configurar privadamente `RECEIPT_EMAIL_PROVIDER=brevo`, `BREVO_API_KEY`, `RECEIPT_EMAIL_ENABLED=true` y `SMTP_FROM` con el remitente verificado. El nombre SMTP_FROM se conserva por compatibilidad, también identifica al remitente Brevo. Las claves nunca se incorporan a Angular/APK/Git. SMTP sigue opcional para entornos que lo permitan; no hay fallback automático ni doble envío.
+
+Se adjuntan los mismos bytes PDF canónicos. HTTP201 con messageId significa ACCEPTED; 4xx definitivos FAILED; timeout/5xx/aceptación incierta UNKNOWN. El UUID de envío existente impide replay con efectos duplicados. No cambiar la APK por esta elección de proveedor.
+
 El backend envía el mismo PDF que entrega Descargar PDF. Un remitente SMTP para toda la plataforma; el nombre visible incluye la empresa. Los correos de prueba son destinatarios, no credenciales del servidor.
 
 Variables del servicio backend (valores privados fuera de Git):

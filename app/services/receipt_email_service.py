@@ -5,6 +5,10 @@ import re
 import smtplib
 import ssl
 import logging
+import base64
+from html import escape
+from urllib.request import Request,urlopen
+from urllib.error import HTTPError
 from datetime import datetime,timedelta,timezone
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -36,11 +40,42 @@ def _address(value):
 
 
 def email_enabled():
+    if settings.RECEIPT_EMAIL_PROVIDER=='brevo':
+        if not(settings.RECEIPT_EMAIL_ENABLED and settings.BREVO_API_KEY and settings.BREVO_API_KEY.get_secret_value()):return False
+        try:_address(settings.SMTP_FROM)
+        except HTTPException:return False
+        return True
     if not (settings.RECEIPT_EMAIL_ENABLED and settings.SMTP_HOST and settings.SMTP_USERNAME
             and settings.SMTP_PASSWORD and settings.SMTP_PASSWORD.get_secret_value() and settings.SMTP_FROM):return False
     try:_address(settings.SMTP_FROM)
     except HTTPException:return False
     return True
+
+
+def brevo_send(document,recipient,pdf):
+    company=' '.join(document.company.name.split())[:120]
+    filename=re.sub(r'[^a-zA-Z0-9_-]','_',document.number)[:90]
+    text='Adjuntamos tu comprobante de '+company+'.\n'+document.payment_status+'.\nEl documento refleja el estado registrado de la operación.'
+    payload={'sender':{'email':_address(settings.SMTP_FROM),'name':'FashionStore · '+company},
+        'to':[{'email':_address(recipient)}],
+        'subject':document.title+' · '+re.sub(r'[\r\n\x00-\x1f]',' ',document.number),
+        'textContent':text,'htmlContent':'<p>'+escape(text).replace('\n','<br>')+'</p>',
+        'attachment':[{'name':'comprobante-'+filename+'.pdf','content':base64.b64encode(pdf).decode('ascii')}]}
+    request=Request('https://api.brevo.com/v3/smtp/email',data=json.dumps(payload).encode('utf-8'),
+        headers={'api-key':settings.BREVO_API_KEY.get_secret_value(),'Content-Type':'application/json','Accept':'application/json'})
+    try:
+        with urlopen(request,timeout=25) as response:
+            result=json.loads(response.read())
+            if response.status!=201 or not result.get('messageId'):raise RuntimeError('Acceptance uncertain')
+    except HTTPError as error:
+        logger.warning('Receipt Brevo HTTP status: %s',error.code)
+        if 400<=error.code<500 and error.code!=408:raise EmailRejected() from None
+        raise RuntimeError('Acceptance uncertain') from None
+
+
+def deliver(document,recipient,pdf):
+    if settings.RECEIPT_EMAIL_PROVIDER=='brevo':return brevo_send(document,recipient,pdf)
+    return smtp_send(document,recipient,pdf)
 
 
 def smtp_send(document,recipient,pdf):
@@ -125,7 +160,7 @@ def send_receipt_email(db,actor,kind,entity_id,recipient,operation_id) -> Receip
         pdf_hash=hashlib.sha256(pdf).hexdigest(),status='PENDING',created_at=instant,updated_at=instant)
     db.add(row);db.commit()
     try:
-        smtp_send(document,recipient,pdf);state='ACCEPTED'
+        deliver(document,recipient,pdf);state='ACCEPTED'
     except EmailRejected:state='FAILED'
     except Exception:state='UNKNOWN'
     # KeyboardInterrupt/process failure intentionally leaves durable PENDING.

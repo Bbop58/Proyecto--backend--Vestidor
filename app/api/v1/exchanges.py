@@ -18,6 +18,11 @@ from app.services.audit_service import AuditService
 router = APIRouter(prefix="/cambios", tags=["Cambios de Prendas"])
 
 
+@router.post('/cotizar',dependencies=[Depends(require_permission('ventas.create'))])
+def quote_exchange(data:ProductExchangeCreate,db:Session=Depends(get_db),current_user:User=Depends(get_current_user)):
+    return ExchangeService.quote_exchange(db,data,current_user.id)
+
+
 @router.get(
     "/verificar-recibo/{numero_recibo}",
     response_model=VerifyReceiptResponse,

@@ -12,9 +12,11 @@ class ExchangeItemCreate(BaseModel):
 
 
 class ProductExchangeCreate(BaseModel):
+    client_operation_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    quote_hash: Optional[str] = Field(None,pattern=r'^[a-f0-9]{64}$')
     numero_recibo: str = Field(..., min_length=3, description="Número de recibo original de la venta")
     motivo: str = Field(..., min_length=3, max_length=255, description="Motivo del cambio")
-    estado_prenda: str = Field(default="BUEN_ESTADO", max_length=100)
+    estado_prenda: str = Field(default="BUEN_ESTADO", pattern=r'^(BUEN_ESTADO|CON_ETIQUETA|DEFECTO_FABRICA)$')
     metodo_pago_diferencia: Optional[str] = Field(default="NINGUNO")
     nota: Optional[str] = None
     items: List[ExchangeItemCreate] = Field(..., min_length=1)

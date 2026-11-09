@@ -1,4 +1,11 @@
 import uuid
+import hashlib
+import json
+import logging
+from types import SimpleNamespace
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy import select,func
+from app.models.sync_operation import SyncOperation
 from datetime import datetime, timezone, date
 from decimal import Decimal
 from collections import defaultdict, Counter
@@ -27,6 +34,7 @@ from app.schemas.product_exchange import (
     VerifyReceiptItemResponse,
 )
 
+logger=logging.getLogger(__name__)
 MAX_EXCHANGE_DAYS = 30
 
 
@@ -87,7 +95,7 @@ class ExchangeService:
     @staticmethod
     def verify_receipt(db: Session, numero_recibo: str, tenant_id: Optional[uuid.UUID] = None) -> VerifyReceiptResponse:
         recibo_limpio = numero_recibo.strip().upper()
-        q = db.query(Sale).filter(Sale.numero_recibo.ilike(recibo_limpio))
+        q = db.query(Sale).filter(func.upper(Sale.numero_recibo)==recibo_limpio)
         if tenant_id:
             q = q.filter(Sale.tenant_id == tenant_id)
         venta = q.first()
@@ -202,15 +210,32 @@ class ExchangeService:
         )
 
     @staticmethod
-    @commercial_transaction
-    def create_exchange(
-        db: Session,
-        data: ProductExchangeCreate,
-        cajero_id: Optional[uuid.UUID] = None
-    ) -> dict:
+    def _fingerprint(data):
+        return hashlib.sha256(json.dumps(data.model_dump(mode='json',exclude={'client_operation_id','quote_hash'}),sort_keys=True).encode()).hexdigest()
+
+    @staticmethod
+    def quote_exchange(db,data,cajero_id):
+        prepared=ExchangeService._prepare_exchange(db,data,cajero_id,validate_payment=False)
+        result={key:format(prepared[key],'.2f') for key in ('monto_total_devuelto','monto_total_entregado','diferencia_total')}
+        result['diferencia']=result.pop('diferencia_total')
+        result['quote_hash']=ExchangeService._quote_hash(prepared)
+        return result
+
+    @staticmethod
+    def _quote_hash(prepared):
+        value=[str(prepared['venta'].id),str(prepared['monto_total_devuelto']),str(prepared['monto_total_entregado']),
+          [[str(p['item'].variante_devuelta_id),p['item'].cantidad_devuelta,str(p['item'].variante_entregada_id),p['item'].cantidad_entregada,
+            str(p['precio_devuelto']),str(p['precio_entregado'])] for p in prepared['items_a_procesar']]]
+        return hashlib.sha256(json.dumps(value).encode()).hexdigest()
+
+    @staticmethod
+    def _prepare_exchange(db,data,cajero_id,validate_payment=True):
         # 1. Validar recibo de venta
         recibo_limpio = data.numero_recibo.strip().upper()
-        venta = db.query(Sale).filter(Sale.numero_recibo.ilike(recibo_limpio)).first()
+        actor=db.get(User,cajero_id) if cajero_id else None
+        if not actor or not actor.is_active or not actor.tenant_id or actor.is_platform_admin:
+            raise HTTPException(403,'Se requiere una identidad comercial')
+        venta = db.query(Sale).filter(func.upper(Sale.numero_recibo)==recibo_limpio,Sale.tenant_id==actor.tenant_id).first()
 
         if not venta:
             raise HTTPException(
@@ -371,11 +396,36 @@ class ExchangeService:
             })
 
         diferencia_total = monto_total_entregado - monto_total_devuelto
-        if diferencia_total > 0 and data.metodo_pago_diferencia not in ('EFECTIVO','TARJETA','QR'):
+        if validate_payment and diferencia_total > 0 and data.metodo_pago_diferencia not in ('EFECTIVO','TARJETA','QR'):
             raise HTTPException(400, "Registra el medio de cobro de la diferencia en caja")
         if diferencia_total < 0 and not venta.cliente_id:
             raise HTTPException(409, "Identifica al cliente para acreditar la diferencia a su billetera")
 
+        return dict(venta=venta,dias_transcurridos=dias_transcurridos,items_a_procesar=items_a_procesar,
+            monto_total_devuelto=monto_total_devuelto,monto_total_entregado=monto_total_entregado,diferencia_total=diferencia_total)
+
+    @staticmethod
+    @commercial_transaction
+    def create_exchange(db:Session,data:ProductExchangeCreate,cajero_id=None):
+        from app.services.sync_service import SyncService
+        actor=db.get(User,cajero_id) if cajero_id else None
+        if not actor or not actor.is_active or not actor.tenant_id or actor.is_platform_admin:
+            raise HTTPException(403,'Se requiere una identidad comercial')
+        SyncService.lock_keys(db,SimpleNamespace(client_operation_id=data.client_operation_id,supersedes_operation_id=None))
+        digest=ExchangeService._fingerprint(data)
+        old=db.execute(select(SyncOperation.__table__).where(SyncOperation.__table__.c.client_operation_id==data.client_operation_id)).mappings().first()
+        if old:
+            if old['tenant_id']!=actor.tenant_id or old['user_id']!=actor.id or old['operation_type']!='CAMBIO_PRENDA' or old['request_fingerprint']!=digest:
+                raise HTTPException(409,'El identificador ya pertenece a otra operación')
+            result=ExchangeService.get_exchange_by_id(db,old['entity_id'],actor.tenant_id)
+            db.commit()
+            return result
+        prepared=ExchangeService._prepare_exchange(db,data,cajero_id)
+        if data.quote_hash and data.quote_hash!=ExchangeService._quote_hash(prepared):
+            raise HTTPException(409,'La cotización cambió. Revisa los importes antes de confirmar nuevamente.')
+        venta=prepared['venta'];dias_transcurridos=prepared['dias_transcurridos'];items_a_procesar=prepared['items_a_procesar']
+        monto_total_devuelto=prepared['monto_total_devuelto'];monto_total_entregado=prepared['monto_total_entregado'];diferencia_total=prepared['diferencia_total']
+        from app.services.wallet_service import WalletService
         # 6. Generar número único de comprobante de cambio
         now = utc_now()
         numero_cambio = f"CAM-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
@@ -441,6 +491,15 @@ class ExchangeService:
             )
             db.add(mov_dev)
 
+            if data.estado_prenda=='DEFECTO_FABRICA':
+                # Physical return is traced, then removed from sellable stock atomically.
+                before_merma=inv_devuelta.stock_actual
+                inv_devuelta.stock_actual-=item.cantidad_devuelta
+                db.add(InventoryMovement(tenant_id=venta.tenant_id,inventario_id=inv_devuelta.id,
+                    tipo=MovementType.AJUSTE,cantidad=-item.cantidad_devuelta,
+                    stock_antes=before_merma,stock_despues=inv_devuelta.stock_actual,
+                    referencia=numero_cambio,nota='Merma por defecto de fábrica; prenda no vendible',usuario_id=cajero_id))
+
             # B. Salida de la prenda entregada del stock
             inv_ent = proc["inv_entregada"]
             stock_antes_ent = inv_ent.stock_actual
@@ -472,6 +531,9 @@ class ExchangeService:
             )
             db.add(detalle)
 
+        db.add(SyncOperation(client_operation_id=data.client_operation_id,tenant_id=venta.tenant_id,
+            branch_id=venta.sucursal_id,user_id=cajero_id,request_fingerprint=digest,operation_type='CAMBIO_PRENDA',
+            client_created_at=now,sync_status='CONFIRMADA',entity_id=cambio.id,response_payload={'receipt_number':numero_cambio}))
         db.commit()
         db.refresh(cambio)
 
@@ -488,7 +550,8 @@ class ExchangeService:
                     reference_id=str(cambio.id)
                 )
             except Exception as notif_err:
-                logger.warning(f"Aviso: no se pudo emitir notificación de cambio: {notif_err}")
+                db.rollback()
+                logger.warning("Notificación de cambio no enviada: %s",type(notif_err).__name__)
 
         return ExchangeService._format_exchange_response(cambio)
 

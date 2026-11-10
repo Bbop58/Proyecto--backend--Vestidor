@@ -16,6 +16,14 @@ def clean_slug(text: str) -> str:
     return re.sub(r"[-\s]+", "-", cleaned).upper()
 
 
+def validate_offer(en_oferta, precio_base, precio_oferta):
+    if en_oferta and (precio_oferta is None or precio_oferta >= precio_base):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El precio de oferta debe ser mayor que cero y menor que el precio base",
+        )
+
+
 class ProductService:
     @staticmethod
     def get_all(
@@ -62,6 +70,7 @@ class ProductService:
 
     @staticmethod
     def create(db: Session, product_in: ProductCreate, tenant_id: Optional[uuid.UUID] = None) -> Product:
+        validate_offer(product_in.en_oferta, product_in.precio_base, product_in.precio_oferta)
         category = db.query(Category).filter(Category.id == product_in.categoria_id).first()
         if not category:
             raise HTTPException(
@@ -74,6 +83,8 @@ class ProductService:
             nombre=product_in.nombre.strip(),
             descripcion=product_in.descripcion.strip() if product_in.descripcion else None,
             precio_base=product_in.precio_base,
+            precio_oferta=product_in.precio_oferta,
+            en_oferta=product_in.en_oferta,
             categoria_id=product_in.categoria_id,
             temporada=product_in.temporada.strip() if product_in.temporada else None,
             proveedor=product_in.proveedor.strip() if product_in.proveedor else None,
@@ -116,6 +127,14 @@ class ProductService:
                 detail="Producto no encontrado"
             )
 
+        fields_set = product_in.model_fields_set
+        offer_enabled = product_in.en_oferta if product_in.en_oferta is not None else product.en_oferta
+        offer_price = product_in.precio_oferta if "precio_oferta" in fields_set else product.precio_oferta
+        base_price = product_in.precio_base if product_in.precio_base is not None else product.precio_base
+        offer_changed = bool({"en_oferta", "precio_oferta", "precio_base"} & fields_set)
+        if offer_changed:
+            validate_offer(offer_enabled, base_price, offer_price)
+
         if product_in.categoria_id is not None:
             category = db.query(Category).filter(Category.id == product_in.categoria_id).first()
             if not category:
@@ -131,6 +150,10 @@ class ProductService:
             product.descripcion = product_in.descripcion.strip() if product_in.descripcion else None
         if product_in.precio_base is not None:
             product.precio_base = product_in.precio_base
+        if product_in.en_oferta is not None:
+            product.en_oferta = product_in.en_oferta
+        if "precio_oferta" in fields_set:
+            product.precio_oferta = product_in.precio_oferta
         if product_in.temporada is not None:
             product.temporada = product_in.temporada.strip() if product_in.temporada else None
         if product_in.proveedor is not None:

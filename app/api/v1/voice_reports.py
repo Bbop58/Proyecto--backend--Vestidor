@@ -8,8 +8,10 @@ from app.models.user import User
 from app.schemas.voice_report import (
     VoiceReportQueryRequest,
     VoiceReportQueryResponse,
-    VoiceReportExcelExportRequest
+    VoiceReportExcelExportRequest,
+    VoiceReportEmailRequest,
 )
+from app.schemas.receipt import ReceiptEmailResult
 from app.services.voice_report_service import VoiceReportService
 
 router = APIRouter(prefix="/reportes-voz", tags=["Reportes por Voz con IA"])
@@ -70,3 +72,19 @@ def export_voice_report_to_excel(
             "Content-Disposition": f'attachment; filename="{filename}"'
         }
     )
+
+
+@router.post(
+    "/email",
+    response_model=ReceiptEmailResult,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_permission("ventas.reports")), Depends(require_plan_feature("reportes_ia"))],
+    summary="Enviar por correo el reporte actual en PDF y Excel"
+)
+def email_voice_report(
+    request: VoiceReportEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.voice_report_email_service import send_voice_report_email
+    return send_voice_report_email(db,current_user,request)

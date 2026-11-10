@@ -104,6 +104,69 @@ def smtp_send(document,recipient,pdf):
         if connection:
             try:connection.close()
             except Exception:pass
+
+
+def deliver_files(recipient, sender_name, subject, text_content, attachments):
+    """Deliver bounded report attachments through the configured mail provider."""
+    recipient=_address(recipient)
+    safe_sender=' '.join(str(sender_name).split())[:120]
+    safe_subject=re.sub(r'[\r\n\x00-\x1f]',' ',str(subject))[:180]
+    safe_text='\n'.join(line[:1000] for line in str(text_content).splitlines())[:5000]
+    normalized=[]
+    for filename,mime_type,data in attachments:
+        filename=re.sub(r'[^a-zA-Z0-9._-]','_',str(filename))[:120]
+        if not filename or not isinstance(data,bytes):raise ValueError('Invalid email attachment')
+        normalized.append((filename,str(mime_type),data))
+    if settings.RECEIPT_EMAIL_PROVIDER=='brevo':
+        payload={'sender':{'email':_address(settings.SMTP_FROM),'name':'FashionStore · '+safe_sender},
+            'to':[{'email':recipient}],'subject':safe_subject,'textContent':safe_text,
+            'htmlContent':'<p>'+escape(safe_text).replace('\n','<br>')+'</p>',
+            'attachment':[{'name':name,'content':base64.b64encode(data).decode('ascii')}
+                          for name,_,data in normalized]}
+        request=Request('https://api.brevo.com/v3/smtp/email',data=json.dumps(payload).encode('utf-8'),
+            headers={'api-key':settings.BREVO_API_KEY.get_secret_value(),'Content-Type':'application/json','Accept':'application/json'})
+        try:
+            with urlopen(request,timeout=25) as response:
+                result=json.loads(response.read())
+                if response.status!=201 or not result.get('messageId'):raise RuntimeError('Acceptance uncertain')
+        except HTTPError as error:
+            logger.warning('Report Brevo HTTP status: %s',error.code)
+            if 400<=error.code<500 and error.code!=408:raise EmailRejected() from None
+            raise RuntimeError('Acceptance uncertain') from None
+        return
+
+    message=EmailMessage();message['From']=formataddr(('FashionStore · '+safe_sender,settings.SMTP_FROM))
+    message['To']=recipient;message['Subject']=safe_subject;message.set_content(safe_text)
+    for filename,mime_type,data in normalized:
+        maintype,_,subtype=mime_type.partition('/')
+        if not maintype or not subtype:raise ValueError('Invalid attachment MIME type')
+        message.add_attachment(data,maintype=maintype,subtype=subtype,filename=filename)
+    connection=None
+    try:
+        context=ssl.create_default_context()
+        if settings.SMTP_PORT==465:connection=smtplib.SMTP_SSL(settings.SMTP_HOST,465,timeout=15,context=context)
+        else:
+            connection=smtplib.SMTP(settings.SMTP_HOST,587,timeout=15)
+            connection.ehlo();connection.starttls(context=context);connection.ehlo()
+        connection.login(settings.SMTP_USERNAME,settings.SMTP_PASSWORD.get_secret_value())
+    except Exception as error:
+        logger.warning('Report SMTP connection/auth rejected: %s',type(error).__name__)
+        if connection:
+            try:connection.close()
+            except Exception:pass
+        raise EmailRejected() from None
+    try:
+        if connection.send_message(message,from_addr=settings.SMTP_FROM,to_addrs=[recipient]):raise EmailRejected()
+    except (smtplib.SMTPRecipientsRefused,smtplib.SMTPSenderRefused,smtplib.SMTPDataError,smtplib.SMTPNotSupportedError):
+        raise EmailRejected() from None
+    except Exception as error:
+        logger.warning('Report SMTP acceptance uncertain: %s',type(error).__name__)
+        raise
+    finally:
+        try:connection.quit()
+        except Exception:
+            try:connection.close()
+            except Exception:pass
         raise EmailRejected() from None
     try:
         refused=connection.send_message(message,from_addr=settings.SMTP_FROM,to_addrs=[recipient])

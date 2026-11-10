@@ -50,9 +50,11 @@ from fastapi.exception_handlers import request_validation_exception_handler
 @app.exception_handler(RequestValidationError)
 async def request_validation_error(request: Request, exc: RequestValidationError):
     if (request.url.path.startswith(settings.API_V1_STR + '/auth/mobile/')
-        or request.url.path.startswith(settings.API_V1_STR + '/notifications/push/')):
+        or request.url.path.startswith(settings.API_V1_STR + '/notifications/push/')
+        or request.url.path.startswith(settings.API_V1_STR + '/auth/company-invitations/')):
         # FastAPI's default validation errors may echo the entire request body.
-        message='Solicitud de sesión móvil no válida' if '/auth/mobile/' in request.url.path else 'Solicitud de avisos no válida'
+        message=('Solicitud de invitación no válida; la contraseña debe tener entre 8 y 72 caracteres' if '/auth/company-invitations/' in request.url.path else
+                 'Solicitud de sesión móvil no válida' if '/auth/mobile/' in request.url.path else 'Solicitud de avisos no válida')
         return JSONResponse(status_code=422, content={'detail': message},
                             headers={'Cache-Control': 'no-store'})
     return await request_validation_exception_handler(request, exc)

@@ -90,3 +90,4 @@ from app.models.backup_policy import BackupPolicy
 from app.models.backup_copy import BackupCopy
 from app.models.analytics_model import AnalyticsModel
 from app.models.receipt_email_delivery import ReceiptEmailDelivery
+from app.models.company_invitation import CompanyInvitation

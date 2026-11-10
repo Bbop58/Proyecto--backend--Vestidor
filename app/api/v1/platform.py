@@ -10,6 +10,21 @@ from app.services.platform_company_service import PlatformCompanyService
 
 router = APIRouter(prefix='/platform', tags=['Administración SaaS'])
 
+from app.schemas.company_invitation import CompanyInviteCreate,InvitationResend
+from app.services import company_invitation_service as invitations
+
+@router.get('/company-invitations')
+def list_company_invitations(db:Session=Depends(get_db),actor=Depends(require_platform_admin)):
+    return invitations.list_invitations(db,actor)
+
+@router.post('/company-invitations',status_code=201)
+def invite_company(body:CompanyInviteCreate,db:Session=Depends(get_db),actor=Depends(require_platform_admin)):
+    return invitations.create(db,actor,body)
+
+@router.post('/company-invitations/{company_id}/resend')
+def resend_company_invitation(company_id:uuid.UUID,body:InvitationResend,db:Session=Depends(get_db),actor=Depends(require_platform_admin)):
+    return invitations.resend(db,actor,company_id,body)
+
 from app.schemas.plan_catalog import (CatalogPlanCreate,CatalogPlanResponse,PlanDraftCreate,
     PlanDraftUpdate,PlanVersionDecision,PlanVersionResponse)
 from app.services.plan_catalog_service import PlanCatalogService

@@ -47,7 +47,7 @@ def isolate_queries(state):
                 or not tables <= allowed_tables):
             raise HTTPException(403, 'El contexto de plataforma no permite consultas comerciales')
         state.statement = state.statement.options(with_loader_criteria(User,User.id==actor,include_aliases=True))
-    elif PlatformAuditLog in mappers and state.session.info.get('tenant_scope'):
+    elif (PlatformAuditLog in mappers or any(cls.__name__=='CompanyInvitation' for cls in mappers)) and state.session.info.get('tenant_scope'):
         raise HTTPException(403, 'La auditoría SaaS no pertenece al negocio')
     tenant = state.session.info.get('tenant_scope')
     if not tenant:
@@ -103,7 +103,7 @@ def isolate_writes(db, context, instances):
             cls = type(obj)
             from app.models.tenant import Tenant
             from app.core.access_policy import PLATFORM_ROLE
-            if isinstance(obj,PlatformAuditLog):
+            if isinstance(obj,PlatformAuditLog) or cls.__name__=='CompanyInvitation':
                 reject(403,'La auditoría SaaS requiere una identidad de plataforma')
             if cls.__name__ in {'SubscriptionTerm','SubscriptionChangeRequest','SubscriptionPayment','SubscriptionPaymentEvent'}:
                 reject(403,'El contrato requiere un procedimiento explícito verificado')

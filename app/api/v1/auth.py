@@ -24,6 +24,19 @@ from app.schemas.mobile_session import MobileCredentialRequest, MobileRefreshRes
 from app.services.mobile_session_service import MobileSessionService
 from fastapi import HTTPException, Response
 
+from app.schemas.company_invitation import InvitationToken,InvitationAccept
+from app.services import company_invitation_service as invitations
+
+@router.post('/company-invitations/preview')
+def preview_company_invitation(body:InvitationToken,response:Response,db:Session=Depends(get_db)):
+    response.headers['Cache-Control']='no-store'
+    return invitations.preview(db,body)
+
+@router.post('/company-invitations/accept')
+def accept_company_invitation(body:InvitationAccept,response:Response,db:Session=Depends(get_db)):
+    response.headers['Cache-Control']='no-store'
+    return invitations.accept(db,body)
+
 
 @router.post('/mobile/session', response_model=MobileSessionResponse)
 def mobile_session(response: Response, payload: dict = Depends(get_current_token_payload),

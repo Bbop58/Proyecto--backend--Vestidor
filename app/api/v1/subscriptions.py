@@ -55,8 +55,8 @@ def list_public_tenants(
             info.plan_codigo = sub.plan.codigo
             info.plan_nombre = sub.plan.nombre
         else:
-            info.plan_codigo = "BASICO"
-            info.plan_nombre = "Plan Básico"
+            info.plan_codigo = "PENDIENTE"
+            info.plan_nombre = "Sin contrato activo"
         result.append(info)
     return result
 

@@ -152,7 +152,7 @@ def test_voice_sql_cannot_bypass_scope_with_schema(client,db_session,shops,monke
     from app.core.tenant_scope import bind_tenant
     from app.services.voice_report_service import VoiceReportService
     a,_,_=shops['a'];bind_tenant(db_session,a.tenant_id,a.id)
-    monkeypatch.setattr(VoiceReportService,'_generate_sql_with_gemini',lambda *args,**kwargs:('SELECT email FROM public.users','audit'))
+    monkeypatch.setattr(VoiceReportService,'_prepare_report_query',lambda *args,**kwargs:('SELECT email FROM public.users','audit',{},[]))
     with pytest.raises(HTTPException) as exc:
         VoiceReportService.execute_voice_report(db_session,'Listar usuarios')
     assert exc.value.status_code==400

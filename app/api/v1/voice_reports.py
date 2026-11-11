@@ -30,9 +30,9 @@ def execute_voice_report_query(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Recibe una pregunta en español sobre el negocio (ej. 'Top 5 productos más vendidos'),
-    la traduce a SQL PostgreSQL seguro usando IA (Gemini Free Tier / Text-to-SQL),
-    valida que sea estrictamente de solo lectura (SELECT) y la ejecuta contra la base de datos,
+    Recibe una pregunta en español, usa Gemini para interpretarla en un objeto tipado,
+    construye SQL PostgreSQL desde el catálogo aprobado, aplica el aislamiento de empresa,
+    y ejecuta únicamente una consulta de solo lectura con límites y parámetros,
     devolviendo las filas y columnas para visualización en tabla y exportación a PDF.
     """
     return VoiceReportService.execute_voice_report(

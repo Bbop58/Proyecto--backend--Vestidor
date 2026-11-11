@@ -1,9 +1,8 @@
-import os
 import re
 import io
-import json
 import time
 import logging
+import unicodedata
 from decimal import Decimal
 from uuid import UUID
 from datetime import datetime, date
@@ -11,117 +10,16 @@ from typing import Dict, Any, List, Tuple, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from fastapi import HTTPException, status
-from google import genai
-from google.genai import types
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-from app.config import settings
-from app.core.gemini_models import candidates, http_options, thinking, failure_code
 from app.schemas.voice_report import VoiceReportQueryResponse
+from app.schemas.report_intent import ReportIntent
+from app.services.report_intent_service import ReportIntentService
+from app.services.report_query_builder import ReportQueryBuilder
 
 logger = logging.getLogger("voice_report_service")
-
-# Esquema de base de datos PostgreSQL acotado exclusivamente a entidades de negocio
-DATABASE_SCHEMA_CONTEXT = """
-Database: PostgreSQL (Dialect: postgresql)
-
-Tables & Columns:
-1. ventas (Sales table):
-   - id: UUID (Primary Key)
-   - numero_recibo: VARCHAR (e.g. 'REC-2026-0001')
-   - tipo: VARCHAR (Enum: 'PRESENCIAL', 'DIGITAL')
-   - estado: VARCHAR (Enum: 'PENDIENTE_PAGO', 'COMPLETADA', 'CANCELADA')
-   - metodo_pago: VARCHAR (Enum: 'EFECTIVO', 'TARJETA', 'QR', 'PAYPAL', 'BILLETERA')
-   - monto_total: NUMERIC(10,2) (Total amount of sale in Bolivianos)
-   - impuesto_iva: NUMERIC(10,2) (13% IVA tax collected)
-   - monto_neto: NUMERIC(10,2) (87% net revenue / ganancia neta after tax)
-   - sucursal_id: UUID (Foreign key to sucursales.id)
-   - cliente_id: UUID (Foreign key to users.id)
-   - cajero_id: UUID (Foreign key to users.id)
-   - created_at: TIMESTAMPTZ (Date and time of the sale)
-
-2. detalles_venta (Sale Items table):
-   - id: UUID (Primary Key)
-   - venta_id: UUID (Foreign key to ventas.id)
-   - variante_id: UUID (Foreign key to variantes_producto.id)
-   - cantidad: INTEGER (Quantity sold)
-   - precio_unitario: NUMERIC(10,2) (Unit price)
-   - subtotal: NUMERIC(10,2) (subtotal = cantidad * precio_unitario)
-
-3. productos (Products table):
-   - id: UUID (Primary Key)
-   - nombre: VARCHAR (Product name)
-   - descripcion: TEXT
-   - precio_base: NUMERIC(10,2)
-   - categoria_id: UUID (Foreign key to categorias.id)
-   - temporada: VARCHAR
-   - proveedor: VARCHAR
-   - activo: BOOLEAN
-
-4. variantes_producto (Product Variants table):
-   - id: UUID (Primary Key)
-   - producto_id: UUID (Foreign key to productos.id)
-   - talla: VARCHAR (Size e.g. 'S', 'M', 'L', 'XL', '38', '40')
-   - color: VARCHAR (Color name)
-   - sku: VARCHAR (SKU barcode)
-   - precio_extra: NUMERIC(10,2)
-   - activo: BOOLEAN
-
-5. categorias (Categories table):
-   - id: UUID (Primary Key)
-   - nombre: VARCHAR (Category name)
-   - descripcion: TEXT
-   - activa: BOOLEAN
-
-6. sucursales (Branches/Stores table):
-   - id: UUID (Primary Key)
-   - nombre: VARCHAR (Branch name e.g. 'Sucursal Central', 'Sucursal Norte')
-   - direccion: VARCHAR
-   - telefono: VARCHAR
-   - activa: BOOLEAN
-
-7. users (Customers / Employees table):
-   - id: UUID (Primary Key)
-   - full_name: VARCHAR (Full name of customer or employee)
-   - email: VARCHAR
-   - is_active: BOOLEAN
-   - role_id: UUID
-
-8. inventario (Stock/Inventory table):
-   - id: UUID (Primary Key)
-   - variante_id: UUID (Foreign key to variantes_producto.id)
-   - sucursal_id: UUID (Foreign key to sucursales.id)
-   - stock_actual: INTEGER (Current stock units)
-   - stock_minimo: INTEGER (Safety minimum stock)
-
-9. reservas (Reservations table):
-   - id: UUID (Primary Key)
-   - cliente_id: UUID (Foreign key to users.id)
-   - sucursal_id: UUID (Foreign key to sucursales.id)
-   - estado: VARCHAR (Enum: 'PENDIENTE', 'PREPARADA', 'COMPLETADA', 'RECOGIDA', 'CANCELADA', 'EXPIRADA')
-   - total_estimado: NUMERIC(10,2)
-   - codigo: VARCHAR
-   - fecha_expiracion: TIMESTAMPTZ
-   - created_at: TIMESTAMPTZ
-
-10. cambios_producto (Product Exchanges table):
-   - id: UUID (Primary Key)
-   - numero_cambio: VARCHAR (e.g. 'CAM-20261023-A1B2C3')
-   - venta_id: UUID (Foreign key to ventas.id)
-   - sucursal_id: UUID (Foreign key to sucursales.id)
-   - diferencia: NUMERIC(10,2)
-   - motivo: VARCHAR
-   - created_at: TIMESTAMPTZ
-
-Business Rules & Logic:
-- For completed revenue/sales queries, filter by `v.estado = 'COMPLETADA'`.
-- "Productos más vendidos" means products with highest sum of `dv.cantidad` in completed sales.
-- "Ventas por sucursal" means grouping sales by branch name.
-- Always use aliases (e.g. `v`, `dv`, `p`, `u`, `s`, `c`, `vp`).
-- Format aliases nicely in Spanish for presentation.
-"""
 
 # Palabras clave y sentencias destructivas prohibidas
 FORBIDDEN_SQL_PATTERN = re.compile(
@@ -138,10 +36,63 @@ class VoiceReportService:
         Reconoce las consultas canónicas explícitamente requeridas en el Examen Parcial 2 (Sección 8.2).
         Garantiza respuesta determinista y perfecta incluso si la API de Gemini no tuviese cuota o red.
         """
-        q = question.lower().strip()
+        q = "".join(
+            character for character in unicodedata.normalize("NFKD", question.lower().strip())
+            if not unicodedata.combining(character)
+        )
 
-        # R1: Ventas por sucursal
-        if "sucursal" in q and any(w in q for w in ["ventas", "agrupadas", "septiembre", "total"]):
+        asks_top_products = cls._is_top_products_request(q)
+        asks_per_branch = "sucursal" in q and any(term in q for term in (
+            "por cada", "por sucursal", "cada sucursal", "agrupad",
+        ))
+
+        # A per-branch top is a different report from the global top with a
+        # branch column. Rank each branch independently; never aggregate branch
+        # names into one row for this request.
+        if asks_top_products and asks_per_branch:
+            top_n = cls._requested_top_n(q, default=10)
+            variant_level = any(term in q for term in ("sku", "talla", "color", "variante"))
+            product_columns = "p.nombre AS producto, "
+            variant_columns = "vp.sku, vp.talla, vp.color, " if variant_level else ""
+            group_columns = "p.id, p.nombre"
+            if variant_level:
+                group_columns += ", vp.id, vp.sku, vp.talla, vp.color"
+            group_columns += ", s.id, s.nombre"
+            variant_tie_break = ", vp.sku ASC" if variant_level else ""
+            ranking_metric = "unidades_vendidas"
+            ranking_expression = "SUM(dv.cantidad)"
+            if any(term in q for term in ("por ingresos", "mayor ingreso", "mas ingresos", "mayores ingresos")):
+                ranking_metric = "ingresos_generados_bs"
+                ranking_expression = "SUM(dv.subtotal)"
+            sql = (
+                "SELECT ranked.* FROM ("
+                "SELECT s.nombre AS sucursal, " + product_columns + variant_columns +
+                "COALESCE(SUM(dv.cantidad), 0) AS unidades_vendidas, "
+                "COALESCE(SUM(dv.subtotal), 0) AS ingresos_generados_bs, "
+                "ROW_NUMBER() OVER (PARTITION BY s.id ORDER BY " + ranking_expression +
+                " DESC, p.nombre ASC, p.id ASC" + variant_tie_break + ") AS posicion_sucursal "
+                "FROM detalles_venta dv "
+                "JOIN variantes_producto vp ON dv.variante_id = vp.id "
+                "JOIN productos p ON vp.producto_id = p.id "
+                "JOIN ventas v ON dv.venta_id = v.id "
+                "JOIN sucursales s ON v.sucursal_id = s.id "
+                "WHERE v.estado = 'COMPLETADA' "
+                "GROUP BY " + group_columns +
+                ") AS ranked "
+                f"WHERE posicion_sucursal <= {top_n} "
+                "ORDER BY sucursal ASC, posicion_sucursal ASC"
+            )
+            grain = "variantes (SKU, talla y color)" if variant_level else "productos (tallas y colores sumados)"
+            metric_label = "ingresos generados" if ranking_metric == "ingresos_generados_bs" else "unidades vendidas"
+            interp = f"Top {top_n} de {grain} por {metric_label}, calculado por separado para cada sucursal."
+            return sql, interp
+
+        # R1: Ventas por sucursal. Do not swallow time-series requests before R3.
+        asks_time_series = any(term in q for term in (
+            "por semana", "semanal", "por mes", "mensual", "por dia", "diario",
+            "grafico", "evolucion", "tendencia",
+        ))
+        if not asks_time_series and "sucursal" in q and any(w in q for w in ["ventas", "agrupadas", "septiembre", "total"]):
             sql = (
                 "SELECT s.nombre AS sucursal, "
                 "COUNT(v.id) AS total_ventas, "
@@ -157,28 +108,42 @@ class VoiceReportService:
             return sql, interp
 
         # R2: Top productos más vendidos
-        if any(w in q for w in ["diez productos", "top 10", "más vendidos", "mas vendidos", "top productos", "productos mas"]):
+        if cls._is_top_products_request(q):
+            top_n = cls._requested_top_n(q, default=10)
+            income_ranking = any(term in q for term in ("por ingresos", "mayor ingreso", "mas ingresos", "mayores ingresos"))
+            ranking_expression = "SUM(dv.subtotal)" if income_ranking else "SUM(dv.cantidad)"
+            variant_level = any(term in q for term in ("sku", "talla", "color", "variante"))
+            detail_columns = "vp.sku, vp.talla, vp.color, " if variant_level else ""
+            detail_group = ", vp.id, vp.sku, vp.talla, vp.color" if variant_level else ""
+            rank_tie = ", vp.sku ASC" if variant_level else ""
             sql = (
-                "SELECT p.nombre AS producto, "
-                "vp.sku, "
-                "vp.talla, "
-                "vp.color, "
+                "SELECT p.nombre AS producto, " + detail_columns +
+                "STRING_AGG(DISTINCT s.nombre, ', ' ORDER BY s.nombre) AS sucursal, "
                 "COALESCE(SUM(dv.cantidad), 0) AS unidades_vendidas, "
                 "COALESCE(SUM(dv.subtotal), 0) AS ingresos_generados_bs "
                 "FROM detalles_venta dv "
                 "JOIN variantes_producto vp ON dv.variante_id = vp.id "
                 "JOIN productos p ON vp.producto_id = p.id "
                 "JOIN ventas v ON dv.venta_id = v.id "
+                "JOIN sucursales s ON v.sucursal_id = s.id "
                 "WHERE v.estado = 'COMPLETADA' "
-                "GROUP BY p.nombre, vp.sku, vp.talla, vp.color "
-                "ORDER BY unidades_vendidas DESC "
-                "LIMIT 10"
+                "GROUP BY p.id, p.nombre" + detail_group + " "
+                "ORDER BY " + ranking_expression + " DESC, p.nombre ASC" + rank_tie + " "
+                f"LIMIT {top_n}"
             )
-            interp = "Reporte canónico: Ranking de los 10 productos con mayor volumen de unidades vendidas e ingresos."
+            metric_text = "ingresos generados por prendas" if income_ranking else "unidades vendidas"
+            grain = "variantes" if variant_level else "productos (tallas y colores sumados)"
+            interp = (
+                f"Top {top_n} de {grain} por {metric_text}. La columna sucursal indica "
+                "las sucursales donde se vendió cada variante durante el periodo solicitado."
+            )
             return sql, interp
 
         # R3: Gráfico / evolución de ventas por semana
-        if any(w in q for w in ["semana", "gráfico", "grafico", "evolución", "evolucion"]):
+        asks_weekly_series = any(term in q for term in (
+            "por semana", "semanal", "grafico", "evolucion", "tendencia semanal",
+        ))
+        if asks_weekly_series and any(w in q for w in ["venta", "ingreso", "recaud"]):
             sql = (
                 "SELECT TO_CHAR(DATE_TRUNC('week', v.created_at), 'YYYY-\"Semana\" IW') AS periodo_semanal, "
                 "COUNT(v.id) AS cantidad_ventas, "
@@ -192,7 +157,7 @@ class VoiceReportService:
             return sql, interp
 
         # R4: Categorías con mayores ingresos / Comparativa
-        if any(w in q for w in ["categoría", "categoria", "mayores ingresos", "comparativa", "tres meses", "3 meses"]):
+        if any(w in q for w in ["categoría", "categoria"]) and any(w in q for w in ["mayor", "mas", "comparativa", "ingreso", "vendid"]):
             sql = (
                 "SELECT c.nombre AS categoria, "
                 "COUNT(DISTINCT v.id) AS transacciones_realizadas, "
@@ -232,113 +197,169 @@ class VoiceReportService:
 
         return None
 
+    @staticmethod
+    def _requested_top_n(normalized_question: str, default: int = 10) -> int:
+        match = re.search(r"\btop\s+(\d{1,2})\b", normalized_question)
+        if not match:
+            match = re.search(r"\b(\d{1,2})\s+(?:productos|prendas|variantes)\b", normalized_question)
+        if match:
+            return max(1, min(int(match.group(1)), 50))
+        word_numbers = {
+            "un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4,
+            "cinco": 5, "seis": 6, "siete": 7, "ocho": 8, "nueve": 9,
+            "diez": 10, "once": 11, "doce": 12, "quince": 15, "veinte": 20,
+        }
+        word_match = re.search(r"\btop\s+(un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte)\b", normalized_question)
+        if word_match:
+            return word_numbers[word_match.group(1)]
+        for word, value in word_numbers.items():
+            if re.search(rf"\b{word}\s+(?:productos|prendas|variantes)\b", normalized_question):
+                return value
+        return default
+
+    @staticmethod
+    def _is_top_products_request(normalized_question: str) -> bool:
+        has_product = any(term in normalized_question for term in ("producto", "prenda", "variante"))
+        has_ranking = any(term in normalized_question for term in (
+            "top ", "mas vendid", "mas ingres", "mayores ingres", "mayor ingreso",
+        ))
+        return has_product and has_ranking
+
+    @classmethod
+    def _criteria_for_question(cls, question: str) -> List[str]:
+        q = "".join(
+            character for character in unicodedata.normalize("NFKD", question.lower().strip())
+            if not unicodedata.combining(character)
+        )
+        period = cls._question_period_label(q)
+        top_n = cls._requested_top_n(q)
+        asks_top_products = cls._is_top_products_request(q)
+        asks_per_branch = "sucursal" in q and any(term in q for term in (
+            "por cada", "por sucursal", "cada sucursal", "agrupad",
+        ))
+        if asks_top_products:
+            variant_level = any(term in q for term in ("sku", "talla", "color", "variante"))
+            metric = "ingresos generados" if any(term in q for term in (
+                "por ingresos", "mayor ingreso", "mas ingresos", "mayores ingresos",
+            )) else "unidades vendidas"
+            grain = "variante (SKU, talla y color)" if variant_level else "producto (tallas y colores sumados)"
+            scope = "por sucursal" if asks_per_branch else "global"
+            criteria = [f"Métrica: {metric}", f"Periodo: {period}", "Estado: ventas completadas"]
+            if asks_per_branch:
+                criteria.append("Agrupación: sucursal")
+            criteria.extend([f"Ranking: top {top_n} {scope}", f"Detalle: {grain}"])
+            return criteria
+        if "sucursal" in q and any(term in q for term in ("venta", "ingreso", "recaud")):
+            return [
+                "Métrica: cantidad de ventas e importes", f"Periodo: {period}",
+                "Estado: ventas completadas", "Agrupación: sucursal",
+            ]
+        return []
+
+    @staticmethod
+    def _question_period_label(normalized_question: str) -> str:
+        from app.core.report_period import parse_relative_period
+        relative = parse_relative_period(normalized_question)
+        if relative:
+            amount, unit = relative
+            if unit == "day":
+                return f"Últimos {amount} día{'s' if amount != 1 else ''}"
+            if unit == "week":
+                return f"Últimas {amount} semana{'s' if amount != 1 else ''}"
+            return f"Últimos {amount} mes{'es' if amount != 1 else ''}"
+        if "mes pasado" in normalized_question or "mes anterior" in normalized_question:
+            return "Mes anterior"
+        if any(term in normalized_question for term in ("este mes", "del mes", "mes actual")):
+            return "Mes actual"
+        month_names = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+        for month in month_names:
+            if re.search(rf"\b{month}\b", normalized_question):
+                year_match = re.search(r"\b(20\d{2})\b", normalized_question)
+                return month.capitalize() + (f" {year_match.group(1)}" if year_match else "")
+        if "este ano" in normalized_question or "ano actual" in normalized_question:
+            return "Año actual"
+        return "Todo el histórico"
+
+    @staticmethod
+    def _period_label(intent: ReportIntent) -> str:
+        period = intent.period
+        if period.kind == "all_time":
+            return "Todo el histórico"
+        if period.kind == "last_days":
+            return f"Últimos {period.amount} días"
+        if period.kind == "last_weeks":
+            return f"Últimas {period.amount} semanas"
+        if period.kind == "last_months":
+            return f"Últimos {period.amount} meses"
+        return {
+            "this_month": "Mes actual",
+            "last_month": "Mes anterior",
+            "this_year": "Año actual",
+        }.get(period.kind, "Periodo no especificado")
+
+    @classmethod
+    def _prepare_report_query(cls, question: str) -> tuple[str, str, dict[str, Any], List[str]]:
+        """Canonical reports bypass Gemini; all other questions use typed intent + allowlisted SQL."""
+        from app.core.report_period import ensure_supported_report_period
+        ensure_supported_report_period(question)
+        canonical = cls._match_canonical_exam_query(question)
+        if canonical:
+            sql, interpretation = canonical
+            return sql, interpretation, {}, cls._criteria_for_question(question)
+
+        intent = ReportIntentService.interpret(question)
+        sql, params, metric_label = ReportQueryBuilder.build(intent)
+        display_dimensions = list(intent.dimensions)
+        if intent.detail == "variant" and "variant" not in display_dimensions:
+            display_dimensions.append("variant")
+        dimensions = [
+            {"branch": "sucursal", "product": "producto", "variant": "variante (SKU, talla y color)",
+             "category": "categoría", "payment_method": "método de pago", "sale_type": "tipo de venta",
+             "sale_status": "estado de venta", "reservation_status": "estado de reserva", "customer": "cliente",
+             "day": "día", "week": "semana", "month": "mes"}[dimension]
+            for dimension in display_dimensions
+        ]
+        if intent.ranking:
+            ranking_text = f"Top {intent.ranking.top_n}"
+            ranking_text += f" por {dimensions_map}" if (dimensions_map := {
+                "branch": "sucursal", "category": "categoría", "month": "mes", "week": "semana",
+                "day": "día", "payment_method": "método de pago", "product": "producto",
+                "variant": "variante", "customer": "cliente", "sale_type": "tipo de venta",
+                "sale_status": "estado de venta", "reservation_status": "estado de reserva",
+            }.get(intent.ranking.within or "")) else " global"
+        else:
+            ranking_text = None
+        period_label = "Existencias actuales" if intent.domain == "inventory" else cls._period_label(intent)
+        criteria = [f"Métrica: {metric_label}", f"Periodo: {period_label}"]
+        if intent.domain == "sales" and "sale_status" not in intent.dimensions:
+            criteria.append("Estado: ventas completadas")
+        if dimensions:
+            criteria.append("Agrupación: " + ", ".join(dimensions))
+        if ranking_text:
+            criteria.append("Ranking: " + ranking_text.strip())
+        if intent.filters:
+            criteria.append("Filtros: " + ", ".join(f"{item.field} = {item.value}" for item in intent.filters))
+        interpretation = f"{metric_label.capitalize()}" + (f" agrupado por {', '.join(dimensions)}" if dimensions else "")
+        if ranking_text:
+            interpretation += f"; {ranking_text.strip()}"
+        interpretation += f"; {period_label.lower()}."
+        if intent.filters:
+            interpretation += " Filtros: " + ", ".join(item.value for item in intent.filters) + "."
+        return sql, interpretation, params, criteria
+
     @classmethod
     def _generate_sql_with_gemini(cls, question: str, limit: int = 100) -> Tuple[str, str]:
         """
-        Traduce una pregunta en lenguaje natural a consulta SQL usando Gemini 2.5 Flash.
-        Incluye resolución canónica determinista como fallback prioritario.
+        Compatibilidad para consumidores internos: Gemini devuelve intención tipada,
+        y el servidor construye SQL desde el catálogo permitido.
         """
-        # 1. Probar coincidencia canónica primero
-        canonical = cls._match_canonical_exam_query(question)
-        if canonical:
-            return canonical
-
-        # 2. Si no es canónica, usar LLM Gemini
-        api_key = (
-            settings.VOICE_GEMINI_API_KEY
-            or os.getenv("VOICE_GEMINI_API_KEY")
-            or settings.GEMINI_API_KEY
-            or os.getenv("GEMINI_API_KEY")
-        )
-
-        if not api_key:
-            raise HTTPException(503, 'El servicio de IA no está configurado para interpretar esa consulta. Puedes usar un reporte predefinido.')
-
-        client = genai.Client(api_key=api_key, http_options=http_options())
-
-        prompt = f"""
-You are an expert PostgreSQL Database Architect and Business Intelligence Analyst.
-Translate the user's natural language question in Spanish into a single, highly-optimized, read-only PostgreSQL SQL query.
-
-{DATABASE_SCHEMA_CONTEXT}
-
-STRICT CONSTRAINTS:
-1. Generate ONLY a single `SELECT` query.
-2. NEVER generate statements that modify data (NO INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE).
-3. Do NOT include any semicolon (;) or multiple queries.
-4. Ensure all column names and table names match the schema provided above exactly.
-5. Apply `LIMIT {limit}` if the query could return multiple rows and does not already have a smaller limit.
-6. Provide a concise explanation in Spanish describing what data the query retrieves.
-
-User Question: "{question}"
-
-Respond strictly with a JSON object in this exact format:
-{{
-  "sql": "SELECT ...",
-  "interpretation": "Explicación breve en español de los datos analizados"
-}}
-"""
-
-        # Validar la pregunta del usuario contra prompt injection destructivo / SQL injection directo
-        destructive_pattern = re.compile(
-            r"\b(DROP\s+TABLE|DELETE\s+FROM|UPDATE\s+\w+\s+SET|INSERT\s+INTO|ALTER\s+TABLE|TRUNCATE|GRANT|REVOKE)\b",
-            re.IGNORECASE
-        )
-        if destructive_pattern.search(question):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Pregunta rechazada por motivos de seguridad: contiene instrucciones destructivas o inyección SQL no permitida."
-            )
-
-        candidate_models = candidates(settings.GEMINI_VOICE_MODELS)
-        response = None
-        last_err = None
-
-
-        for m_name in candidate_models:
-            try:
-                response = client.models.generate_content(
-                    model=m_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.1,
-                        thinking_config=thinking(m_name),
-                        max_output_tokens=2048,
-                    )
-                )
-                if response and response.text:
-                    break
-            except Exception as m_err:
-                last_err = m_err
-                logger.warning('Error con modelo %s: %s; intentando siguiente', m_name, failure_code(m_err))
-
-        if not response or not response.text:
-            raise HTTPException(503, 'El servicio de IA no respondió. Reintenta tu consulta.')
-
-        try:
-            raw_text = response.text.strip()
-            if raw_text.startswith("```"):
-                raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                raw_text = re.sub(r"\s*```$", "", raw_text)
-
-            data = json.loads(raw_text)
-            sql_query = data.get("sql", "").strip()
-            interpretation = data.get("interpretation", "").strip()
-
-            if not sql_query:
-                raise ValueError("La IA no generó ninguna consulta SQL.")
-
-            return sql_query, interpretation
-
-        except Exception as e:
-            logger.error(f"Error parseando respuesta de Gemini: {e}", exc_info=True)
-            raise HTTPException(502, 'El servicio de IA devolvió una consulta no válida. Reintenta.')
+        sql, interpretation, _params, _criteria = cls._prepare_report_query(question)
+        return sql, interpretation
 
     @classmethod
     def _validate_sql_security(cls, sql: str) -> str:
         """
-        Validador estricto de seguridad para consultas SQL generadas por IA.
+        Validador defensivo para SQL construido por el catálogo aprobado.
         Garantiza que la consulta sea exclusivamente de solo lectura (SELECT).
         """
         clean_sql = sql.strip()
@@ -401,6 +422,35 @@ Respond strictly with a JSON object in this exact format:
         """
         if not rows:
             return "Reporte generado exitosamente. No se encontraron registros para los criterios solicitados."
+
+        interpretation_lower = interpretation.lower()
+        if (
+            "sucursal" in columns and "producto" in columns
+            and ("por sucursal" in interpretation_lower or "por separado para cada sucursal" in interpretation_lower)
+        ):
+            metric_column = next((name for name in ("unidades_vendidas", "ingresos_generados_bs", "ingresos_prendas_bs") if name in columns), None)
+            metric_label = "unidades vendidas" if metric_column == "unidades_vendidas" else "ingresos generados"
+            examples = []
+            seen_branches = set()
+            for row in rows:
+                branch = str(row.get("sucursal", ""))
+                if not branch or branch in seen_branches:
+                    continue
+                seen_branches.add(branch)
+                value = row.get(metric_column) if metric_column else None
+                value_text = (
+                    f" ({value} unidades)" if metric_column == "unidades_vendidas" and value is not None
+                    else f" (Bs. {float(value):,.2f})" if value is not None
+                    else ""
+                )
+                examples.append(f"{branch}: {row.get('producto', 'sin nombre')}{value_text}")
+                if len(examples) == 3:
+                    break
+            return (
+                f"Top calculado por separado en cada sucursal según {metric_label}. "
+                + "; ".join(examples)
+                + f". La tabla contiene {len(rows)} resultados."
+            )
 
         total_rows = len(rows)
         # Identificar columnas cuantitativas clave
@@ -510,7 +560,7 @@ Respond strictly with a JSON object in this exact format:
     ) -> VoiceReportQueryResponse:
         """
         Flujo de ejecución con consultas SELECT validadas:
-        1. Lenguaje natural -> SQL (con Gemini o matcher canónico).
+        1. Lenguaje natural -> intención tipada (Gemini) -> SQL del catálogo aprobado.
         2. Validación estricta de seguridad.
         3. Ámbito de empresa obligatorio y SET LOCAL statement_timeout = 5000.
         4. Serialización de filas y columnas.
@@ -529,9 +579,12 @@ Respond strictly with a JSON object in this exact format:
                 detail="Pregunta rechazada por motivos de seguridad: contiene instrucciones destructivas o inyección SQL no permitida."
             )
 
-        raw_sql, interpretation = cls._generate_sql_with_gemini(question, limit=limit)
-        from app.core.report_period import apply_report_period
-        raw_sql=apply_report_period(raw_sql,question)
+        raw_sql, interpretation, query_params, criteria = cls._prepare_report_query(question)
+        # Canonical SQL still uses the shared date resolver; structured queries
+        # already receive their period as bound SQL criteria from the builder.
+        if cls._match_canonical_exam_query(question):
+            from app.core.report_period import apply_report_period
+            raw_sql = apply_report_period(raw_sql, question)
         validated_sql = cls._validate_sql_security(raw_sql)
 
         from app.core.tenant_sql import scope_report_sql
@@ -551,7 +604,7 @@ Respond strictly with a JSON object in this exact format:
         try:
             # SELECT is restricted by the AST allowlist; bound this transaction's execution time.
             db.execute(text("SET LOCAL statement_timeout = 5000"))
-            result = db.execute(text(validated_sql))
+            result = db.execute(text(validated_sql), query_params)
 
             columns = list(result.keys()) if result.returns_rows else []
             rows: List[Dict[str, Any]] = []
@@ -575,7 +628,8 @@ Respond strictly with a JSON object in this exact format:
                 filas=rows,
                 total_filas=len(rows),
                 tiempo_ms=elapsed_ms,
-                resumen_hablado=speech_summary
+                resumen_hablado=speech_summary,
+                criterios_aplicados=criteria,
             )
 
         except HTTPException:

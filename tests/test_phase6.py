@@ -93,6 +93,30 @@ def test_voice_summary_does_not_read_transaction_count_as_money():
     assert '37' in summary
 
 
+@pytest.mark.parametrize('question,top_n,variant_level', [
+    ('Top 10 productos más vendidos durante los últimos 3 meses por cada sucursal', 10, False),
+    ('Top 5 variantes más vendidas por sucursal con SKU y talla', 5, True),
+])
+def test_voice_top_products_per_branch_ranks_inside_each_branch(question,top_n,variant_level):
+    sql, interpretation = VoiceReportService._match_canonical_exam_query(question)
+    normalized_sql = sql.upper()
+    assert 'ROW_NUMBER() OVER (PARTITION BY S.ID' in normalized_sql
+    assert f'WHERE POSICION_SUCURSAL <= {top_n}' in normalized_sql
+    assert 'STRING_AGG' not in normalized_sql
+    assert ('VP.SKU' in normalized_sql and 'VP.TALLA' in normalized_sql) is variant_level
+    assert f'Top {top_n}' in interpretation
+    criteria = VoiceReportService._criteria_for_question(question)
+    assert f'Ranking: top {top_n} por sucursal' in criteria
+    assert ('Periodo: Últimos 3 meses' in criteria) is ('últimos 3 meses' in question.lower())
+
+
+def test_voice_global_top_remains_distinct_from_per_branch_top():
+    sql, _ = VoiceReportService._match_canonical_exam_query('Top 10 productos más vendidos con sucursal')
+    normalized_sql = sql.upper()
+    assert 'STRING_AGG' in normalized_sql
+    assert 'ROW_NUMBER() OVER (PARTITION BY S.ID' not in normalized_sql
+
+
 def test_excel_cells_from_data_remain_text_not_formulas():
     import io,openpyxl
     content=VoiceReportService.generate_excel_report('test','test',['cliente'],[{'cliente':'=1+2'}])
@@ -138,10 +162,10 @@ def test_voice_provider_errors_never_replace_question(monkeypatch,response):
     def generate(**kwargs):
         if response=='timeout': raise TimeoutError('test provider')
         return SimpleNamespace(text='not JSON' if response=='invalid' else '')
-    monkeypatch.setattr('app.services.voice_report_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    monkeypatch.setattr('app.services.report_intent_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
     with pytest.raises(HTTPException) as error:
         VoiceReportService._generate_sql_with_gemini('Margen por proveedor')
-    assert error.value.status_code in (502,503)
+    assert error.value.status_code in (422,503)
 
 
 def test_tryon_reference_fallback_is_explicit_and_temp_files_removed(db_session,shops,monkeypatch,tmp_path):

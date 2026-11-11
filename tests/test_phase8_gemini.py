@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from app.config import settings
 from app.core.gemini_models import candidates, http_options
 from app.services.voice_report_service import VoiceReportService
+from app.services.report_intent_service import ReportIntentService
 from app.services.chatbot_service import ChatbotService
 from tests.test_tenant_sales import shops
 
@@ -27,10 +28,15 @@ def test_defaults_try_the_live_validated_text_model_first(monkeypatch):
         monkeypatch.setattr(settings,name,configured)
     def generate(**kwargs):
         calls.append(kwargs['model'])
-        return SimpleNamespace(text='{"sql":"SELECT COUNT(*) FROM ventas","interpretation":"Conteo"}')
-    monkeypatch.setattr('app.services.voice_report_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+        assert kwargs['config'].response_mime_type == 'application/json'
+        assert kwargs['config'].response_schema.__name__ == 'ReportIntent'
+        assert 'No escribas SQL' in kwargs['config'].system_instruction
+        assert kwargs['contents'] == 'Cantidad de recibos emitidos'
+        return SimpleNamespace(text='{"status":"ready","domain":"sales","metric":"sales_count","dimensions":[],"filters":[],"period":{"kind":"all_time"},"ranking":null,"detail":"product","clarification":null}')
+    monkeypatch.setattr('app.services.report_intent_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
     sql,_=VoiceReportService._generate_sql_with_gemini('Cantidad de recibos emitidos')
-    assert sql=='SELECT COUNT(*) FROM ventas'
+    assert 'COUNT(DISTINCT v.id)' in sql
+    assert 'SELECT COUNT(*) FROM ventas' not in sql
     assert calls==['gemini-3.6-flash']
 
 
@@ -65,21 +71,72 @@ def test_voice_tries_available_configured_backup_after_overload(monkeypatch):
         calls.append(kw['model'])
         assert kw['config'].thinking_config.thinking_level.value.lower()=='low'
         if len(calls)==1:raise RuntimeError('503 simulated')
-        return SimpleNamespace(text='{"sql":"SELECT COUNT(*) FROM ventas","interpretation":"Conteo"}')
-    monkeypatch.setattr('app.services.voice_report_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+        return SimpleNamespace(text='{"status":"ready","domain":"sales","metric":"sales_count","dimensions":[],"filters":[],"period":{"kind":"all_time"},"ranking":null,"detail":"product","clarification":null}')
+    monkeypatch.setattr('app.services.report_intent_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
     sql,_=VoiceReportService._generate_sql_with_gemini('Cantidad de recibos emitidos')
-    assert sql=='SELECT COUNT(*) FROM ventas'
+    assert 'COUNT(DISTINCT v.id)' in sql
     assert calls==['gemini-3.5-flash-lite','gemini-3.8-flash']
 
 
 def test_voice_provider_failure_remains_failure_not_another_report(monkeypatch):
     monkeypatch.setattr(settings,'VOICE_GEMINI_API_KEY','unit-test-only')
     def generate(**kw):raise TimeoutError('simulated private request')
-    monkeypatch.setattr('app.services.voice_report_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    monkeypatch.setattr('app.services.report_intent_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
     with pytest.raises(HTTPException) as error:
         VoiceReportService._generate_sql_with_gemini('Cantidad de recibos emitidos')
     assert error.value.status_code==503
     assert 'private' not in error.value.detail
+
+
+@pytest.mark.parametrize('payload', [
+    'not JSON',
+    '{"status":"ready","domain":"sales","metric":"sales_count","sql":"SELECT * FROM users"}',
+    '{"status":"clarify","domain":"none","metric":"none"}',
+])
+def test_report_intent_rejects_invalid_or_executable_model_output(monkeypatch,payload):
+    monkeypatch.setattr(settings,'VOICE_GEMINI_API_KEY','unit-test-only')
+    monkeypatch.setattr('app.services.report_intent_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=lambda **_:SimpleNamespace(text=payload))))
+    with pytest.raises(HTTPException) as error:
+        ReportIntentService.interpret('cuánto vendimos')
+    assert error.value.status_code==422
+
+
+def test_report_intent_returns_clarification_without_sql(monkeypatch):
+    monkeypatch.setattr(settings,'VOICE_GEMINI_API_KEY','unit-test-only')
+    payload='{"status":"clarify","domain":"none","metric":"none","dimensions":[],"filters":[],"period":{"kind":"all_time"},"ranking":null,"detail":"product","clarification":"¿Quieres medir unidades o ingresos?"}'
+    monkeypatch.setattr('app.services.report_intent_service.genai.Client',lambda **kw:SimpleNamespace(models=SimpleNamespace(generate_content=lambda **_:SimpleNamespace(text=payload))))
+    intent=ReportIntentService.interpret('muéstrame lo más importante')
+    assert intent.status=='clarify'
+    assert intent.clarification=='¿Quieres medir unidades o ingresos?'
+
+
+def test_report_query_builder_binds_filters_and_ranks_inside_each_branch():
+    from app.schemas.report_intent import ReportIntent
+    from app.services.report_query_builder import ReportQueryBuilder
+    intent=ReportIntent.model_validate({
+        'status':'ready','domain':'sales','metric':'units_sold','dimensions':['branch','product'],
+        'filters':[{'field':'branch','value':'Central; DROP TABLE users','match':'exact'}],
+        'period':{'kind':'last_months','amount':3},
+        'ranking':{'top_n':10,'direction':'desc','within':'branch'},'detail':'product'
+    })
+    sql,params,_=ReportQueryBuilder.build(intent)
+    assert 'ROW_NUMBER() OVER (PARTITION BY grouped.sucursal' in sql
+    assert 'posicion_ranking <= :top_n' in sql
+    assert params['filter_0']=='Central; DROP TABLE users'
+    assert params['top_n']==10
+    assert 'DROP TABLE users' not in sql
+
+
+def test_report_query_builder_rejects_revenue_join_that_would_duplicate_sale_totals():
+    from app.schemas.report_intent import ReportIntent
+    from app.services.report_query_builder import ReportQueryBuilder
+    intent=ReportIntent.model_validate({
+        'status':'ready','domain':'sales','metric':'gross_revenue','dimensions':['product'],
+        'filters':[],'period':{'kind':'all_time'},'ranking':None,'detail':'product'
+    })
+    with pytest.raises(HTTPException) as error:
+        ReportQueryBuilder.build(intent)
+    assert error.value.status_code==422
 
 
 @pytest.mark.parametrize('available',[True,False])

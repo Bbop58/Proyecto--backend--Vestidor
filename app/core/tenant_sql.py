@@ -1,4 +1,4 @@
-"""Scope parsed, read-only report queries before executing model-generated SQL."""
+"""Apply tenant isolation to parsed, read-only report queries."""
 import sqlglot
 from sqlglot import exp
 from fastapi import HTTPException
@@ -15,8 +15,8 @@ def scope_report_sql(sql, db, tenant_id):
         raise HTTPException(400,'Consulta de reporte no válida')
     if not isinstance(tree,(exp.Select,exp.Union)) or tree.find(exp.CTE) or tree.find(exp.Into) or tree.find(exp.Lock):
         raise HTTPException(400,'Use una consulta SELECT de solo lectura para reportes')
-    functions = {'COUNT','SUM','AVG','MIN','MAX','COALESCE','EXTRACT','TIMESTAMP_TRUNC','DATE_TRUNC',
-                 'AND','OR','CASE','IF','TIME_TO_STR','ROUND','CAST','LOWER','UPPER','TO_CHAR','NULLIF','ABS','CURRENT_DATE','CURRENT_TIMESTAMP'}
+    functions = {'COUNT','SUM','AVG','MIN','MAX','COALESCE','EXTRACT','TIMESTAMP_TRUNC','DATE','DATE_TRUNC',
+                 'AND','OR','CASE','IF','TIME_TO_STR','ROUND','CAST','LOWER','UPPER','TO_CHAR','NULLIF','ABS','CURRENT_DATE','CURRENT_TIMESTAMP','ROW_NUMBER','GROUP_CONCAT'}
     if any(column.name.lower() in {'hashed_password','paypal_client_secret','firma_balance'} for column in tree.find_all(exp.Column)):
         raise HTTPException(400,'Columna privada no autorizada para reportes')
     for function in tree.find_all(exp.Func):

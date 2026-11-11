@@ -1,12 +1,13 @@
 import uuid
 import hashlib
 import json
+import copy
 import logging
 from types import SimpleNamespace
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select,func
 from app.models.sync_operation import SyncOperation
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from decimal import Decimal
 from collections import defaultdict, Counter
 from app.core.commercial_transaction import commercial_transaction, lock_branch
@@ -41,6 +42,28 @@ MAX_EXCHANGE_DAYS = 30
 class ExchangeService:
 
     @staticmethod
+    def _paypal_refund_claims(payment):
+        payload = payment.payload if payment and isinstance(payment.payload, dict) else {}
+        claims = payload.get('exchange_refunds', {})
+        return claims if isinstance(claims, dict) else {}
+
+    @classmethod
+    def _paypal_refund_reserved(cls, payment, *, exclude_operation_id=None):
+        reserved = Counter()
+        excluded = str(exclude_operation_id) if exclude_operation_id else None
+        for key, claim in cls._paypal_refund_claims(payment).items():
+            if key == excluded or not isinstance(claim, dict) or claim.get('state') not in ('PENDING', 'COMPLETED', 'REVIEW') or claim.get('exchange_id'):
+                continue
+            request = claim.get('request') if isinstance(claim.get('request'), dict) else {}
+            for item in request.get('items', []):
+                try:
+                    reserved[uuid.UUID(str(item['variante_devuelta_id']))] += int(item['cantidad_devuelta'])
+                except (KeyError, TypeError, ValueError):
+                    # A malformed durable claim must not release the units.
+                    continue
+        return reserved
+
+    @staticmethod
     def _format_exchange_response(cambio: ProductExchange) -> dict:
         detalles_resp = []
         for d in cambio.detalles:
@@ -60,12 +83,12 @@ class ExchangeService:
                 "cantidad_devuelta": d.cantidad_devuelta,
                 "precio_unitario_devuelto": float(d.precio_unitario_devuelto),
                 "variante_entregada_id": d.variante_entregada_id,
-                "variante_entregada_nombre": p_ent.nombre if p_ent else "Desconocido",
-                "variante_entregada_talla": v_ent.talla if v_ent else "-",
-                "variante_entregada_color": v_ent.color if v_ent else "-",
-                "variante_entregada_sku": v_ent.sku if v_ent else "-",
+                "variante_entregada_nombre": p_ent.nombre if p_ent else None,
+                "variante_entregada_talla": v_ent.talla if v_ent else None,
+                "variante_entregada_color": v_ent.color if v_ent else None,
+                "variante_entregada_sku": v_ent.sku if v_ent else None,
                 "cantidad_entregada": d.cantidad_entregada,
-                "precio_unitario_entregado": float(d.precio_unitario_entregado),
+                "precio_unitario_entregado": float(d.precio_unitario_entregado or 0),
                 "subtotal_diferencia": float(d.subtotal_diferencia),
             })
 
@@ -86,6 +109,9 @@ class ExchangeService:
             "monto_total_entregado": float(cambio.monto_total_entregado),
             "diferencia": float(cambio.diferencia),
             "metodo_pago_diferencia": cambio.metodo_pago_diferencia or "NINGUNO",
+            "tipo_operacion": cambio.tipo_operacion or "CAMBIO",
+            "estado_liquidacion": cambio.estado_liquidacion or "CONFIRMADO",
+            "referencia_reembolso": cambio.referencia_reembolso,
             "motivo": cambio.motivo,
             "estado_prenda": cambio.estado_prenda,
             "nota": cambio.nota,
@@ -112,13 +138,15 @@ class ExchangeService:
         if venta.estado != SaleStatus.COMPLETADA:
             return VerifyReceiptResponse(
                 valido=False,
-                motivo_invalido=f"La venta se encuentra en estado '{venta.estado.value}'. Solo se permiten cambios sobre ventas COMPLETADAS.",
+                motivo_invalido=f"La venta se encuentra en estado '{venta.estado.value}'. Solo se permiten cambios o devoluciones de ventas COMPLETADAS.",
                 venta_id=venta.id,
                 numero_recibo=venta.numero_recibo,
                 fecha_venta=venta.created_at,
                 sucursal_id=venta.sucursal_id,
                 sucursal_nombre=venta.sucursal.nombre if venta.sucursal else None,
                 cliente_nombre=venta.cliente.full_name if venta.cliente else "Cliente Casual",
+                cliente_id=venta.cliente_id,
+                metodo_pago_original=getattr(venta.metodo_pago, 'value', venta.metodo_pago),
                 dentro_del_plazo=False,
                 items=[]
             )
@@ -130,12 +158,12 @@ class ExchangeService:
             fecha_creacion = fecha_creacion.replace(tzinfo=timezone.utc)
         
         dias_transcurridos = (ahora - fecha_creacion).days
-        dentro_plazo = dias_transcurridos <= MAX_EXCHANGE_DAYS
+        dentro_plazo = ahora <= fecha_creacion + timedelta(days=MAX_EXCHANGE_DAYS)
 
         if not dentro_plazo:
             return VerifyReceiptResponse(
                 valido=False,
-                motivo_invalido=f"El plazo máximo permitido para cambios es de {MAX_EXCHANGE_DAYS} días. Han transcurrido {dias_transcurridos} días desde la compra.",
+                motivo_invalido=f"El plazo máximo para cambios o devoluciones es de {MAX_EXCHANGE_DAYS} días. Han transcurrido {dias_transcurridos} días desde la compra.",
                 venta_id=venta.id,
                 numero_recibo=venta.numero_recibo,
                 fecha_venta=venta.created_at,
@@ -144,6 +172,8 @@ class ExchangeService:
                 sucursal_id=venta.sucursal_id,
                 sucursal_nombre=venta.sucursal.nombre if venta.sucursal else None,
                 cliente_nombre=venta.cliente.full_name if venta.cliente else "Cliente Casual",
+                cliente_id=venta.cliente_id,
+                metodo_pago_original=getattr(venta.metodo_pago, 'value', venta.metodo_pago),
                 items=[]
             )
 
@@ -153,6 +183,9 @@ class ExchangeService:
         for cp in cambios_previos:
             for det in cp.detalles:
                 cantidades_cambiadas[det.variante_devuelta_id] += det.cantidad_devuelta
+        from app.models.payment_intent import PaymentIntent
+        original_payment = db.query(PaymentIntent).filter_by(sale_id=venta.id, tenant_id=venta.tenant_id).first()
+        pending_paypal = ExchangeService._paypal_refund_reserved(original_payment)
 
         items_resp: List[VerifyReceiptItemResponse] = []
         hay_disponibles = False
@@ -164,7 +197,8 @@ class ExchangeService:
             var = det.variante
             prod = var.producto if var else None
             ya_cambiada = cantidades_cambiadas[det.variante_id]
-            disponible = max(0, sold[det.variante_id] - ya_cambiada)
+            pendiente = pending_paypal[det.variante_id]
+            disponible = max(0, sold[det.variante_id] - ya_cambiada - pendiente)
 
             if disponible > 0:
                 hay_disponibles = True
@@ -177,6 +211,7 @@ class ExchangeService:
                 sku=var.sku if var else "-",
                 cantidad_comprada=sold[det.variante_id],
                 cantidad_ya_cambiada=ya_cambiada,
+                cantidad_pendiente_devolucion=pendiente,
                 cantidad_disponible_cambio=disponible,
                 precio_unitario=float(det.precio_unitario)
             ))
@@ -184,7 +219,7 @@ class ExchangeService:
         if not hay_disponibles:
             return VerifyReceiptResponse(
                 valido=False,
-                motivo_invalido="Todos los artículos de este recibo ya han sido cambiados en su totalidad previamente.",
+                motivo_invalido="Todas las unidades de este recibo ya fueron cambiadas o devueltas.",
                 venta_id=venta.id,
                 numero_recibo=venta.numero_recibo,
                 fecha_venta=venta.created_at,
@@ -193,6 +228,8 @@ class ExchangeService:
                 sucursal_id=venta.sucursal_id,
                 sucursal_nombre=venta.sucursal.nombre if venta.sucursal else None,
                 cliente_nombre=venta.cliente.full_name if venta.cliente else "Cliente Casual",
+                cliente_id=venta.cliente_id,
+            metodo_pago_original=getattr(venta.metodo_pago, 'value', venta.metodo_pago),
                 items=items_resp
             )
 
@@ -206,6 +243,8 @@ class ExchangeService:
             sucursal_id=venta.sucursal_id,
             sucursal_nombre=venta.sucursal.nombre if venta.sucursal else None,
             cliente_nombre=venta.cliente.full_name if venta.cliente else "Cliente Casual",
+            cliente_id=venta.cliente_id,
+            metodo_pago_original=getattr(venta.metodo_pago, 'value', venta.metodo_pago),
             items=items_resp
         )
 
@@ -223,13 +262,13 @@ class ExchangeService:
 
     @staticmethod
     def _quote_hash(prepared):
-        value=[str(prepared['venta'].id),str(prepared['monto_total_devuelto']),str(prepared['monto_total_entregado']),
-          [[str(p['item'].variante_devuelta_id),p['item'].cantidad_devuelta,str(p['item'].variante_entregada_id),p['item'].cantidad_entregada,
+        value=[str(prepared['venta'].id),prepared['tipo_operacion'],str(prepared['monto_total_devuelto']),str(prepared['monto_total_entregado']),
+          [[str(p['item'].variante_devuelta_id),p['item'].cantidad_devuelta,str(p['item'].variante_entregada_id or ''),p['item'].cantidad_entregada,
             str(p['precio_devuelto']),str(p['precio_entregado'])] for p in prepared['items_a_procesar']]]
         return hashlib.sha256(json.dumps(value).encode()).hexdigest()
 
     @staticmethod
-    def _prepare_exchange(db,data,cajero_id,validate_payment=True):
+    def _prepare_exchange(db,data,cajero_id,validate_payment=True,paypal_payment_intent_id=None,paypal_refund_operation_id=None):
         # 1. Validar recibo de venta
         recibo_limpio = data.numero_recibo.strip().upper()
         actor=db.get(User,cajero_id) if cajero_id else None
@@ -249,7 +288,7 @@ class ExchangeService:
         lock_branch(db, venta.sucursal_id)
         db.refresh(venta)
         from app.models.payment_intent import PaymentIntent
-        payment = db.query(PaymentIntent).filter_by(sale_id=venta.id).first()
+        payment = db.query(PaymentIntent).filter_by(sale_id=venta.id, tenant_id=venta.tenant_id).first()
         if payment and payment.state != 'APPLIED':
             raise HTTPException(409, "La venta tiene un reembolso en conciliación")
         if venta.estado != SaleStatus.COMPLETADA:
@@ -265,7 +304,7 @@ class ExchangeService:
             fecha_creacion = fecha_creacion.replace(tzinfo=timezone.utc)
         dias_transcurridos = (ahora - fecha_creacion).days
 
-        if dias_transcurridos > MAX_EXCHANGE_DAYS:
+        if ahora > fecha_creacion + timedelta(days=MAX_EXCHANGE_DAYS):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"El plazo máximo legal de {MAX_EXCHANGE_DAYS} días para cambio de prendas ha expirado ({dias_transcurridos} días transcurridos desde la compra)."
@@ -277,13 +316,22 @@ class ExchangeService:
         for cp in cambios_previos:
             for det in cp.detalles:
                 cantidades_cambiadas[det.variante_devuelta_id] += det.cantidad_devuelta
+        source_payment = db.query(PaymentIntent).filter_by(sale_id=venta.id, tenant_id=venta.tenant_id).first()
+        pending_paypal = ExchangeService._paypal_refund_reserved(source_payment, exclude_operation_id=data.client_operation_id)
 
         # Mapear precios y cantidades de la venta original
         detalles_venta_map = {d.variante_id: d for d in venta.detalles}
         quantities_sold = Counter()
         for detail in venta.detalles:
             quantities_sold[detail.variante_id] += detail.cantidad
-        # 4. Procesar y validar cada par de prenda (devuelta vs entregada)
+        tipo_operacion=data.tipo_operacion
+        for item in data.items:
+            if tipo_operacion == 'CAMBIO' and (not item.variante_entregada_id or item.cantidad_entregada < 1):
+                raise HTTPException(422, 'Selecciona la prenda y cantidad que se entregará en el cambio')
+            if tipo_operacion == 'DEVOLUCION' and (item.variante_entregada_id or item.cantidad_entregada):
+                raise HTTPException(422, 'Una devolución no debe incluir una prenda de reemplazo')
+
+        # 4. Procesar las prendas devueltas y, solo en un cambio, sus reemplazos.
         items_a_procesar = []
         monto_total_devuelto = Decimal("0.0")
         monto_total_entregado = Decimal("0.0")
@@ -291,6 +339,7 @@ class ExchangeService:
         # Agrupar cantidades devueltas en la solicitud actual para evitar trampas de duplicación en el payload
         cantidades_solicitadas_dev = defaultdict(int)
         allocated = Counter(cantidades_cambiadas)
+        allocated.update(pending_paypal)
         for item in data.items:
             cantidades_solicitadas_dev[item.variante_devuelta_id] += item.cantidad_devuelta
 
@@ -305,7 +354,7 @@ class ExchangeService:
 
             det_orig = detalles_venta_map[var_id]
             ya_cambiada = cantidades_cambiadas[var_id]
-            disponible = quantities_sold[var_id] - ya_cambiada
+            disponible = quantities_sold[var_id] - ya_cambiada - pending_paypal[var_id]
 
             if cant_solic > disponible:
                 var_db = det_orig.variante
@@ -316,8 +365,9 @@ class ExchangeService:
                 )
 
         outgoing = Counter()
-        for item in data.items:
-            outgoing[item.variante_entregada_id] += item.cantidad_entregada
+        if tipo_operacion == 'CAMBIO':
+            for item in data.items:
+                outgoing[item.variante_entregada_id] += item.cantidad_entregada
 
         # 5. Validar disponibilidad de stock de las prendas entregadas en la sucursal
         for item in data.items:
@@ -350,38 +400,29 @@ class ExchangeService:
                 raise HTTPException(409, "Divide el cambio por precio original para conservar los centavos")
             monto_total_devuelto += subtotal_devuelto
 
-            # Obtener datos de la variante entregada
-            var_entregada = db.query(ProductVariant).filter(
-                ProductVariant.id == item.variante_entregada_id,
-                ProductVariant.activo == True
-            ).first()
+            inv_entregada=None
+            precio_entregado=Decimal('0.00')
+            if tipo_operacion == 'CAMBIO':
+                var_entregada = db.query(ProductVariant).filter(
+                    ProductVariant.id == item.variante_entregada_id,
+                    ProductVariant.activo == True
+                ).first()
+                if not var_entregada:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Variante a entregar con ID '{item.variante_entregada_id}' no encontrada o inactiva.")
 
-            if not var_entregada:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Variante a entregar con ID '{item.variante_entregada_id}' no encontrada o inactiva."
-                )
-
-            # Validar stock físico en la sucursal de la venta
-            inv_entregada = db.query(Inventory).filter(
-                Inventory.sucursal_id == venta.sucursal_id,
-                Inventory.variante_id == item.variante_entregada_id
-            ).first()
-
-            stock_disponible = (inv_entregada.stock_actual - inv_entregada.stock_reservado) if inv_entregada else 0
-            if not inv_entregada or not inv_entregada.activo or stock_disponible < outgoing[item.variante_entregada_id]:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        f"Stock insuficiente en la sucursal para entregar: "
-                        f"{var_entregada.producto.nombre} ({var_entregada.talla}/{var_entregada.color}). "
-                        f"Disponible: {stock_disponible}, Requerido: {item.cantidad_entregada}."
-                    )
-                )
-
-            # Precio de la prenda entregada (precio base del producto + precio extra de variante)
-            prod_entregado = var_entregada.producto
-            precio_entregado = catalog_price(var_entregada)
+                # Reservas existentes no pueden consumirse como reemplazo.
+                inv_entregada = db.query(Inventory).filter(
+                    Inventory.sucursal_id == venta.sucursal_id,
+                    Inventory.variante_id == item.variante_entregada_id
+                ).first()
+                stock_disponible = inv_entregada.stock_disponible if inv_entregada else 0
+                if not inv_entregada or not inv_entregada.activo or stock_disponible < outgoing[item.variante_entregada_id]:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(f"Stock insuficiente en la sucursal para entregar: "
+                            f"{var_entregada.producto.nombre} ({var_entregada.talla}/{var_entregada.color}). "
+                            f"Disponible: {stock_disponible}, Requerido: {outgoing[item.variante_entregada_id]}."))
+                precio_entregado = catalog_price(var_entregada)
             subtotal_entregado = precio_entregado * Decimal(str(item.cantidad_entregada))
             monto_total_entregado += subtotal_entregado
 
@@ -396,35 +437,67 @@ class ExchangeService:
             })
 
         diferencia_total = monto_total_entregado - monto_total_devuelto
-        if validate_payment and diferencia_total > 0 and data.metodo_pago_diferencia not in ('EFECTIVO','TARJETA','QR'):
-            raise HTTPException(400, "Registra el medio de cobro de la diferencia en caja")
-        if diferencia_total < 0 and not venta.cliente_id:
+        if validate_payment and diferencia_total > 0 and data.metodo_pago_diferencia not in ('EFECTIVO','PAYPAL'):
+            raise HTTPException(400, "Para cobrar una diferencia selecciona efectivo o PayPal")
+        if validate_payment and diferencia_total < 0 and data.metodo_pago_diferencia not in ('EFECTIVO','BILLETERA','PAYPAL'):
+            raise HTTPException(400, "Para devolver una diferencia selecciona efectivo, billetera o PayPal")
+        if diferencia_total < 0 and data.metodo_pago_diferencia == 'BILLETERA' and not venta.cliente_id:
             raise HTTPException(409, "Identifica al cliente para acreditar la diferencia a su billetera")
 
-        return dict(venta=venta,dias_transcurridos=dias_transcurridos,items_a_procesar=items_a_procesar,
-            monto_total_devuelto=monto_total_devuelto,monto_total_entregado=monto_total_entregado,diferencia_total=diferencia_total)
+        exchange_payment = None
+        paypal_refund_id = None
+        if validate_payment and data.metodo_pago_diferencia == 'PAYPAL':
+            from app.models.payment_intent import PaymentIntent
+            if diferencia_total > 0:
+                payment=db.query(PaymentIntent).filter_by(id=paypal_payment_intent_id,tenant_id=venta.tenant_id,
+                    user_id=cajero_id,purpose='EXCHANGE',state='CAPTURED').first() if paypal_payment_intent_id else None
+                if not payment or not payment.capture_id or money(payment.amount_bob) != money(diferencia_total):
+                    raise HTTPException(409, "El cobro PayPal debe aprobarse por el importe cotizado antes de confirmar el cambio")
+                exchange_payment = payment
+            elif diferencia_total < 0:
+                original_payment=source_payment
+                if (getattr(venta.metodo_pago,'value',venta.metodo_pago) != 'PAYPAL'
+                        or not original_payment or not original_payment.capture_id or original_payment.state != 'APPLIED'):
+                    raise HTTPException(409, "PayPal solo puede reembolsar a la transacción PayPal original")
+                claim = ExchangeService._paypal_refund_claims(original_payment).get(str(paypal_refund_operation_id)) if paypal_refund_operation_id else None
+                if not claim or claim.get('state') != 'COMPLETED':
+                    refund_state=claim.get('state','SIN_SOLICITUD') if isinstance(claim,dict) else 'SIN_SOLICITUD'
+                    raise HTTPException(409, f"PayPal no confirmó el reembolso (estado: {refund_state}); no se registró la devolución. Consulta la misma operación antes de reintentar.")
+                if money(claim.get('amount_bob', 0)) != money(-diferencia_total):
+                    raise HTTPException(409, "El importe de la devolución cambió tras la confirmación PayPal; requiere conciliación")
+                paypal_refund_id = claim.get('refund_id')
+            else:
+                raise HTTPException(400, "Un cambio exacto no necesita liquidación PayPal")
+
+        return dict(venta=venta,tipo_operacion=tipo_operacion,dias_transcurridos=dias_transcurridos,items_a_procesar=items_a_procesar,
+            monto_total_devuelto=monto_total_devuelto,monto_total_entregado=monto_total_entregado,diferencia_total=diferencia_total,
+            source_payment=source_payment,exchange_payment=exchange_payment,paypal_refund_id=paypal_refund_id)
 
     @staticmethod
     @commercial_transaction
-    def create_exchange(db:Session,data:ProductExchangeCreate,cajero_id=None):
+    def create_exchange(db:Session,data:ProductExchangeCreate,cajero_id=None,paypal_payment_intent_id=None,paypal_refund_operation_id=None):
         from app.services.sync_service import SyncService
         actor=db.get(User,cajero_id) if cajero_id else None
         if not actor or not actor.is_active or not actor.tenant_id or actor.is_platform_admin:
             raise HTTPException(403,'Se requiere una identidad comercial')
         SyncService.lock_keys(db,SimpleNamespace(client_operation_id=data.client_operation_id,supersedes_operation_id=None))
         digest=ExchangeService._fingerprint(data)
+        op_type='DEVOLUCION_PRENDA' if data.tipo_operacion=='DEVOLUCION' else 'CAMBIO_PRENDA'
         old=db.execute(select(SyncOperation.__table__).where(SyncOperation.__table__.c.client_operation_id==data.client_operation_id)).mappings().first()
         if old:
-            if old['tenant_id']!=actor.tenant_id or old['user_id']!=actor.id or old['operation_type']!='CAMBIO_PRENDA' or old['request_fingerprint']!=digest:
+            if old['tenant_id']!=actor.tenant_id or old['user_id']!=actor.id or old['operation_type']!=op_type or old['request_fingerprint']!=digest:
                 raise HTTPException(409,'El identificador ya pertenece a otra operación')
             result=ExchangeService.get_exchange_by_id(db,old['entity_id'],actor.tenant_id)
             db.commit()
             return result
-        prepared=ExchangeService._prepare_exchange(db,data,cajero_id)
+        prepared=ExchangeService._prepare_exchange(db,data,cajero_id,paypal_payment_intent_id=paypal_payment_intent_id,
+            paypal_refund_operation_id=paypal_refund_operation_id)
         if data.quote_hash and data.quote_hash!=ExchangeService._quote_hash(prepared):
             raise HTTPException(409,'La cotización cambió. Revisa los importes antes de confirmar nuevamente.')
         venta=prepared['venta'];dias_transcurridos=prepared['dias_transcurridos'];items_a_procesar=prepared['items_a_procesar']
         monto_total_devuelto=prepared['monto_total_devuelto'];monto_total_entregado=prepared['monto_total_entregado'];diferencia_total=prepared['diferencia_total']
+        tipo_operacion=prepared['tipo_operacion']
+        source_payment=prepared['source_payment'];exchange_payment=prepared['exchange_payment']
         from app.services.wallet_service import WalletService
         # 6. Generar número único de comprobante de cambio
         now = utc_now()
@@ -443,7 +516,10 @@ class ExchangeService:
             monto_total_devuelto=monto_total_devuelto,
             monto_total_entregado=monto_total_entregado,
             diferencia=diferencia_total,
-            metodo_pago_diferencia=data.metodo_pago_diferencia if diferencia_total > 0 else ("BILLETERA" if diferencia_total < 0 else "NINGUNO"),
+            metodo_pago_diferencia=data.metodo_pago_diferencia if diferencia_total != 0 else "NINGUNO",
+            tipo_operacion=tipo_operacion,
+            estado_liquidacion='CONFIRMADO',
+            referencia_reembolso=prepared['paypal_refund_id'],
             motivo=data.motivo,
             estado_prenda=data.estado_prenda,
             nota=data.nota,
@@ -451,7 +527,7 @@ class ExchangeService:
         db.add(cambio)
         db.flush()
 
-        if diferencia_total < 0:
+        if diferencia_total < 0 and data.metodo_pago_diferencia == 'BILLETERA':
             WalletService.credit_exchange(db, venta.cliente_id, venta.tenant_id, -diferencia_total, cambio.id)
         # 8. Procesar movimientos de inventario y detalles
         for proc in items_a_procesar:
@@ -486,7 +562,7 @@ class ExchangeService:
                 stock_antes=stock_antes_dev,
                 stock_despues=inv_devuelta.stock_actual,
                 referencia=numero_cambio,
-                nota=f"Reingreso por cambio de prenda: {data.motivo}",
+                nota=f"Reingreso por {'devolución' if tipo_operacion == 'DEVOLUCION' else 'cambio'} de prenda: {data.motivo}",
                 usuario_id=cajero_id
             )
             db.add(mov_dev)
@@ -499,6 +575,18 @@ class ExchangeService:
                     tipo=MovementType.AJUSTE,cantidad=-item.cantidad_devuelta,
                     stock_antes=before_merma,stock_despues=inv_devuelta.stock_actual,
                     referencia=numero_cambio,nota='Merma por defecto de fábrica; prenda no vendible',usuario_id=cajero_id))
+
+            if tipo_operacion == 'DEVOLUCION':
+                db.add(ProductExchangeDetail(
+                    cambio_id=cambio.id,
+                    variante_devuelta_id=item.variante_devuelta_id,
+                    cantidad_devuelta=item.cantidad_devuelta,
+                    precio_unitario_devuelto=proc['precio_devuelto'],
+                    variante_entregada_id=None,
+                    cantidad_entregada=0,
+                    precio_unitario_entregado=Decimal('0.00'),
+                    subtotal_diferencia=-money(proc['precio_devuelto'] * item.cantidad_devuelta)))
+                continue
 
             # B. Salida de la prenda entregada del stock
             inv_ent = proc["inv_entregada"]
@@ -532,8 +620,17 @@ class ExchangeService:
             db.add(detalle)
 
         db.add(SyncOperation(client_operation_id=data.client_operation_id,tenant_id=venta.tenant_id,
-            branch_id=venta.sucursal_id,user_id=cajero_id,request_fingerprint=digest,operation_type='CAMBIO_PRENDA',
+            branch_id=venta.sucursal_id,user_id=cajero_id,request_fingerprint=digest,operation_type=op_type,
             client_created_at=now,sync_status='CONFIRMADA',entity_id=cambio.id,response_payload={'receipt_number':numero_cambio}))
+        if exchange_payment:
+            exchange_payment.state='APPLIED'
+            exchange_payment.payload={**(exchange_payment.payload or {}),'exchange_id':str(cambio.id)}
+        if prepared['paypal_refund_id'] and source_payment:
+            claims=dict(ExchangeService._paypal_refund_claims(source_payment))
+            claim=dict(claims[str(paypal_refund_operation_id)])
+            claim.update(state='APPLIED',exchange_id=str(cambio.id))
+            claims[str(paypal_refund_operation_id)]=claim
+            source_payment.payload={**(source_payment.payload or {}),'exchange_refunds':claims}
         db.commit()
         db.refresh(cambio)
 
@@ -544,9 +641,9 @@ class ExchangeService:
                 NotificationService.create(
                     db=db,
                     user_id=cambio.cliente_id,
-                    title="¡Nota de Cambio Procesada!",
-                    message=f"Tu cambio de prenda #{cambio.numero_cambio} correspondiente al recibo {venta.numero_recibo} ha sido registrado exitosamente.",
-                    type="CAMBIO_PRENDA",
+                    title="¡Operación de prendas procesada!",
+                    message=f"Tu {'devolución' if tipo_operacion == 'DEVOLUCION' else 'cambio'} #{cambio.numero_cambio} del recibo {venta.numero_recibo} fue registrada.",
+                    type="DEVOLUCION_PRENDA" if tipo_operacion == 'DEVOLUCION' else "CAMBIO_PRENDA",
                     reference_id=str(cambio.id)
                 )
             except Exception as notif_err:
@@ -554,6 +651,253 @@ class ExchangeService:
                 logger.warning("Notificación de cambio no enviada: %s",type(notif_err).__name__)
 
         return ExchangeService._format_exchange_response(cambio)
+
+    @staticmethod
+    def create_paypal_exchange_order(db:Session,data:ProductExchangeCreate,cajero_id):
+        from app.config import settings
+        from app.models.payment_intent import PaymentIntent
+        from app.services.payment_flow_service import PaymentFlowService,request_key
+        from app.services.paypal_service import PayPalService
+        prepared=ExchangeService._prepare_exchange(db,data,cajero_id,validate_payment=False)
+        if data.metodo_pago_diferencia!='PAYPAL' or data.tipo_operacion!='CAMBIO' or prepared['diferencia_total']<=0:
+            raise HTTPException(400,'PayPal solo crea una orden para cobrar una diferencia de cambio')
+        amount=money(prepared['diferencia_total'],positive=True)
+        if not data.quote_hash or data.quote_hash!=ExchangeService._quote_hash(prepared):
+            raise HTTPException(409,'Actualiza la cotización antes de crear la orden PayPal')
+        actor=db.get(User,cajero_id)
+        creds=PaymentFlowService.credentials(db,actor)
+        credential_id=creds.pop('_credential_id',None)
+        key=data.client_operation_id
+        digest=ExchangeService._fingerprint(data)
+        advisory=int.from_bytes(hashlib.sha256(key.bytes).digest()[:8],'big',signed=True)
+        db.execute(select(func.pg_advisory_xact_lock(advisory)))
+        unresolved=(db.query(PaymentIntent).filter(PaymentIntent.tenant_id==actor.tenant_id,
+            PaymentIntent.user_id==actor.id,PaymentIntent.purpose=='EXCHANGE',
+            PaymentIntent.state.in_(['CREATING','CREATED','CAPTURING','CAPTURED','REFUND_PENDING','REVIEW']))
+            .order_by(PaymentIntent.created_at).with_for_update().first())
+        if unresolved and unresolved.id!=key:
+            raise HTTPException(409,'Hay un pago PayPal de cambio pendiente. Reintenta esa misma operación antes de iniciar otra.')
+        intent=db.query(PaymentIntent).filter_by(id=key).with_for_update().first()
+        if intent:
+            if (intent.tenant_id!=actor.tenant_id or intent.user_id!=actor.id or intent.purpose!='EXCHANGE'
+                    or intent.payload.get('request_fingerprint')!=digest or intent.payload.get('quote_hash')!=data.quote_hash
+                    or intent.merchant_key!=PaymentFlowService.merchant(creds)):
+                raise HTTPException(409,'La clave de esta operación PayPal ya pertenece a otra solicitud')
+            if intent.state in ('APPLIED','CAPTURED','CAPTURING','REFUND_PENDING','REVIEW','REFUNDED'):
+                if intent.state in ('APPLIED','CAPTURED','CAPTURING','REFUND_PENDING') and intent.provider_order_id:
+                    return dict(order_id=intent.provider_order_id,status=intent.state,monto_bob=float(intent.amount_bob),
+                        monto_usd=float(intent.amount_usd),exchange_rate=float(intent.exchange_rate),
+                        approve_url=intent.payload.get('approve_url') if intent.state=='CREATED' else None)
+                raise HTTPException(409,'Esta orden requiere conciliación; no crees una operación duplicada')
+        else:
+            rate=Decimal(str(settings.PAYPAL_EXCHANGE_RATE))
+            amount_usd=money(PayPalService.convert_bob_to_usd(amount,rate=rate),positive=True)
+            intent=PaymentIntent(id=key,tenant_id=actor.tenant_id,user_id=actor.id,cliente_id=prepared['venta'].cliente_id,
+                sucursal_id=prepared['venta'].sucursal_id,purpose='EXCHANGE',state='CREATING',amount_bob=amount,
+                amount_usd=amount_usd,exchange_rate=rate,merchant_key=PaymentFlowService.merchant(creds),
+                provider_mode=creds['mode'],payload={'request':data.model_dump(mode='json'),'request_fingerprint':digest,
+                    'quote_hash':data.quote_hash,'paypal_credential_id':credential_id})
+            db.add(intent);db.commit();intent=db.query(PaymentIntent).filter_by(id=key).with_for_update().one()
+        if not intent.provider_order_id:
+            order=PayPalService.create_order(monto_bob=float(intent.amount_bob),sucursal_id=str(intent.sucursal_id),
+                descripcion='Diferencia por cambio de prenda FashionStore',request_id=request_key(intent,'create'),
+                custom_id=str(intent.id),amount_usd=intent.amount_usd,**creds)
+            intent.provider_order_id=order['order_id']
+            intent.payload={**intent.payload,'approve_url':order.get('approve_url')}
+            intent.state='CREATED';db.commit()
+        return dict(order_id=intent.provider_order_id,status=intent.state,monto_bob=float(intent.amount_bob),
+            monto_usd=float(intent.amount_usd),exchange_rate=float(intent.exchange_rate),approve_url=intent.payload.get('approve_url'))
+
+    @staticmethod
+    def capture_paypal_exchange_order(db:Session,order_id:str,operation_id:uuid.UUID,cajero_id):
+        from app.models.payment_intent import PaymentIntent
+        from app.services.payment_flow_service import PaymentFlowService,request_key
+        from app.services.paypal_service import PayPalService
+        actor=db.get(User,cajero_id)
+        if not actor or not actor.is_active or not actor.tenant_id or actor.is_platform_admin:
+            raise HTTPException(403,'Se requiere una identidad comercial activa')
+        intent=db.query(PaymentIntent).filter_by(id=operation_id,provider_order_id=order_id,tenant_id=actor.tenant_id,
+            user_id=actor.id,purpose='EXCHANGE').with_for_update().first()
+        if not intent:raise HTTPException(404,'Orden PayPal de cambio no disponible')
+        if intent.state=='APPLIED':
+            exchange_id=(intent.payload or {}).get('exchange_id')
+            if not exchange_id:raise HTTPException(409,'El pago aplicado requiere conciliación')
+            return ExchangeService.get_exchange_by_id(db,uuid.UUID(exchange_id),actor.tenant_id)
+        if intent.state=='REFUNDED':
+            raise HTTPException(409,'PayPal reembolsó el cobro porque el cambio no se pudo aplicar. Cotiza de nuevo antes de iniciar otra operación.')
+        creds=PaymentFlowService.credentials(db,actor,intent)
+        creds.pop('_credential_id',None)
+        if PaymentFlowService.merchant(creds)!=intent.merchant_key:
+            raise HTTPException(409,'La cuenta PayPal original requiere conciliación')
+        if intent.state in ('CREATED','CAPTURING'):
+            intent.state='CAPTURING';db.commit()
+            api={k:v for k,v in creds.items() if k!='brand_name'}
+            order=PayPalService.get_order_details(order_id,**api)
+            if order.get('status')=='COMPLETED':
+                raw=order
+            elif order.get('status')=='APPROVED':
+                captured=PayPalService.capture_order(order_id,request_id=request_key(intent,'capture'),**api)
+                raw=captured.get('raw_response',{})
+            else:
+                raise HTTPException(409,'El cliente todavía no aprobó la orden PayPal')
+            capture_id=PaymentFlowService.verify_capture(intent,raw)
+            from app.core.payment_evidence import capture_claimed_elsewhere
+            if capture_claimed_elsewhere(db,capture_id,commercial_id=intent.id):
+                intent.state='REVIEW';db.commit()
+                raise HTTPException(409,'La captura ya está vinculada a otra operación; requiere conciliación')
+            intent.capture_id=capture_id;intent.state='CAPTURED';db.commit()
+        if intent.state=='REFUND_PENDING':
+            return PaymentFlowService.compensate(db,intent,creds)
+        if intent.state!='CAPTURED':raise HTTPException(409,'La orden PayPal requiere conciliación antes de continuar')
+        try:
+            request=ProductExchangeCreate.model_validate(intent.payload['request'])
+            if ExchangeService._fingerprint(request)!=intent.payload.get('request_fingerprint'):
+                raise HTTPException(409,'La solicitud asociada a la orden cambió')
+            return ExchangeService.create_exchange(db,request,cajero_id,paypal_payment_intent_id=intent.id)
+        except Exception:
+            db.rollback()
+            current=db.query(PaymentIntent).filter_by(id=operation_id,tenant_id=actor.tenant_id).with_for_update().first()
+            if current and current.state=='APPLIED':
+                return ExchangeService.get_exchange_by_id(db,uuid.UUID(current.payload['exchange_id']),actor.tenant_id)
+            if current and current.state=='CAPTURED':
+                return PaymentFlowService.compensate(db,current,{k:v for k,v in creds.items() if k!='brand_name'})
+            raise
+
+    @staticmethod
+    @commercial_transaction
+    def refund_paypal_exchange(db:Session,data:ProductExchangeCreate,cajero_id):
+        from app.models.payment_intent import PaymentIntent
+        from app.services.payment_flow_service import PaymentFlowService,request_key
+        from app.services.paypal_service import PayPalService,ProviderError
+        from app.config import settings
+        actor=db.get(User,cajero_id) if cajero_id else None
+        if not actor or not actor.is_active or not actor.tenant_id or actor.is_platform_admin:
+            raise HTTPException(403,'Se requiere una identidad comercial')
+        # Return an already-applied result before checking receipt availability:
+        # the successful return itself has consumed the original units.
+        if data.client_operation_id:
+            receipt_key=data.numero_recibo.strip().upper()
+            replay_sale=(db.query(Sale).filter(func.upper(Sale.numero_recibo)==receipt_key,
+                Sale.tenant_id==actor.tenant_id).first())
+            if replay_sale:
+                replay_payment=(db.query(PaymentIntent).filter_by(sale_id=replay_sale.id,
+                    tenant_id=actor.tenant_id).first())
+                replay_claim=ExchangeService._paypal_refund_claims(replay_payment).get(str(data.client_operation_id))
+                if replay_claim:
+                    digest=ExchangeService._fingerprint(data)
+                    if replay_claim.get('request_fingerprint')!=digest:
+                        raise HTTPException(409,'El identificador ya pertenece a otra devolución PayPal')
+                    if replay_claim.get('state')=='APPLIED':
+                        operation=db.execute(select(SyncOperation.__table__).where(
+                            SyncOperation.__table__.c.client_operation_id==data.client_operation_id)).mappings().first()
+                        if (operation and operation['tenant_id']==actor.tenant_id and operation['user_id']==actor.id
+                                and operation['operation_type']=='DEVOLUCION_PRENDA'
+                                and operation['request_fingerprint']==digest):
+                            return ExchangeService.get_exchange_by_id(db,operation['entity_id'],actor.tenant_id)
+                        raise HTTPException(409,'El reembolso requiere conciliación con su nota; no repitas la devolución')
+        prepared=ExchangeService._prepare_exchange(db,data,cajero_id,validate_payment=False)
+        amount_bob=money(-prepared['diferencia_total'],positive=True)
+        if data.metodo_pago_diferencia!='PAYPAL' or prepared['diferencia_total']>=0:
+            raise HTTPException(400,'PayPal solo reembolsa una devolución o diferencia a favor')
+        if not data.quote_hash or data.quote_hash!=ExchangeService._quote_hash(prepared):
+            raise HTTPException(409,'Actualiza la cotización antes de reembolsar')
+        sale=prepared['venta']
+        payment=(db.query(PaymentIntent).filter_by(sale_id=sale.id,tenant_id=sale.tenant_id)
+            .populate_existing().with_for_update().first())
+        if (getattr(sale.metodo_pago,'value',sale.metodo_pago)!='PAYPAL' or not payment or not payment.capture_id
+                or payment.state!='APPLIED'):
+            raise HTTPException(409,'PayPal solo puede devolver a la cuenta de la compra original')
+        rate=Decimal(str(payment.exchange_rate))
+        amount_usd=money(PayPalService.convert_bob_to_usd(amount_bob,rate=rate),positive=True)
+        actor=db.get(User,cajero_id)
+        creds=PaymentFlowService.credentials(db,actor,payment)
+        creds.pop('_credential_id',None)
+        claims=copy.deepcopy(ExchangeService._paypal_refund_claims(payment))
+        key=str(data.client_operation_id);digest=ExchangeService._fingerprint(data)
+        claim=claims.get(key)
+        if claim and claim.get('request_fingerprint')!=digest:
+            raise HTTPException(409,'El identificador ya pertenece a otra devolución PayPal')
+        if claim and claim.get('state')=='APPLIED':
+            operation=db.execute(select(SyncOperation.__table__).where(SyncOperation.__table__.c.client_operation_id==data.client_operation_id)).mappings().first()
+            if operation:return ExchangeService.get_exchange_by_id(db,operation['entity_id'],sale.tenant_id)
+            raise HTTPException(409,'El reembolso requiere conciliación con su nota')
+        if claim and (money(claim.get('amount_bob',0))!=amount_bob or money(claim.get('amount_usd',0))!=amount_usd):
+            raise HTTPException(409,'El importe de la cotización cambió; genera una nueva solicitud')
+        if not claim:
+            reserved=sum((money(row.get('amount_usd',0)) for row in claims.values()
+                if isinstance(row,dict) and row.get('state') in ('PENDING','COMPLETED','APPLIED','REVIEW')),Decimal('0.00'))
+            if reserved+amount_usd>money(payment.amount_usd):
+                raise HTTPException(409,'El reembolso excede el saldo aún reembolsable de la compra PayPal')
+            claim={'state':'PENDING','amount_bob':str(amount_bob),'amount_usd':str(amount_usd),
+                'request_fingerprint':digest,'request':data.model_dump(mode='json'),
+                'request_id':request_key(SimpleNamespace(id=data.client_operation_id),'refund')}
+            claims[key]=claim;payment.payload={**(payment.payload or {}),'exchange_refunds':claims};db.commit()
+        # Do not hold the payment row lock while waiting on PayPal. The durable
+        # PENDING claim already reserves these units and the refund idempotency key.
+        capture_id=payment.capture_id
+        db.commit()
+        payment_id=payment.id
+        refund_id_to_check=claim.get('refund_id')
+        try:
+            if refund_id_to_check:
+                result=PayPalService.get_refund_details(refund_id_to_check,**{k:v for k,v in creds.items() if k!='brand_name'})
+            else:
+                result=PayPalService.refund_capture(capture_id,request_id=claim['request_id'],amount_usd=amount_usd,
+                    **{k:v for k,v in creds.items() if k!='brand_name'})
+        except ProviderError as error:
+            payment=(db.query(PaymentIntent).filter_by(id=payment_id,tenant_id=sale.tenant_id)
+                .populate_existing().with_for_update().first())
+            claims=copy.deepcopy(ExchangeService._paypal_refund_claims(payment))
+            claim=claims.get(key)
+            if not claim or claim.get('request_fingerprint')!=digest:
+                raise HTTPException(409,'No se encontró la solicitud PayPal original para conciliarla')
+            if error.status_code in (502,504):
+                db.commit()
+                return {'estado':'PENDIENTE','numero_recibo':sale.numero_recibo,'mensaje':'PayPal no confirmó aún; conserva la misma operación y vuelve a consultar antes de reintentar.'}
+            claim.update(state='FAILED');claims[key]=claim;payment.payload={**(payment.payload or {}),'exchange_refunds':claims};db.commit()
+            raise
+        # Merge PayPal's answer into the latest locked JSON value. Other refunds
+        # can finish while this request is in flight, so never write a stale copy.
+        payment=(db.query(PaymentIntent).filter_by(id=payment_id,tenant_id=sale.tenant_id)
+            .populate_existing().with_for_update().first())
+        claims=copy.deepcopy(ExchangeService._paypal_refund_claims(payment))
+        claim=claims.get(key)
+        if not claim or claim.get('request_fingerprint')!=digest:
+            raise HTTPException(409,'No se encontró la solicitud PayPal original para conciliarla')
+        if claim.get('state')=='APPLIED':
+            operation=db.execute(select(SyncOperation.__table__).where(
+                SyncOperation.__table__.c.client_operation_id==data.client_operation_id)).mappings().first()
+            if operation:return ExchangeService.get_exchange_by_id(db,operation['entity_id'],sale.tenant_id)
+            raise HTTPException(409,'El reembolso requiere conciliación con su nota')
+        if claim.get('state')=='FAILED':
+            raise HTTPException(409,'PayPal rechazó esta solicitud. Genera una nueva cotización para volver a intentarlo.')
+        if money(claim.get('amount_bob',0))!=amount_bob or money(claim.get('amount_usd',0))!=amount_usd:
+            raise HTTPException(409,'El importe de la cotización cambió; genera una nueva solicitud')
+        refund_id=result.get('id') or claim.get('refund_id')
+        provider_status=result.get('status')
+        if provider_status in ('FAILED','CANCELLED','DENIED'):
+            claim.update(state='FAILED',refund_id=refund_id);claims[key]=claim
+            payment.payload={**(payment.payload or {}),'exchange_refunds':claims};db.commit()
+            raise HTTPException(409,'PayPal rechazó el reembolso; no se registró la devolución. Verifica PayPal o selecciona otro medio de reembolso.')
+        if provider_status=='COMPLETED':
+            if (not refund_id or result.get('amount',{}).get('currency_code')!='USD'
+                    or money(result.get('amount',{}).get('value',0))!=amount_usd):
+                claim.update(state='REVIEW',refund_id=refund_id);claims[key]=claim
+                payment.payload={**(payment.payload or {}),'exchange_refunds':claims};db.commit()
+                return {'estado':'PENDIENTE','numero_recibo':sale.numero_recibo,
+                    'mensaje':'PayPal confirmó un importe que no coincide con la cotización. La operación quedó bloqueada para conciliación; no repitas ni pagues por otro medio.'}
+        elif provider_status!='PENDING':
+            claim.update(state='REVIEW',refund_id=refund_id);claims[key]=claim
+            payment.payload={**(payment.payload or {}),'exchange_refunds':claims};db.commit()
+            return {'estado':'PENDIENTE','numero_recibo':sale.numero_recibo,
+                'mensaje':'PayPal devolvió un estado que requiere conciliación. Las unidades siguen reservadas; no repitas por otro medio.'}
+        if provider_status=='PENDING':
+            claim.update(state='PENDING',refund_id=refund_id);claims[key]=claim
+            payment.payload={**(payment.payload or {}),'exchange_refunds':claims};db.commit()
+            return {'estado':'PENDIENTE','numero_recibo':sale.numero_recibo,'mensaje':'PayPal aún no confirma el reembolso. Las unidades quedan reservadas para no duplicar la devolución.'}
+        claim.update(state='COMPLETED',refund_id=refund_id);claims[key]=claim
+        payment.payload={**(payment.payload or {}),'exchange_refunds':claims};db.commit()
+        return ExchangeService.create_exchange(db,data,cajero_id,paypal_refund_operation_id=data.client_operation_id)
 
     @staticmethod
     def list_exchanges(

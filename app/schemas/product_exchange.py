@@ -7,13 +7,14 @@ from pydantic import BaseModel, Field, ConfigDict
 class ExchangeItemCreate(BaseModel):
     variante_devuelta_id: uuid.UUID
     cantidad_devuelta: int = Field(default=1, ge=1)
-    variante_entregada_id: uuid.UUID
-    cantidad_entregada: int = Field(default=1, ge=1)
+    variante_entregada_id: Optional[uuid.UUID] = None
+    cantidad_entregada: int = Field(default=0, ge=0)
 
 
 class ProductExchangeCreate(BaseModel):
     client_operation_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     quote_hash: Optional[str] = Field(None,pattern=r'^[a-f0-9]{64}$')
+    tipo_operacion: str = Field(default="CAMBIO", pattern=r'^(CAMBIO|DEVOLUCION)$')
     numero_recibo: str = Field(..., min_length=3, description="Número de recibo original de la venta")
     motivo: str = Field(..., min_length=3, max_length=255, description="Motivo del cambio")
     estado_prenda: str = Field(default="BUEN_ESTADO", pattern=r'^(BUEN_ESTADO|CON_ETIQUETA|DEFECTO_FABRICA)$')
@@ -30,6 +31,7 @@ class VerifyReceiptItemResponse(BaseModel):
     sku: str
     cantidad_comprada: int
     cantidad_ya_cambiada: int
+    cantidad_pendiente_devolucion: int = 0
     cantidad_disponible_cambio: int
     precio_unitario: float
 
@@ -46,6 +48,8 @@ class VerifyReceiptResponse(BaseModel):
     sucursal_id: Optional[uuid.UUID] = None
     sucursal_nombre: Optional[str] = None
     cliente_nombre: Optional[str] = None
+    cliente_id: Optional[uuid.UUID] = None
+    metodo_pago_original: Optional[str] = None
     items: List[VerifyReceiptItemResponse] = []
 
 
@@ -59,11 +63,11 @@ class ExchangeDetailResponse(BaseModel):
     cantidad_devuelta: int
     precio_unitario_devuelto: float
 
-    variante_entregada_id: uuid.UUID
-    variante_entregada_nombre: str
-    variante_entregada_talla: str
-    variante_entregada_color: str
-    variante_entregada_sku: str
+    variante_entregada_id: Optional[uuid.UUID] = None
+    variante_entregada_nombre: Optional[str] = None
+    variante_entregada_talla: Optional[str] = None
+    variante_entregada_color: Optional[str] = None
+    variante_entregada_sku: Optional[str] = None
     cantidad_entregada: int
     precio_unitario_entregado: float
 
@@ -87,6 +91,9 @@ class ProductExchangeResponse(BaseModel):
     monto_total_entregado: float
     diferencia: float
     metodo_pago_diferencia: str
+    tipo_operacion: str = "CAMBIO"
+    estado_liquidacion: str = "CONFIRMADO"
+    referencia_reembolso: Optional[str] = None
     motivo: str
     estado_prenda: str
     nota: Optional[str] = None

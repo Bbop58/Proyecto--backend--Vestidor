@@ -131,16 +131,22 @@ def get_receipt_document(db, actor, kind, entity_id) -> ReceiptDocument:
                 items=[ReceiptItem(description='Recarga de billetera',quantity=1,unit_price=amount,subtotal=amount)])
         items=[]
         for detail in row.detalles:
-            for section,suffix in [('DEVUELTA','devuelto'),('ENTREGADA','entregado')]:
-                quantity=getattr(detail,'cantidad_'+('devuelta' if section=='DEVUELTA' else 'entregada'))
-                price=getattr(detail,'precio_unitario_'+suffix)
-                variant=getattr(detail,'variante_'+('devuelta' if section=='DEVUELTA' else 'entregada'))
-                items.append(_item(detail,variant,tenant_id=actor.tenant_id,section=section,quantity=quantity,price=price,subtotal=price*quantity))
+            items.append(_item(detail,detail.variante_devuelta,tenant_id=actor.tenant_id,
+                section='DEVUELTA',quantity=detail.cantidad_devuelta,price=detail.precio_unitario_devuelto,
+                subtotal=detail.precio_unitario_devuelto*detail.cantidad_devuelta))
+            if detail.variante_entregada_id and detail.cantidad_entregada:
+                items.append(_item(detail,detail.variante_entregada,tenant_id=actor.tenant_id,
+                    section='ENTREGADA',quantity=detail.cantidad_entregada,price=detail.precio_unitario_entregado,
+                    subtotal=detail.precio_unitario_entregado*detail.cantidad_entregada))
         difference=Decimal(row.diferencia)
         common['issued_at']=local_date(row.fecha_cambio)
         common['notes'].append('Recibo original: '+original.numero_recibo)
-        return ReceiptDocument(**common,title='Nota de cambio y devolución',number=row.numero_cambio,
-            status='REGISTRADO',payment_status=('DIFERENCIA A FAVOR EN BILLETERA' if difference<0 else
-                'DIFERENCIA COBRADA' if difference>0 else 'SIN DIFERENCIA'),
-            payment_method='BILLETERA' if difference<0 else row.metodo_pago_diferencia,
-            items=items,total=money(difference))
+        is_return=(row.tipo_operacion or 'CAMBIO')=='DEVOLUCION'
+        method=row.metodo_pago_diferencia or 'NINGUNO'
+        payment_status=(f'DEVOLUCIÓN REEMBOLSADA · {method}' if is_return else
+            f'REEMBOLSO REGISTRADO · {method}' if difference<0 else
+            f'DIFERENCIA COBRADA · {method}' if difference>0 else 'SIN DIFERENCIA')
+        amount=-difference if is_return else difference
+        return ReceiptDocument(**common,title='Nota de devolución' if is_return else 'Nota de cambio',number=row.numero_cambio,
+            status=row.estado_liquidacion or 'CONFIRMADO',payment_status=payment_status,
+            payment_method=method,items=items,total=money(amount))

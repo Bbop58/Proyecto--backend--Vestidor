@@ -2,6 +2,7 @@ import uuid
 from typing import List, Optional
 from datetime import date
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -16,6 +17,36 @@ from app.services.exchange_service import ExchangeService
 from app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/cambios", tags=["Cambios de Prendas"])
+
+
+class PayPalExchangeCapture(BaseModel):
+    order_id: str = Field(..., min_length=3, max_length=100)
+    client_operation_id: uuid.UUID
+
+
+def _audit_exchange(db: Session, current_user: User, result: dict):
+    try:
+        AuditService.log_event(
+            db=db,
+            user_id=current_user.id,
+            action="REGISTRAR_DEVOLUCION_PRENDA" if result.get("tipo_operacion") == "DEVOLUCION" else "REGISTRAR_CAMBIO_PRENDA",
+            module="Ventas / Cambios",
+            details={
+                "numero_cambio": result["numero_cambio"],
+                "numero_recibo_original": result["numero_recibo_original"],
+                "monto_devuelto": result["monto_total_devuelto"],
+                "monto_entregado": result["monto_total_entregado"],
+                "diferencia": result["diferencia"],
+                "metodo_pago": result["metodo_pago_diferencia"],
+                "referencia_reembolso": result.get("referencia_reembolso"),
+                "motivo": result["motivo"],
+                "cajero": current_user.email,
+            },
+        )
+    except Exception:
+        # The operational transaction is already committed; audit failure must
+        # not make a cashier repeat an exchange or refund.
+        db.rollback()
 
 
 @router.post('/cotizar',dependencies=[Depends(require_permission('ventas.create'))])
@@ -51,26 +82,43 @@ def create_exchange(
 ):
     result = ExchangeService.create_exchange(db, data, cajero_id=current_user.id)
 
-    # Registro en Bitácora de Auditoría
-    try:
-        AuditService.log_event(
-            db=db,
-            user_id=current_user.id,
-            action="REGISTRAR_CAMBIO_PRENDA",
-            module="Ventas / Cambios",
-            details={
-                "numero_cambio": result["numero_cambio"],
-                "numero_recibo_original": result["numero_recibo_original"],
-                "monto_devuelto": result["monto_total_devuelto"],
-                "monto_entregado": result["monto_total_entregado"],
-                "diferencia": result["diferencia"],
-                "motivo": result["motivo"],
-                "cajero": current_user.email
-            }
-        )
-    except Exception:
-        pass
+    _audit_exchange(db, current_user, result)
+    return result
 
+
+@router.post("/paypal/create-order", dependencies=[Depends(require_permission("ventas.create"))])
+def create_paypal_exchange_order(
+    data: ProductExchangeCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create the PayPal order for a positive exchange balance only."""
+    return ExchangeService.create_paypal_exchange_order(db, data, current_user.id)
+
+
+@router.post("/paypal/capture-order", dependencies=[Depends(require_permission("ventas.create"))])
+def capture_paypal_exchange_order(
+    data: PayPalExchangeCapture,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = ExchangeService.capture_paypal_exchange_order(
+        db, data.order_id, data.client_operation_id, current_user.id
+    )
+    _audit_exchange(db, current_user, result)
+    return result
+
+
+@router.post("/paypal/refund", dependencies=[Depends(require_permission("ventas.create"))])
+def refund_paypal_exchange(
+    data: ProductExchangeCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Refund only to the capture on the original sale; pending results are reconcilable."""
+    result = ExchangeService.refund_paypal_exchange(db, data, current_user.id)
+    if result.get("id"):
+        _audit_exchange(db, current_user, result)
     return result
 
 

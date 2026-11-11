@@ -131,9 +131,10 @@ class PayPalService:
                             cls._headers(client_id, client_secret, mode))
 
     @classmethod
-    def refund_capture(cls, capture_id, client_id=None, client_secret=None, mode=None, request_id=None):
+    def refund_capture(cls, capture_id, client_id=None, client_secret=None, mode=None, request_id=None, amount_usd=None):
+        payload = {'amount': {'currency_code': 'USD', 'value': f'{money(amount_usd, positive=True):.2f}'}} if amount_usd is not None else {}
         return cls._request(cls._get_base_url(mode)+f'/v2/payments/captures/{cls._id(capture_id)}/refund', 'POST',
-                            cls._headers(client_id, client_secret, mode, request_id), {})
+                            cls._headers(client_id, client_secret, mode, request_id), payload)
 
     @classmethod
     def get_refund_details(cls, refund_id, client_id=None, client_secret=None, mode=None):

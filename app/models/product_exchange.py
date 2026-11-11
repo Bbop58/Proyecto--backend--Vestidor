@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey
+from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -25,12 +25,18 @@ class ProductExchange(Base):
     
     fecha_cambio = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     dias_transcurridos = Column(Integer, nullable=False, default=0)
+
+    # A return is a first-class operation; legacy rows are exchanges.
+    tipo_operacion = Column(String(20), nullable=False, default="CAMBIO")
+    estado_liquidacion = Column(String(24), nullable=False, default="CONFIRMADO")
+    referencia_reembolso = Column(String(100), nullable=True)
     
     monto_total_devuelto = Column(Numeric(10, 2), nullable=False, default=0.0)
     monto_total_entregado = Column(Numeric(10, 2), nullable=False, default=0.0)
     diferencia = Column(Numeric(10, 2), nullable=False, default=0.0)  # >0 cliente paga, <0 saldo a favor, 0 exacto
     
-    metodo_pago_diferencia = Column(String(50), nullable=True, default="NINGUNO")  # EFECTIVO, TARJETA, QR, VALE, NINGUNO
+    # Positive difference = collection method; negative difference = refund method.
+    metodo_pago_diferencia = Column(String(50), nullable=True, default="NINGUNO")
     motivo = Column(String(255), nullable=False)  # Cambio de talla, color, etc.
     estado_prenda = Column(String(100), nullable=False, default="BUEN_ESTADO")  # BUEN_ESTADO, CON_ETIQUETA
     nota = Column(String(300), nullable=True)
@@ -44,3 +50,8 @@ class ProductExchange(Base):
     cajero = relationship("User", foreign_keys=[cajero_id], lazy="joined")
     cliente = relationship("User", foreign_keys=[cliente_id], lazy="joined")
     detalles = relationship("ProductExchangeDetail", back_populates="cambio", cascade="all, delete-orphan", lazy="selectin")
+
+    __table_args__ = (
+        CheckConstraint("tipo_operacion IN ('CAMBIO', 'DEVOLUCION')", name="ck_cambios_tipo_operacion"),
+        CheckConstraint("estado_liquidacion IN ('CONFIRMADO', 'PENDIENTE', 'REEMBOLSO_PENDIENTE', 'REVISION')", name="ck_cambios_estado_liquidacion"),
+    )

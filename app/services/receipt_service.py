@@ -174,17 +174,18 @@ class ReceiptService:
             })
 
             v_ent = det.variante_entregada
-            p_ent = v_ent.producto if v_ent else None
-            sub_ent = float(det.precio_unitario_entregado) * det.cantidad_entregada
-            prendas_entregadas.append({
-                "sku": v_ent.sku if v_ent else "N/A",
-                "producto": p_ent.nombre if p_ent else "Prenda Entregada",
-                "talla": v_ent.talla if v_ent else "-",
-                "color": v_ent.color if v_ent else "-",
-                "cantidad": det.cantidad_entregada,
-                "precio_unitario": float(det.precio_unitario_entregado),
-                "subtotal": sub_ent
-            })
+            if v_ent and det.cantidad_entregada:
+                p_ent = v_ent.producto if v_ent else None
+                sub_ent = float(det.precio_unitario_entregado) * det.cantidad_entregada
+                prendas_entregadas.append({
+                    "sku": v_ent.sku,
+                    "producto": p_ent.nombre if p_ent else "Prenda Entregada",
+                    "talla": v_ent.talla,
+                    "color": v_ent.color,
+                    "cantidad": det.cantidad_entregada,
+                    "precio_unitario": float(det.precio_unitario_entregado),
+                    "subtotal": sub_ent
+                })
 
         dif = float(cambio.diferencia)
         if dif > 0:
@@ -193,13 +194,15 @@ class ReceiptService:
         elif dif < 0:
             tipo_diferencia = "SALDO_A_FAVOR_CLIENTE"
             saldo_favor = abs(dif)
-            mensaje_balance = f"Saldo a favor del cliente de Bs. {saldo_favor:.2f} acreditado en Billetera Virtual."
+            method=cambio.metodo_pago_diferencia or 'BILLETERA'
+            mensaje_balance = (f"Devolución de Bs. {saldo_favor:.2f} registrada en {method}." if (cambio.tipo_operacion or 'CAMBIO')=='DEVOLUCION'
+                else f"Saldo a favor del cliente de Bs. {saldo_favor:.2f} liquidado mediante {method}.")
         else:
             tipo_diferencia = "CAMBIO_EXACTO"
             mensaje_balance = "Cambio de prenda exacto. Saldo 0.00 Bs."
 
         return {
-            "tipo_documento": "NOTA DE CAMBIO Y DEVOLUCIÓN",
+            "tipo_documento": "NOTA DE DEVOLUCIÓN" if (cambio.tipo_operacion or 'CAMBIO')=='DEVOLUCION' else "NOTA DE CAMBIO",
             "numero_cambio": cambio.numero_cambio,
             "numero_recibo_original": venta.numero_recibo if venta else "N/A",
             "fecha_emision": cambio.fecha_cambio.isoformat() if cambio.fecha_cambio else datetime.utcnow().isoformat(),

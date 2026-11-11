@@ -42,14 +42,15 @@ class VoiceReportService:
         )
 
         asks_top_products = cls._is_top_products_request(q)
+        asks_bottom_products = cls._is_bottom_products_request(q)
+        asks_product_ranking = asks_top_products or asks_bottom_products
         asks_per_branch = "sucursal" in q and any(term in q for term in (
             "por cada", "por sucursal", "cada sucursal", "agrupad",
         ))
 
-        # A per-branch top is a different report from the global top with a
-        # branch column. Rank each branch independently; never aggregate branch
-        # names into one row for this request.
-        if asks_top_products and asks_per_branch:
+        # A per-branch ranking is different from a global ranking with a branch
+        # column. Rank each branch independently for both top and bottom requests.
+        if asks_product_ranking and asks_per_branch:
             top_n = cls._requested_top_n(q, default=10)
             variant_level = any(term in q for term in ("sku", "talla", "color", "variante"))
             product_columns = "p.nombre AS producto, "
@@ -64,13 +65,14 @@ class VoiceReportService:
             if any(term in q for term in ("por ingresos", "mayor ingreso", "mas ingresos", "mayores ingresos")):
                 ranking_metric = "ingresos_generados_bs"
                 ranking_expression = "SUM(dv.subtotal)"
+            ranking_direction = "ASC" if asks_bottom_products else "DESC"
             sql = (
                 "SELECT ranked.* FROM ("
                 "SELECT s.nombre AS sucursal, " + product_columns + variant_columns +
                 "COALESCE(SUM(dv.cantidad), 0) AS unidades_vendidas, "
                 "COALESCE(SUM(dv.subtotal), 0) AS ingresos_generados_bs, "
                 "ROW_NUMBER() OVER (PARTITION BY s.id ORDER BY " + ranking_expression +
-                " DESC, p.nombre ASC, p.id ASC" + variant_tie_break + ") AS posicion_sucursal "
+                " " + ranking_direction + ", p.nombre ASC, p.id ASC" + variant_tie_break + ") AS posicion_sucursal "
                 "FROM detalles_venta dv "
                 "JOIN variantes_producto vp ON dv.variante_id = vp.id "
                 "JOIN productos p ON vp.producto_id = p.id "
@@ -84,7 +86,10 @@ class VoiceReportService:
             )
             grain = "variantes (SKU, talla y color)" if variant_level else "productos (tallas y colores sumados)"
             metric_label = "ingresos generados" if ranking_metric == "ingresos_generados_bs" else "unidades vendidas"
-            interp = f"Top {top_n} de {grain} por {metric_label}, calculado por separado para cada sucursal."
+            if asks_bottom_products:
+                interp = f"Los {top_n} {grain} con menos {metric_label}, calculados por separado para cada sucursal."
+            else:
+                interp = f"Top {top_n} de {grain} por {metric_label}, calculado por separado para cada sucursal."
             return sql, interp
 
         # R1: Ventas por sucursal. Do not swallow time-series requests before R3.
@@ -107,11 +112,12 @@ class VoiceReportService:
             interp = "Reporte canónico: Ventas totales e ingresos netos desglosados y agrupados por sucursal."
             return sql, interp
 
-        # R2: Top productos más vendidos
-        if cls._is_top_products_request(q):
+        # R2: Ranking global de productos más o menos vendidos
+        if asks_product_ranking:
             top_n = cls._requested_top_n(q, default=10)
             income_ranking = any(term in q for term in ("por ingresos", "mayor ingreso", "mas ingresos", "mayores ingresos"))
             ranking_expression = "SUM(dv.subtotal)" if income_ranking else "SUM(dv.cantidad)"
+            ranking_direction = "ASC" if asks_bottom_products else "DESC"
             variant_level = any(term in q for term in ("sku", "talla", "color", "variante"))
             detail_columns = "vp.sku, vp.talla, vp.color, " if variant_level else ""
             detail_group = ", vp.id, vp.sku, vp.talla, vp.color" if variant_level else ""
@@ -128,15 +134,18 @@ class VoiceReportService:
                 "JOIN sucursales s ON v.sucursal_id = s.id "
                 "WHERE v.estado = 'COMPLETADA' "
                 "GROUP BY p.id, p.nombre" + detail_group + " "
-                "ORDER BY " + ranking_expression + " DESC, p.nombre ASC" + rank_tie + " "
+                "ORDER BY " + ranking_expression + " " + ranking_direction + ", p.nombre ASC" + rank_tie + " "
                 f"LIMIT {top_n}"
             )
             metric_text = "ingresos generados por prendas" if income_ranking else "unidades vendidas"
             grain = "variantes" if variant_level else "productos (tallas y colores sumados)"
-            interp = (
-                f"Top {top_n} de {grain} por {metric_text}. La columna sucursal indica "
-                "las sucursales donde se vendió cada variante durante el periodo solicitado."
-            )
+            if asks_bottom_products:
+                interp = f"Los {top_n} {grain} con menos {metric_text}. La columna sucursal indica dónde se vendió cada elemento en el periodo solicitado."
+            else:
+                interp = (
+                    f"Top {top_n} de {grain} por {metric_text}. La columna sucursal indica "
+                    "las sucursales donde se vendió cada variante durante el periodo solicitado."
+                )
             return sql, interp
 
         # R3: Gráfico / evolución de ventas por semana
@@ -225,6 +234,15 @@ class VoiceReportService:
         ))
         return has_product and has_ranking
 
+    @staticmethod
+    def _is_bottom_products_request(normalized_question: str) -> bool:
+        has_product = any(term in normalized_question for term in ("producto", "prenda", "variante"))
+        asks_least = any(term in normalized_question for term in (
+            "menos vendid", "menos ventas", "menor cantidad vendida",
+            "menor numero de unidades vendidas",
+        ))
+        return has_product and asks_least
+
     @classmethod
     def _criteria_for_question(cls, question: str) -> List[str]:
         q = "".join(
@@ -234,10 +252,12 @@ class VoiceReportService:
         period = cls._question_period_label(q)
         top_n = cls._requested_top_n(q)
         asks_top_products = cls._is_top_products_request(q)
+        asks_bottom_products = cls._is_bottom_products_request(q)
+        asks_product_ranking = asks_top_products or asks_bottom_products
         asks_per_branch = "sucursal" in q and any(term in q for term in (
             "por cada", "por sucursal", "cada sucursal", "agrupad",
         ))
-        if asks_top_products:
+        if asks_product_ranking:
             variant_level = any(term in q for term in ("sku", "talla", "color", "variante"))
             metric = "ingresos generados" if any(term in q for term in (
                 "por ingresos", "mayor ingreso", "mas ingresos", "mayores ingresos",
@@ -247,7 +267,8 @@ class VoiceReportService:
             criteria = [f"Métrica: {metric}", f"Periodo: {period}", "Estado: ventas completadas"]
             if asks_per_branch:
                 criteria.append("Agrupación: sucursal")
-            criteria.extend([f"Ranking: top {top_n} {scope}", f"Detalle: {grain}"])
+            ranking_label = f"{top_n} menos vendidos" if asks_bottom_products else f"top {top_n}"
+            criteria.extend([f"Ranking: {ranking_label} {scope}", f"Detalle: {grain}"])
             return criteria
         if "sucursal" in q and any(term in q for term in ("venta", "ingreso", "recaud")):
             return [
@@ -320,7 +341,11 @@ class VoiceReportService:
             for dimension in display_dimensions
         ]
         if intent.ranking:
-            ranking_text = f"Top {intent.ranking.top_n}"
+            ranking_text = (
+                f"{intent.ranking.top_n} menos vendidos"
+                if intent.ranking.direction == "asc" and intent.metric == "units_sold"
+                else f"Top {intent.ranking.top_n}"
+            )
             ranking_text += f" por {dimensions_map}" if (dimensions_map := {
                 "branch": "sucursal", "category": "categoría", "month": "mes", "week": "semana",
                 "day": "día", "payment_method": "método de pago", "product": "producto",

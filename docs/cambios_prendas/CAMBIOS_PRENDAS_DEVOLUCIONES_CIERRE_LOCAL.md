@@ -2,7 +2,7 @@
 
 **Fecha:** 10/11/2026
 
-**Estado:** implementado y validado localmente; todavía no publicado.
+**Estado:** publicado en backend y web el 11/11/2026. El cierre local quedó registrado antes del despliegue; esta sección añade la verificación de publicación.
 
 ## Comportamiento acordado
 
@@ -21,9 +21,13 @@
 - Las pruebas usaron una base PostgreSQL local desechable. Al terminar quedó con **0 tablas y 0 filas estimadas**; no se cambió la base demo.
 - PayPal fue simulado en pruebas; no se hizo un cobro ni reembolso real sandbox o producción.
 
-## Publicación pendiente
+## Publicación verificada
 
-Los cambios siguen en los repositorios locales. No se hizo commit, push ni despliegue. La configuración actual deja `RUN_STARTUP_MIGRATIONS=false`; antes de publicar debe aplicarse `migrations/phase_returns_and_exchanges.sql` o confirmar que el proceso autorizado de reinicio y reseed demo reconstruirá el esquema desde los modelos. La migración agrega el tipo/estado de operación y referencia de reembolso, y permite líneas devueltas sin reemplazo.
+- Backend: commit `95f983b` publicado en `main`; Railway deployment `2e831efc-a599-4d92-8596-7c67a861a800` terminó en `SUCCESS`. `/health/ready` respondió `200`, con base alcanzable, esquema compatible y commit `95f983b77c6750f5f5fa27ead37dcc51f3377858`.
+- Web: commit `53a3000` publicado en `main`; Vercel sirvió el bundle `main-HAPR56ZW.js` con HTTP `200`. Su SHA-256 remoto coincide con el artefacto local: `334288265317d47235e20a7595c12a7197e4a1e1e6726ebf073f7f8684223690`.
+- El predeploy configurado reconstruyó el esquema desde los modelos y ejecutó el reset/reseed de demo acordado: **28 controles aprobados**, seed repetido sin diferencias. Por eso no se ejecutó manualmente la migración sobre una base previa.
+- La API pública de empresas respondió `200`. Las pruebas locales detalladas arriba cubren el flujo; no se hizo una devolución real en PayPal sandbox o producción. PayPal sigue validado con dobles de prueba, no con una transacción externa.
+- No se modificó ni publicó Mobile; el cambio es de backend y web.
 
 ## Prueba manual rápida
 

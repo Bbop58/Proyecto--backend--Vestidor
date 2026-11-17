@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Norte Andino">
+  <rect width="96" height="96" rx="18" fill="#123c35"/>
+  <path d="M13 65 40 24l11 17 11-12 21 36Z" fill="#e6f5e4"/>
+  <path d="m26 65 14-22 12 19 10-13 12 16Z" fill="#408673"/>
+  <path d="M20 74h56" stroke="#b6db90" stroke-width="4" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Corte Clásico">
+  <rect width="96" height="96" rx="18" fill="#24213d"/>
+  <path d="M22 21h52v54H22z" fill="none" stroke="#d5b478" stroke-width="2"/>
+  <path d="m37 30 11 8 11-8v14L48 55l-11-11Zm8 26 3 3 3-3 4 10-7 5-7-5Z" fill="#f4e8d4"/>
+  <path d="m28 34 7 16 8 8-2 12H28Zm40 0-7 16-8 8 2 12h13Z" fill="#d5b478"/>
+</svg>

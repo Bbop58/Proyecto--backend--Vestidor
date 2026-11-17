@@ -2071,6 +2071,9 @@ def seed_all(db=None):
             users_map=users_map
         )
 
+        from app.seed_demo_stores import seed_demo_stores
+        seed_demo_stores(db, plan_pro, plan_basico, contract_day)
+
         from app.core.subscription_contract_ddl import ensure_legacy_terms
         ensure_legacy_terms(db.connection())
 

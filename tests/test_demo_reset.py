@@ -32,26 +32,40 @@ def test_fresh_rebuilds_legacy_schema_seeds_twice_and_authenticates():
     assert result['tables_changed_on_repeat']==[]
     assert len(result['checks'])==28  # Previous 27 plus ownership of active mobile sessions.
     assert result['counts']['mobile_sessions'] == 0
-    assert result['counts']['backup_policies'] == 2
+    assert result['counts']['backup_policies'] == 4
     assert result['counts']['backup_copies'] == 0
     assert not any(result['checks'].values())
     with test_engine.connect() as connection:
         assert connection.execute(text("SELECT to_regclass('runtime_demo_probe')")).scalar() is None
-        assert connection.execute(text('SELECT count(*) FROM ventas')).scalar()==1155
+        assert connection.execute(text('SELECT count(*) FROM ventas')).scalar()==1827
+        rows = connection.execute(text("""
+            SELECT t.slug, count(v.id), count(DISTINCT v.sucursal_id),
+                count(DISTINCT date_trunc('month', v.created_at)), min(v.created_at), max(v.created_at)
+            FROM tenants t JOIN ventas v ON v.tenant_id=t.id
+            WHERE t.slug IN ('norteandino', 'corteclasico') GROUP BY t.slug ORDER BY t.slug
+        """)).all()
+        assert [tuple(row[:4]) for row in rows] == [
+            ('corteclasico', 256, 2, 10), ('norteandino', 416, 3, 10),
+        ]
+        assert all((row[4].year, row[4].month, row[5].year, row[5].month)
+                   == (2026, 1, 2026, 10) for row in rows)
         connection.execute(text('SELECT tenant_id FROM roles LIMIT 1'))
     with Session(test_engine) as db:
         from datetime import datetime,timezone
         from app.ml.analytics_data import build_weekly_sales,build_customer_rfm
         from app.ml.supervised_model import train_forecast
         from app.ml.unsupervised_model import train_segments
-        for email in ('admin@urbanstyle.com','admin@modaexpress.com'):
+        for email, minimum_customers in (
+            ('admin@urbanstyle.com', 36), ('admin@modaexpress.com', 16),
+            ('admin@norteandino.example', 15), ('admin@corteclasico.example', 15),
+        ):
             user=db.query(User).filter_by(email=email).one()
             authenticated,_,_=AuthService.login(db,LoginRequest(email=email,password='Password123!',tenant_id=user.tenant_id))
             assert authenticated.id==user.id
             cutoff=datetime.now(timezone.utc)
             weekly=build_weekly_sales(db,user.tenant_id,cutoff);rfm=build_customer_rfm(db,user.tenant_id,cutoff)
             assert weekly.quality['weeks']>=27 and weekly.quality['nonzero_weeks']>=8
-            assert len(rfm.rows)==(36 if email=='admin@urbanstyle.com' else 16)
+            assert len(rfm.rows) >= minimum_customers
             assert len({(r['recency_days'],r['frequency'],r['monetary_bob']) for r in rfm.rows})>=4
             assert train_forecast(weekly).result['estado']=='LISTO'
             assert train_segments(rfm).result['estado']=='LISTO'
